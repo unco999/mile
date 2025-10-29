@@ -346,10 +346,181 @@ pub fn simulate_matrix_plan_once(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<
     outputs
 }
 
-#[test]
-fn once(){
-    use crate::test::dsl::*;
+// ---------- helper types: represent V as rows x cols (rows = final_v_len, cols = vector_len) ----------
+type Mat2D = Vec<Vec<f32>>; // row-major: Mat2D[r][c]  (r: 0..rows-1, c: 0..cols-1)
 
+/// simple matrix-matrix multiply: C = A (rowsA x colsA) * B (colsA x colsB)
+/// A is Matrix (rows x cols), B is Mat2D (cols x colsB) represented as rows of length colsB.
+/// Returns Mat2D with shape rowsA x colsB
+fn mat_mul(A: &Matrix, B: &Mat2D) -> Mat2D {
+    let rows = A.rows;
+    let inner = A.cols; // == B.len()
+    if inner == 0 {
+        return vec![vec![0.0; if B.is_empty() { 0 } else { B[0].len() }]; rows];
+    }
+    let cols = B[0].len();
+    let mut C: Mat2D = vec![vec![0.0; cols]; rows];
+
+    // naive triple loop; good enough for moderate sizes; can be optimized later
+    for r in 0..rows {
+        let a_row = &A.data[r * A.cols .. r * A.cols + A.cols];
+        let crow = &mut C[r];
+        for k in 0..inner {
+            let a = a_row[k];
+            if a == 0.0 { continue; }
+            let brow = &B[k]; // B's row k has length cols
+            for c in 0..cols {
+                crow[c] += a * brow[c];
+            }
+        }
+    }
+    C
+}
+
+/// elementwise binary op on two matrices of same shape (rows x cols)
+fn mat_elemwise_binary(a: &Mat2D, b: &Mat2D, op: &BinaryOp) -> Mat2D {
+    let rows = a.len();
+    if rows == 0 { return vec![]; }
+    let cols = a[0].len();
+    let mut out = vec![vec![0.0; cols]; rows];
+    for r in 0..rows {
+        for c in 0..cols {
+            let av = a[r][c];
+            let bv = b[r][c];
+            out[r][c] = match op {
+                BinaryOp::Add => av + bv,
+                BinaryOp::Subtract => av - bv,
+                BinaryOp::Multiply => av * bv,
+                BinaryOp::Divide => av / bv,
+                BinaryOp::Modulo => av % bv,
+                BinaryOp::Pow => av.powf(bv),
+                BinaryOp::GreaterThan => if av > bv { 1.0 } else { 0.0 },
+                BinaryOp::GreaterEqual => if av >= bv { 1.0 } else { 0.0 },
+                BinaryOp::LessThan => if av < bv { 1.0 } else { 0.0 },
+                BinaryOp::LessEqual => if av <= bv { 1.0 } else { 0.0 },
+                BinaryOp::Equal => if (av - bv).abs() < std::f32::EPSILON { 1.0 } else { 0.0 },
+                BinaryOp::NotEqual => if (av - bv).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 },
+            };
+        }
+    }
+    out
+}
+
+/// elementwise unary op on matrix
+fn mat_elemwise_unary(a: &Mat2D, func: &UnaryFunc) -> Mat2D {
+    let rows = a.len();
+    if rows == 0 { return vec![]; }
+    let cols = a[0].len();
+    let mut out = vec![vec![0.0; cols]; rows];
+    for r in 0..rows {
+        for c in 0..cols {
+            let v = a[r][c];
+            out[r][c] = match func {
+                UnaryFunc::Sin => v.sin(),
+                UnaryFunc::Cos => v.cos(),
+                UnaryFunc::Tan => v.tan(),
+                UnaryFunc::Exp => v.exp(),
+                UnaryFunc::Log => v.ln(),
+                UnaryFunc::Sqrt => v.sqrt(),
+                UnaryFunc::Abs => v.abs(),
+            };
+        }
+    }
+    out
+}
+
+/// elementwise comparison > 0 => mask (0 or 1)
+fn mat_greater_zero(a: &Mat2D) -> Mat2D {
+    let rows = a.len();
+    if rows == 0 { return vec![]; }
+    let cols = a[0].len();
+    let mut out = vec![vec![0.0; cols]; rows];
+    for r in 0..rows {
+        for c in 0..cols {
+            out[r][c] = if a[r][c] > 0.0 { 1.0 } else { 0.0 };
+        }
+    }
+    out
+}
+
+/// elementwise blend: mask * A + (1-mask) * B ; mask should be same shape
+fn mat_blend(mask: &Mat2D, a: &Mat2D, b: &Mat2D) -> Mat2D {
+    let rows = mask.len();
+    if rows == 0 { return vec![]; }
+    let cols = mask[0].len();
+    let mut out = vec![vec![0.0; cols]; rows];
+    for r in 0..rows {
+        for c in 0..cols {
+            let m = mask[r][c];
+            out[r][c] = m * a[r][c] + (1.0 - m) * b[r][c];
+        }
+    }
+    out
+}
+
+/// WRITE rows_mat (rows x cols) into V at row offset out_start
+fn write_rows_to_V(V: &mut Mat2D, rows_mat: &Mat2D, out_start: usize) {
+    let rows = rows_mat.len();
+    if rows == 0 { return; }
+    let cols = rows_mat[0].len();
+    for r in 0..rows {
+        let dst_r = out_start + r;
+        V[dst_r].copy_from_slice(&rows_mat[r]);
+    }
+}
+
+/// 批量矩阵流水线模拟：一次性对所有 lane 做矩阵运算（无 per-lane branch）
+pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    if inputs.is_empty() { return vec![]; }
+    let cols = inputs[0].len(); // vector_len (L)
+    let rows = plan.final_v_len; // final_v_len
+    // 构造 V (rows x cols)
+    let mut V: Mat2D = vec![vec![0.0; cols]; rows];
+
+    // fill input variable rows
+    for i in 0..plan.variable_count {
+        V[i].copy_from_slice(&inputs[i]);
+    }
+    // fill constants
+    for (idx, val) in &plan.constant_values {
+        for c in 0..cols { V[*idx][c] = *val; }
+    }
+    // intermediate rows already zero
+
+    // 执行 ops：每个 op 用对应的选择矩阵乘 V 得到 rows_mat (rows_op x cols)
+    for op in &plan.ops {
+        match op {
+            MatOp::BinaryMat { op: bop, left_mat, right_mat, out_start, rows: op_rows } => {
+                let left_selected = mat_mul(&plan.matrices[*left_mat], &V);   // op_rows x cols
+                let right_selected = mat_mul(&plan.matrices[*right_mat], &V); // op_rows x cols
+                let result = mat_elemwise_binary(&left_selected, &right_selected, bop);
+                write_rows_to_V(&mut V, &result, *out_start);
+            }
+            MatOp::UnaryMat { func, mat, out_start, rows: op_rows } => {
+                let sel = mat_mul(&plan.matrices[*mat], &V); // op_rows x cols
+                let res = mat_elemwise_unary(&sel, func);
+                write_rows_to_V(&mut V, &res, *out_start);
+            }
+            MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows: op_rows } => {
+                let cond_sel = mat_mul(&plan.matrices[*cond_mat], &V); // rows x cols
+                // 生成 mask（0/1），这里采用 >0 判定；如果需要不同阈值可改
+                let mask = mat_greater_zero(&cond_sel);
+                let then_sel = mat_mul(&plan.matrices[*then_mat], &V);
+                let else_sel = mat_mul(&plan.matrices[*else_mat], &V);
+                let blended = mat_blend(&mask, &then_sel, &else_sel);
+                write_rows_to_V(&mut V, &blended, *out_start);
+            }
+        }
+    }
+
+    // 从 V 取出 top_outputs 行，返回为 Vec<Vec<f32>> 每个为 length cols
+    plan.top_outputs.iter().map(|&ridx| V[ridx].clone()).collect()
+}
+
+#[test]
+fn once_batch_matrix() {
+    use crate::test::dsl::*;
+    // expr = a*b + c*d
     let expr = var("a") * var("b") + var("c") * var("d");
     let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
     let inputs = vec![
@@ -358,6 +529,8 @@ fn once(){
         vec![5.0_f32, 6.0], // c
         vec![7.0_f32, 8.0], // d
     ];
-    let outputs = simulate_matrix_plan_once(&plan, &inputs);
-    println!("测试结果为  {:?}",outputs);
+    let outputs = simulate_matrix_plan_batch(&plan, &inputs);
+    println!("batch 输出: {:?}", outputs);
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0], vec![38.0_f32, 56.0_f32]);
 }
