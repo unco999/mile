@@ -1,1 +1,21 @@
 /target
+# =====================
+# Rust 编译产物
+# =====================
+/target/                  # Rust 编译输出目录
+**/*.rs.bk                # 备份文件
+**/*.rmeta                # Rust 元数据文件
+
+# =====================
+# Cargo 特定文件
+# =====================
+/Cargo.lock               # 对库项目可以忽略，对二进制项目可保留
+**/Cargo.lock.bk          
+
+# =====================
+# 编辑器和 IDE
+# =====================
+.vscode/                  # VSCode 配置目录
+.idea/                    # JetBrains 系列 IDE 配置目录
+*.sublime-workspace       # Sublime 配置
+*.sublime-project
