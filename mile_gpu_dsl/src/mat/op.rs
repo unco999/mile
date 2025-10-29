@@ -517,12 +517,103 @@ pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec
     plan.top_outputs.iter().map(|&ridx| V[ridx].clone()).collect()
 }
 
+/// 通用的逐元素变换函数类型
+type ElemwiseFn = Box<dyn Fn(&[&Mat2D]) -> Mat2D>;
+
+/// 通用的矩阵操作描述符
+struct GenericMatOp {
+    input_mats: Vec<usize>,    // 输入选择矩阵的索引
+    output_start: usize,       // 输出在V中的起始位置
+    rows: usize,               // 操作的行数
+    transform: ElemwiseFn,     // 逐元素变换函数
+}
+
+/// 批量模拟的通用版本
+pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    if inputs.is_empty() { return vec![]; }
+    let cols = inputs[0].len();
+    let rows = plan.final_v_len;
+    let mut V: Mat2D = vec![vec![0.0; cols]; rows];
+
+    // 初始化V矩阵（变量和常量）
+    for i in 0..plan.variable_count {
+        V[i].copy_from_slice(&inputs[i]);
+    }
+    for (idx, val) in &plan.constant_values {
+        for c in 0..cols { V[*idx][c] = *val; }
+    }
+
+    // 将原始操作转换为通用操作
+    let generic_ops = convert_to_generic_ops(&plan.ops);
+
+    // 统一执行所有通用操作
+    for op in &generic_ops {
+        // 1. 输入选择：用选择矩阵从V中提取输入数据
+        let selected_inputs: Vec<Mat2D> = op.input_mats.iter()
+            .map(|&mat_idx| mat_mul(&plan.matrices[mat_idx], &V))
+            .collect();
+        
+        // 2. 逐元素变换：对每个lane执行相同的变换
+        let refs: Vec<&Mat2D> = selected_inputs.iter().collect();
+        let result = (op.transform)(&refs);
+        
+        // 3. 结果写回：将结果写入V的指定位置
+        write_rows_to_V(&mut V, &result, op.output_start);
+    }
+
+    plan.top_outputs.iter().map(|&ridx| V[ridx].clone()).collect()
+}
+
+
+/// 将特定操作转换为通用操作
+fn convert_to_generic_ops(ops: &[MatOp]) -> Vec<GenericMatOp> {
+    ops.iter().map(|op| match op {
+        MatOp::BinaryMat { op: bop, left_mat, right_mat, out_start, rows } => {
+            let op_clone = bop.clone();
+            GenericMatOp {
+                input_mats: vec![*left_mat, *right_mat],
+                output_start: *out_start,
+                rows: *rows,
+                transform: Box::new(move |inputs| {
+                    let left = inputs[0];
+                    let right = inputs[1];
+                    mat_elemwise_binary(left, right, &op_clone)
+                }),
+            }
+        },
+        MatOp::UnaryMat { func, mat, out_start, rows } => {
+            let func_clone = func.clone();
+            GenericMatOp {
+                input_mats: vec![*mat],
+                output_start: *out_start,
+                rows: *rows,
+                transform: Box::new(move |inputs| {
+                    mat_elemwise_unary(inputs[0], &func_clone)
+                }),
+            }
+        },
+        MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows } => {
+            GenericMatOp {
+                input_mats: vec![*cond_mat, *then_mat, *else_mat],
+                output_start: *out_start,
+                rows: *rows,
+                transform: Box::new(|inputs| {
+                    let cond = inputs[0];
+                    let then = inputs[1];
+                    let else_ = inputs[2];
+                    let mask = mat_greater_zero(cond);
+                    mat_blend(&mask, then, else_)
+                }),
+            }
+        },
+    }).collect()
+}
 #[test]
 fn once_batch_matrix() {
     use crate::core::dsl::*;
     // expr = a*b + c*d
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
-    let expr = vec2(_if.clone(), _if.clone());
+    let expr = vec3(_if.clone(), _if.clone(),32.0);
     let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
     let inputs = vec![
         vec![1.0_f32], // a
@@ -532,5 +623,21 @@ fn once_batch_matrix() {
     ];
     let outputs = simulate_matrix_plan_batch(&plan, &inputs);
     println!("batch 输出: {:?}", outputs);
-    assert_eq!(outputs.len(), 2);
+    assert_eq!(outputs.len(), 3);
+}
+
+#[test]
+fn gpu_once_batch_matrix(){
+    use crate::core::dsl::*;
+    let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
+    let expr = vec3(_if.clone(), _if.clone(),33.0);
+    let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
+    let inputs = vec![
+        vec![1.0_f32], // a
+        vec![3.0_f32], // b
+        vec![5.0_f32], // c
+        vec![7.0_f32], // d
+    ];
+    let outputs = simulate_matrix_plan_batch_generic(&plan, &inputs);
+    println!("outputs {:?}",outputs);
 }
