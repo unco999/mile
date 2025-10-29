@@ -1,16 +1,17 @@
-Mile Engine 🌍/🌀 Mile 引擎
-English | 中文
+# Mile Engine 🌍
 
-Mile Engine is a game and graphics development engine that heavily relies on GPU parallel computing.
+> **Language**: [English](#) | [中文](#mile-引擎-1)
+
+**Mile Engine** is a game and graphics development engine that heavily relies on GPU parallel computing.  
 Currently in an unstable early construction phase.
 
-🚀 Running the Engine
-Project entry point is at mile_core/src/main.rs:
+## 🚀 Running the Engine
 
-bash
+Project entry point is at `mile_core/src/main.rs`:
+
+```bash
 # Enter the core module
 cd mile/mile_core
-https://github.com/unco999/mile/blob/master/markdown/01.gif
 
 🖌 Mile UI – GPU-Parallel Stateful Interface
 Mile UI is an innovative UI framework that enables high-performance, composable, stateful interface elements and collection operations through GPU parallel computing.
@@ -121,7 +122,3 @@ GPU DAG 编译：将表达式转换为 GPU kernel 序列，每个中间结果映
 📄 许可证
 Mile 引擎由 unco999 开发，开源许可遵循 MIT License。
 
-🔄 快速导航
-English Version
-
-中文版本
