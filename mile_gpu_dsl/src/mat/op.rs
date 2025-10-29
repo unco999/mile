@@ -1,4 +1,4 @@
-use crate::test::{BinaryOp, Expr, UnaryFunc};
+use crate::core::{BinaryOp, Expr, UnaryFunc};
 
 
 #[derive(Debug, Clone)]
@@ -519,7 +519,7 @@ pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec
 
 #[test]
 fn once_batch_matrix() {
-    use crate::test::dsl::*;
+    use crate::core::dsl::*;
     // expr = a*b + c*d
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
     let expr = vec2(_if.clone(), _if.clone());
