@@ -7,41 +7,45 @@ pub mod dsl {
         Expr::Variable(name.to_string())
     }
 
-    pub fn lit(v: f32) -> Expr {
-        Expr::Constant(v)
-    }
+   pub fn lit<X: Into<Expr>>(v: X) -> Expr {
+    v.into()
+}
 
-    pub fn vec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
-        Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
-    }
+pub fn vec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
+    Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
+}
 
-    pub fn vec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
-        Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
-    }
+pub fn vec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
+    Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
+}
 
-    pub fn vec4<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>, W: Into<Expr>>(x: X, y: Y, z: Z, w: W) -> Expr {
-        Expr::Vec4(Vec4::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into()), Box::new(w.into())))
-    }
+pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a: A, b: B, c: C, d: D) -> Expr {
+    Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
+}
 
-    pub fn sin(e: Expr) -> Expr {
-        Expr::UnaryOp(UnaryFunc::Sin, Box::new(e))
-    }
-    
-    pub fn cos(e: Expr) -> Expr {
-        Expr::UnaryOp(UnaryFunc::Cos, Box::new(e))
-    }
-    
-    pub fn sqrt(e: Expr) -> Expr {
-        Expr::UnaryOp(UnaryFunc::Sqrt, Box::new(e))
-    }
+// ---------- unary functions ----------
 
-    pub fn eq(a: Expr, b: Expr) -> Expr {
-        Expr::BinaryOp(BinaryOp::Equal, Box::new(a), Box::new(b))
-    }
+pub fn sin<E: Into<Expr>>(e: E) -> Expr {
+    Expr::UnaryOp(UnaryFunc::Sin, Box::new(e.into()))
+}
 
-    pub fn modulo(a: Expr, b: Expr) -> Expr {
-        Expr::BinaryOp(BinaryOp::Modulo, Box::new(a), Box::new(b))
-    }
+pub fn cos<E: Into<Expr>>(e: E) -> Expr {
+    Expr::UnaryOp(UnaryFunc::Cos, Box::new(e.into()))
+}
+
+pub fn sqrt<E: Into<Expr>>(e: E) -> Expr {
+    Expr::UnaryOp(UnaryFunc::Sqrt, Box::new(e.into()))
+}
+
+// ---------- binary functions ----------
+
+pub fn eq<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+    Expr::BinaryOp(BinaryOp::Equal, Box::new(a.into()), Box::new(b.into()))
+}
+
+pub fn modulo<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+    Expr::BinaryOp(BinaryOp::Modulo, Box::new(a.into()), Box::new(b.into()))
+}
 }
 
 // 向量结构体定义 - 使用 Box 打破循环

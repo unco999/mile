@@ -141,6 +141,27 @@ impl Add<f32> for Expr {
     }
 }
 
+impl Add<u32> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: u32) -> Expr {
+        self + Expr::Constant(rhs as f32)
+    }
+}
+
+impl Add<i32> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: i32) -> Expr {
+        self + Expr::Constant(rhs as f32)
+    }
+}
+
+impl Add<&str> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: &str) -> Expr {
+        self + Expr::Variable(rhs.to_string())
+    }
+}
+
 // convenience: Expr * f32
 impl Mul<f32> for Expr {
     type Output = Expr;
@@ -163,28 +184,77 @@ impl Mul<Expr> for i32 {
     fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
 }
 
-
-// Add convenience Expr + f32 (left expr)
-impl Add<u32> for Expr {
+impl Add<Expr> for f32 {
     type Output = Expr;
-    fn add(self, rhs: u32) -> Expr {
-        self + Expr::Constant(rhs as f32)
-    }
+    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
 }
+
+impl Add<Expr> for u32 {
+    type Output = Expr;
+    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
+}
+
+impl Add<Expr> for i32 {
+    type Output = Expr;
+    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
+}
+
+impl Div<Expr> for f32 {
+    type Output = Expr;
+    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+}
+
+impl Div<Expr> for u32 {
+    type Output = Expr;
+    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+}
+
+impl Div<Expr> for i32 {
+    type Output = Expr;
+    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+}
+
+
+impl Sub<Expr> for f32 {
+    type Output = Expr;
+    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+}
+
+impl Sub<Expr> for u32 {
+    type Output = Expr;
+    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+}
+
+impl Sub<Expr> for i32 {
+    type Output = Expr;
+    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+}
+
+impl Mul<Expr> for &str {
+    type Output = Expr;
+    fn mul(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) * rhs}
+}
+
+impl Div<Expr> for &str {
+    type Output = Expr;
+    fn div(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) / rhs}
+}
+
+impl Add<Expr> for &str {
+    type Output = Expr;
+    fn add(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) + rhs}
+}
+
+impl Sub<Expr> for &str {
+    type Output = Expr;
+    fn sub(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) - rhs}
+}
+
 
 // convenience: Expr * f32
 impl Mul<u32> for Expr {
     type Output = Expr;
     fn mul(self, rhs: u32) -> Expr { self * Expr::Constant(rhs as f32) }
-}
-
-
-// Add convenience Expr + f32 (left expr)
-impl Add<i32> for Expr {
-    type Output = Expr;
-    fn add(self, rhs: i32) -> Expr {
-        self + Expr::Constant(rhs as f32)
-    }
 }
 
 // convenience: Expr * f32
