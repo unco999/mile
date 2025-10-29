@@ -1,6 +1,6 @@
 # Mile Engine 🌍
 
-> **Language**: [English](#README) | [中文](#README_zh)
+> **Language**: [English](#README.md) | [中文](#README_zh.md)
 
 **Mile Engine** is a game and graphics development engine that heavily relies on GPU parallel computing.  
 Currently in an unstable early construction phase.

@@ -1,5 +1,5 @@
 # 🌀 Mile 引擎
-> **Language**: [English](#README) | [中文](#README_zh)
+> **Language**: [English](#README.md) | [中文](#README_zh.md)
 
 Mile 引擎 是一个高度依赖 GPU 并行运算的游戏和图形开发引擎。  
 目前处于不稳定的前期构造环节。
