@@ -11,6 +11,7 @@
 # 进入核心模块
 cd mile/mile_core
 ```
+![动画演示](https://github.com/unco999/mile/blob/master/markdown/01.gif)
 
 
 # 🖌 Mile UI – GPU 并行驱动的状态化界面
