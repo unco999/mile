@@ -1,6 +1,6 @@
 use gpu_macro::wgsl;
 
-use crate::{mat::op::simulate_matrix_plan_batch};
+use crate::{dsl::if_expr, mat::op::simulate_matrix_plan_batch};
 
 #[test]
 
@@ -9,7 +9,7 @@ fn simulate_gpu_test(){
     use crate::mat::op::compile_to_matrix_plan;
     use crate::core::*;
 // 使用 e! 宏构造比较复杂表达式：
-    let ex = vec3(3.0f32, 1.0f32, 3.0f32) * 1 * 1 * vec3(2.0, 3.0,3.0);
+    let ex = vec3(3.0f32, 1.0f32, if_expr(eq(1.0,2.0), 3.0, 5.0)) * 1 * 1 * vec3(2.0, 3.0,3.0) + var("a");
     let plan = compile_to_matrix_plan(&ex, &["a","b","c","d"]);
     let inputs = vec![
         vec![1.0_f32], // a
