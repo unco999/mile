@@ -1,0 +1,196 @@
+use std::ops::{Add, Sub, Mul, Div};
+use std::f32::EPSILON;
+use crate::core::*;
+
+
+
+impl From<f64> for Expr {
+    fn from(v: f64) -> Self { Expr::Constant(v as f32) }
+}
+
+impl From<u32> for Expr {
+    fn from(v: u32) -> Self { Expr::Constant(v as f32) }
+}
+impl From<bool> for Expr {
+    fn from(b: bool) -> Self { Expr::Constant(if b { 1.0 } else { 0.0 }) }
+}
+
+impl From<String> for Expr {
+    fn from(s: String) -> Self { Expr::Variable(s) }
+}
+
+// VecN -> Expr (wrap a VecN as an Expr::VecN)
+impl From<Vec2> for Expr {
+    fn from(v: Vec2) -> Self { Expr::Vec2(v) }
+}
+impl From<Vec3> for Expr {
+    fn from(v: Vec3) -> Self { Expr::Vec3(v) }
+}
+impl From<Vec4> for Expr {
+    fn from(v: Vec4) -> Self { Expr::Vec4(v) }
+}
+
+// ---------- tuple -> Expr (vec2/vec3/vec4) by generics ----------
+// (T,U) -> Vec2 Expr
+impl<T, U> From<(T, U)> for Expr
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+{
+    fn from(tu: (T, U)) -> Self {
+        let (a, b) = tu;
+        Expr::Vec2(Vec2::new(Box::new(a.into()), Box::new(b.into())))
+    }
+}
+
+// (T,U,V) -> Vec3 Expr
+impl<T, U, V> From<(T, U, V)> for Expr
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+    V: Into<Expr>,
+{
+    fn from(tuv: (T, U, V)) -> Self {
+        let (a, b, c) = tuv;
+        Expr::Vec3(Vec3::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into())))
+    }
+}
+
+// (T,U,V,W) -> Vec4 Expr
+impl<T, U, V, W> From<(T, U, V, W)> for Expr
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+    V: Into<Expr>,
+    W: Into<Expr>,
+{
+    fn from(tuvw: (T, U, V, W)) -> Self {
+        let (a, b, c, d) = tuvw;
+        Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
+    }
+}
+
+// 同时给 VecN 自身也加上 From<(T,...)> 以便直接构造 VecN（如果你也需要单独 VecN）
+impl<T, U> From<(T, U)> for Vec2
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+{
+    fn from((a, b): (T, U)) -> Self {
+        Vec2::new(Box::new(a.into()), Box::new(b.into()))
+    }
+}
+impl<T, U, V> From<(T, U, V)> for Vec3
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+    V: Into<Expr>,
+{
+    fn from((a, b, c): (T, U, V)) -> Self {
+        Vec3::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()))
+    }
+}
+impl<T, U, V, W> From<(T, U, V, W)> for Vec4
+where
+    T: Into<Expr>,
+    U: Into<Expr>,
+    V: Into<Expr>,
+    W: Into<Expr>,
+{
+    fn from((a, b, c, d): (T, U, V, W)) -> Self {
+        Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into()))
+    }
+}
+
+// ---------- optionally: array -> Expr (if 2/3/4 sized arrays desired) ----------
+impl From<[f32; 2]> for Expr {
+    fn from(a: [f32; 2]) -> Self { Expr::Vec2(Vec2::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])))) }
+}
+impl From<[f32; 3]> for Expr {
+    fn from(a: [f32; 3]) -> Self { Expr::Vec3(Vec3::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])), Box::new(Expr::Constant(a[2])))) }
+}
+impl From<[f32; 4]> for Expr {
+    fn from(a: [f32; 4]) -> Self { Expr::Vec4(Vec4::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])), Box::new(Expr::Constant(a[2])), Box::new(Expr::Constant(a[3])))) }
+}
+// ---------- htructors that fold when possible ----------
+
+pub fn vec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
+    Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
+}
+pub fn vec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
+    Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
+}
+pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a:A,b:B,c:C,d:D) -> Expr {
+    Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
+}
+
+pub fn if_expr<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, else_v: E) -> Expr {
+    Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
+}
+
+
+// ... 同样提供 cos_expr, sqrt_expr 等（按需添加） ...
+
+// ---------- override arithmetic traits with eager folding & vector broadcasting ----------
+
+// Add convenience Expr + f32 (left expr)
+impl Add<f32> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: f32) -> Expr {
+        self + Expr::Constant(rhs)
+    }
+}
+
+// convenience: Expr * f32
+impl Mul<f32> for Expr {
+    type Output = Expr;
+    fn mul(self, rhs: f32) -> Expr { self * Expr::Constant(rhs) }
+}
+
+
+impl Mul<Expr> for f32 {
+    type Output = Expr;
+    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+}
+
+impl Mul<Expr> for u32 {
+    type Output = Expr;
+    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+}
+
+impl Mul<Expr> for i32 {
+    type Output = Expr;
+    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+}
+
+
+// Add convenience Expr + f32 (left expr)
+impl Add<u32> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: u32) -> Expr {
+        self + Expr::Constant(rhs as f32)
+    }
+}
+
+// convenience: Expr * f32
+impl Mul<u32> for Expr {
+    type Output = Expr;
+    fn mul(self, rhs: u32) -> Expr { self * Expr::Constant(rhs as f32) }
+}
+
+
+// Add convenience Expr + f32 (left expr)
+impl Add<i32> for Expr {
+    type Output = Expr;
+    fn add(self, rhs: i32) -> Expr {
+        self + Expr::Constant(rhs as f32)
+    }
+}
+
+// convenience: Expr * f32
+impl Mul<i32> for Expr {
+    type Output = Expr;
+    fn mul(self, rhs: i32) -> Expr { self * Expr::Constant(rhs as f32) }
+}
+
+
