@@ -65,7 +65,9 @@ cd mile/mile_core
 
 ---
 
-## 概念抽象
+## 📄 许可证
+
+Mile 引擎由 **unco999** 开发，开源许可遵循 [MIT License](./LICENSE)。
 
 
 
