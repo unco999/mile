@@ -1,0 +1,13 @@
+[package]
+name = "mile_font"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ttf-parser = "0.25.1"
+wgpu = "26"
+bytemuck = "1.24.0"
+rayon = "1.11.0"
+mile_api = { path = "../mile_api"}
+pollster = "0.4"
+image = "0.25.8"

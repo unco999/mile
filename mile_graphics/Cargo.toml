@@ -1,0 +1,12 @@
+[package]
+name = "mile_graphics"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = "26"
+bytemuck = "1.24.0"
+winit = "0.30"
+pollster = "0.4"
+mile_api = { path = "../mile_api" }   # 引用核心逻辑
+

@@ -1,0 +1,13 @@
+[package]
+name = "mile_core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mile_graphics = { path = "../mile_graphics"}
+mile_ui = { path = "../mile_ui"}
+mile_api = { path = "../mile_api"}
+mile_font = { path = "../mile_font"}
+winit = "0.30"
+rand = "0.9"  # 或者最新版本
+wgpu = "26"
