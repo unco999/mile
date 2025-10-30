@@ -21,6 +21,7 @@ fn main() {
     
     // ✅ 初始化 app，并保存 proxy
     let mut app = App {
+        gpu_kennel:None,
         mile_font:None,
         proxy: Some(proxy.clone()),
         wgpu_context: None,

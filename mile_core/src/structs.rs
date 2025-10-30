@@ -4,6 +4,7 @@ use std::{
 
 use mile_api::{Computeable, CpuGlobalUniform, GpuDebug, Renderable};
 use mile_font::structs::MileFont;
+use mile_gpu_dsl::pipeline::{GpuKennel, MileSimpleBuild, create_mile_shader, plan_to_mile_simple_empty};
 use mile_graphics::structs::{WGPUContext};
 use mile_ui::{
     mile_ui_wgsl::mile_test, structs::{AnimOp, MouseState, PanelEvent, PanelField, PanelInteraction}, GpuUi, Panel
@@ -27,6 +28,7 @@ pub struct App {
     pub wgpu_gpu_ui: Option<Arc<RefCell<GpuUi>>>,
     pub mile_font:Option<Arc<RefCell<MileFont>>>,
     pub proxy: Option<EventLoopProxy<AppEvent>>,
+    pub gpu_kennel:Option<Arc<RefCell<GpuKennel>>>,
     pub global_state: Arc<Mutex<GlobalState>>,
     pub last_tick: Instant,
     pub tick_interval: Duration,
@@ -49,7 +51,11 @@ impl App {
     }
 
     pub fn compute(&self){
-        if let (Some(ui_cell),Some(mile_font)) = (&self.wgpu_gpu_ui,&self.mile_font) {
+        if let (
+        Some(ui_cell)
+        ,Some(mile_font)
+        ,Some(gpu_kennel)
+    ) = (&self.wgpu_gpu_ui,&self.mile_font,&self.gpu_kennel) {
             let ctx = self.wgpu_context.as_ref().unwrap();
             ui_cell.borrow_mut().mouse_press_tick_first(&ctx.queue);
             ui_cell.borrow_mut().interaction_compute(&ctx.device,&ctx.queue);
@@ -58,6 +64,7 @@ impl App {
             ui_cell.borrow_mut().mouse_press_tick_post(&ctx.queue);
             mile_font.borrow().batch_enqueue_compute(&ctx.device,&ctx.queue);
             mile_font.borrow_mut().copy_store_texture_to_render_texture(&ctx.device,&ctx.queue);
+            gpu_kennel.borrow_mut().compute(&ctx.device,&ctx.queue);
         }
     }
 
@@ -250,10 +257,12 @@ impl ApplicationHandler<AppEvent> for App {
         let global_unifrom = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
 
         let mut gpu_ui = GpuUi::new(&ctx.device, ctx.config.format, self.global_state.clone(),global_unifrom.clone(),&window);
+        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue);
 
         self.wgpu_context = Some(ctx.clone());
         self.wgpu_gpu_ui = Some(Arc::new(RefCell::new(gpu_ui)));
         self.mile_font = Some(Arc::new(RefCell::new(MileFont::new(global_unifrom.clone()))));
+        self.gpu_kennel = Some(Arc::new(RefCell::new(gpu_kennel)));
         self.ui_build();
         
         // self.read_all_image();
@@ -402,6 +411,11 @@ impl ApplicationHandler<AppEvent> for App {
                             if let Some(mile_font) = &self.mile_font{
                                 mile_font.borrow_mut().test_entry(&ctx.queue);
                                 mile_font.borrow_mut().test_entry_text(&ctx.queue);
+                            }
+
+                            if let Some(gpu_kennel) = &self.gpu_kennel{
+                                let mut gpu_kennel = gpu_kennel.borrow_mut();
+                                gpu_kennel.test_entry(&ctx.device,&ctx.queue);
                             }
 
                         }
