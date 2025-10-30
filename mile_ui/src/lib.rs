@@ -3,7 +3,8 @@ use flume::{Receiver, Sender};
 use glam::{Vec2, vec2};
 use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
 use itertools::Itertools;
-use mile_api::{CpuGlobalUniform, GlobalUniform, GpuDebug, Renderable};
+use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, Renderable};
+use mile_gpu_dsl::core::Expr;
 use mile_graphics::structs::{
      GlobalState, GlobalStateRecord, GlobalStateType, 
 };
@@ -23,12 +24,14 @@ use crate::{
     mile_ui_wgsl::{StateConfigDes, StateNetWorkConfig, StateNetWorkConfigDes, UiState, WgslResult},
     structs::{
         AnimOp, CollectionId, EasingMask, GpuPanelAttach, GpuUiCollection, GpuUiInfluence, GpuUiTextureInfo, ImageRawInfo, MouseState, PanelAttachContext, PanelCollectionState, PanelEvent, PanelField, PanelInteraction, PanelInteractionHold, PanelState, TextureAtlas, TextureAtlasSet, UiCollection, UiInfluence, UiInfluenceType, UiRelation, UiRelationGpuBuffers, UiRelationNetwork, UiTextureInfo
-    }, ui_network::NetworkStore,
+    }, ui_network::{NetworkStore, PanelId},
 };
 pub mod structs;
 
 const PADDING: u32 = 2; // 每张图像间的像素间距，防止GPU采样溢出
 const DEFAULT_ATLAS_SIZE: u32 = 2048;
+
+type PANEL_ID = u32;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -48,7 +51,18 @@ pub enum CpuPanelEvent {
     TotalUpdate(FRAME),
     SwapInteractionFrame(FRAME),
     WgslResult(WgslResult),
-    SpecielAnim((u32,TransformAnimFieldInfo))
+    SpecielAnim((u32,TransformAnimFieldInfo)),
+    Frag((FRAME, UiInteractionScope)),
+    Vertex((FRAME, UiInteractionScope)),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable,Default)]
+pub struct GpuKennelPanelDes {
+    pub color_input: [u32; 4], // 16 字节
+    pub vertex_input: [u32; 4], // 16 字节
+    pub blender: u32,           // 4 字节
+    pub self_old_index: u32,               // 4 字节（填充到 16 字节）
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +90,8 @@ pub type DragCallback = Box<dyn FnMut(u32)>;
 pub type HoverCallback = Box<dyn FnMut(u32)>;
 pub type EntryCallBack = Box<dyn FnMut(u32)>;
 pub type OutCallBack = Box<dyn FnMut(u32)>;
+pub type EntryFragBack = Box<dyn FnMut(u32)>;
+pub type EntryVertexBack = Box<dyn FnMut(u32)>;
 
 #[derive(Default)]
 pub struct PanelInteractionTrigger {
@@ -84,6 +100,8 @@ pub struct PanelInteractionTrigger {
     pub hover_callbacks: HashMap<UiInteractionScope, Vec<HoverCallback>>,
     pub entry_callbacks: HashMap<UiInteractionScope, Vec<EntryCallBack>>,
     pub out_callbacks: HashMap<UiInteractionScope, Vec<OutCallBack>>,
+    pub frag_callbacks: HashMap<UiInteractionScope, Vec<EntryFragBack>>,
+    pub vertex_callbacks: HashMap<UiInteractionScope, Vec<EntryVertexBack>>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -218,7 +236,8 @@ pub struct Panel {
     // === 16-byte 块 5 ===
     pub state: u32,          // 4
     pub collection_state:u32,
-    pub pad: [u32; 2],       // 12, 补齐到 16
+    pub kennel_des_id: u32,       // 12, 补齐到 16
+    pub pad_1:u32,       // 12, 补齐到 16
 }
 
 
@@ -470,6 +489,8 @@ pub struct GpuUi {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
+    pub kennel_des_buffer:Option<wgpu::Buffer>,
+    pub kennel_des_record:HashMap<PanelId,GpuKennelPanelDes>,
     pub num_indices: u32,
     pub num_instances: u32,
     pub pipeline: Option<wgpu::RenderPipeline>,
@@ -495,6 +516,9 @@ pub struct GpuUi {
     pub global_layout:Option<GlobalLayout>,
     pub custom_wgsl:Box<[CustomWgsl;1024]>,
     pub custom_wgsl_buffer:wgpu::Buffer,
+    pub kennel_compute_buffer:wgpu::Buffer,
+    pub ui_kennel_des:KennelReadDesPool<PANEL_ID>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<mile_gpu_dsl::core::Expr>>>,
     gpu_debug:RefCell<GpuDebug>,
     indirects_len: u32,
 }
@@ -810,6 +834,8 @@ impl GpuUi {
         global_state: Arc<Mutex<GlobalState>>,
         cpu_global_uniform:Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
+        kennel_compute_buffer:&wgpu::Buffer,
+        global_hub:Arc<GlobalEventHub<ModuleEvent<mile_gpu_dsl::core::Expr>>>
     ) -> Self {
         println!(
             "size = {}, align = {}",
@@ -903,6 +929,10 @@ impl GpuUi {
         gpu_debug.create_buffer(device);
 
         Self {
+            kennel_des_record:HashMap::new(),
+            global_hub,
+            ui_kennel_des:KennelReadDesPool::default(),
+            kennel_compute_buffer:kennel_compute_buffer.clone(),
             gpu_debug:RefCell::new(gpu_debug),
             custom_wgsl:wgsl_structs,
             custom_wgsl_buffer:wgsl_buffer,
@@ -938,6 +968,7 @@ impl GpuUi {
             animation_pipe_line_cahce: AnimationPipelineCache::default(),
             interaction_pipeline_cache: InteractionPipelineCache::default(),
             panel_interaction_trigger: PanelInteractionTrigger::default(),
+            kennel_des_buffer:None,
         }
     }
 
@@ -1013,7 +1044,6 @@ impl GpuUi {
     pub fn create_interaction_compute_pipeline(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
     ) {
         let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Interaction Compute Shader"),
@@ -1948,7 +1978,34 @@ impl GpuUi {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
+        });
+
+        let kennel_des_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PanelAnimDelta Global Buffer"),
+            size: std::mem::size_of::<GpuKennelPanelDes>() as u64  * 512 as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1971,9 +2028,18 @@ impl GpuUi {
                     binding: 3,
                     resource:  self.custom_wgsl_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource:  self.kennel_compute_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource:kennel_des_buffer.as_entire_binding(),
+                },
             ],
         });
 
+        self.kennel_des_buffer = Some(kennel_des_buffer);
         self.render_bind_group = Some(bind_group);
         self.render_bind_group_layout = Some(bind_group_layout);
 
@@ -2202,22 +2268,111 @@ for atlas_key in atlas_keys.iter() {
         queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&texture_id));
     }
 
+    pub fn change_panel_kennel_des_idx(&mut self, queue: &wgpu::Queue,panel_id:u32,kennel_des_idx:u32){
+        let offsets = (panel_id as wgpu::BufferAddress  * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
+        let field_offsets = offset_of!(Panel,kennel_des_id) as  wgpu::BufferAddress;
+        queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&kennel_des_idx));
+    }
+
+    #[inline]
+    pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
+        for ev in self.global_hub.poll() {
+            match ev {
+           mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {
+                let panel_id = parmas.idx;
+                    
+                // 证明是一个顶点回读
+                if (parmas._ty & ModuleEventType::Vertex.bits()) != 0 {
+                    // 获取或插入面板
+                    let self_old_index = self.kennel_des_record.len() as u32;
+                    let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
+                        // 如果没有找到对应的面板，则创建一个新的面板
+                        GpuKennelPanelDes {
+                            color_input: [u32::MAX,u32::MAX,u32::MAX,u32::MAX], // 假设初始化默认值
+                            vertex_input: parmas.data,           // 使用传入的数据初始化
+                            blender: 0,                          // 假设初始化为 0
+                            self_old_index: self_old_index as u32,                   // 假设初始化为 0
+                        }
+                    });
+                    
+                
+                    // 计算偏移并写入缓冲区
+                    let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
+                    queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
+                    self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                }
+
+                 if (parmas._ty & ModuleEventType::Frag.bits()) != 0 {
+                    // 获取或插入面板
+                    let self_old_index = self.kennel_des_record.len() as u32;
+                    let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
+                        // 如果没有找到对应的面板，则创建一个新的面板
+                        GpuKennelPanelDes {
+                            color_input: parmas.data, // 假设初始化默认值
+                            vertex_input:[u32::MAX,u32::MAX,u32::MAX,u32::MAX],           // 使用传入的数据初始化
+                            blender: 0,                          // 假设初始化为 0
+                            self_old_index: self_old_index as u32,                   // 假设初始化为 0
+                        }
+                    });
+                    
+                    println!("写入片段着色器 {:?} 写入的panel_id{:?} 写入的desid {}",parmas.data,panel_id,self_old_index);
+                
+                    // 计算偏移并写入缓冲区
+                    let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
+                    queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
+                    self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                }
+            }
+                _=>{}
+            }
+        }
+    }
+
     #[inline]
     pub fn process_ui_events(&mut self, queue: &wgpu::Queue, device: &Device) {
         for ev in self.event_hub.poll() {
             match ev {
-                CpuPanelEvent::WgslResult(wgsl_result) =>{
-                    match wgsl_result {
-                        WgslResult::FragResult(frag_result) => {
-                            self.set_frag_slot(frag_result.panel_id as usize, frag_result.slot, frag_result.color,queue);
-                        },
-                        WgslResult::VertexResult(vertex_result) => {
-                            self.set_frag_slot(vertex_result.panel_id as usize, vertex_result.slot, vertex_result.vertex,queue);
-                        },
+                CpuPanelEvent::Frag((panel_id,frag_event)) =>{
+                    println!("收到自定义片段动画事件 {:?}",frag_event);
+                    for (callbacks) in self
+                        .panel_interaction_trigger
+                        .frag_callbacks
+                        .get_mut(&frag_event)
+                    {
+                        for cb in callbacks.iter_mut() {
+                            cb(panel_id);
+                        }   
                     }
-                } 
+                },
+                CpuPanelEvent::Vertex((panel_id,vertex)) =>{
+                    println!("收到自定义顶点动画事件 {:?}",vertex);
+                    for (callbacks) in self
+                        .panel_interaction_trigger
+                        .vertex_callbacks
+                        .get_mut(&vertex)
+                    {
+                        for cb in callbacks.iter_mut() {
+                            cb(panel_id);
+                        }   
+                    }
+                },
                 CpuPanelEvent::StateTransition(state_event) => {
     
+                    let emit = self.event_hub.sender.clone();
+
+                    if state_event.state_config_des.is_open_frag{
+                        let _ = emit.send(CpuPanelEvent::Frag((state_event.panel_id,UiInteractionScope{
+                            panel_id: state_event.panel_id,
+                            state: state_event.new_state.0,
+                        })));
+                    }
+
+                    if state_event.state_config_des.is_open_vertex{
+                        let _ = emit.send(CpuPanelEvent::Vertex((state_event.panel_id,UiInteractionScope{
+                            panel_id: state_event.panel_id,
+                            state: state_event.new_state.0,
+                        })));
+                    }
 
                     println!("当前UI元素改变了状态 {:?}", state_event.new_state);
                     self.gpu_change_ui_state_with_transtion(queue, device, &state_event);
@@ -2814,8 +2969,9 @@ atlas.row_height = atlas.row_height.max(img_height);
                     transparent: 1.0,
                     texture_id,
                     state: 0,
-                    pad: [0u32; 2],
                     collection_state: 0,
+                    kennel_des_id: 0,
+                    pad_1: 0,
                 };
 
                 // 添加到 CPU 实例池

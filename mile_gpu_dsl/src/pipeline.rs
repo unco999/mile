@@ -1,10 +1,10 @@
-use std::ptr::eq;
+use std::{ptr::eq, sync::Arc};
 
 use bytemuck::{Pod, Zeroable};
-use mile_api::{Computeable, Tick};
+use mile_api::{Computeable, GlobalEventHub, ModuleEventType, ModuleParmas, Tick};
 use wgpu::util::{DeviceExt, DownloadBuffer};
-
-use crate::{core::{BinaryOp, UnaryFunc, dsl::{self, vec3, vec4}}, dsl::if_expr, mat::op::{MatOp, Matrix, MatrixPlan, compile_to_matrix_plan}};
+use mile_api::{MileResultDes,ModuleEvent};
+use crate::{core::{BinaryOp, Expr, UnaryFunc, dsl::{self, wvec3, wvec4}}, dsl::if_expr, mat::op::{MatOp, Matrix, MatrixPlan, compile_to_matrix_plan}};
 
 // -------------------- GPU ABI: Header / Stage / Recipe --------------------
 
@@ -22,13 +22,7 @@ pub struct MileDesHeader {
 }
 
 
-/**
- * instance_id 来获取MileSimpleGPU里面的计算结果 共给vertex 和 frag 使用
- */
-#[derive(Debug)]
-pub struct MileResultDes {
-    pub row_start:[u32;4],
-}
+
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -363,6 +357,7 @@ pub struct GpuKennel {
     pub elm_stage_count: u32,
     pub rows_each: Vec<u32>,
     pub util_tick:Tick,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr>>>
 }
 
 pub fn empty_build() -> MileSimpleBuild {
@@ -382,11 +377,16 @@ pub fn empty_build() -> MileSimpleBuild {
 impl GpuKennel {
 
     pub fn test_entry(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
-        let expr = vec3(1.0,1.0,if_expr(dsl::eq(3.0, 4.0), 5.0, 10.0)) + vec3(2.0, 2.0, 5.0);
-        let plan = compile_to_matrix_plan(&expr,&[]);
-        let des = self.set_plan(device, queue, &plan, 3, &[]);
-        println!("数据偏移 {:?}",des);
+        let expr = wvec3(1.0,1.0,if_expr(dsl::eq(3.0, 4.0), 5.0, 10.0)) + wvec3(2.0, 2.0, 5.0);
+
     }
+
+    pub fn expr_entry_plan(&mut self,idx:u32,expr:&Expr,device: &wgpu::Device,queue:  &wgpu::Queue)->MileResultDes{
+        let plan = compile_to_matrix_plan(expr,&[]);
+        let des = self.set_plan(device, queue, &plan, 3, &[]);
+        des
+    }
+
 
     pub fn read_call_back_cpu(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
         if(!self.util_tick.tick()) {return;}
@@ -448,6 +448,10 @@ pub fn init_buffer(
     });
 }
 
+pub fn get_compute_buffer(&mut self)->wgpu::Buffer{
+    self.mk.v_buf.clone()
+}
+
 pub fn set_plan(
     &mut self,
     device: &wgpu::Device,
@@ -505,29 +509,37 @@ pub fn set_plan(
 
 }
 
-    pub fn new_empty(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn new_empty(device: &wgpu::Device, queue: &wgpu::Queue,global_hub:Arc<GlobalEventHub<ModuleEvent<Expr>>>) -> Self {
         let build = empty_build();
         let mk = build_mile_simple_gpu(device, queue, &create_mile_shader(device), &build);
         Self {
             mk,
             elm_stage_count: 0,
             rows_each: vec![],
-            util_tick:Tick::new(1)
+            util_tick:Tick::new(1),
+            global_hub
         }
     }
 
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        shader_module: &wgpu::ShaderModule,
-        build: MileSimpleBuild,
-    ) -> Self {
-        let mk = build_mile_simple_gpu(device, queue, shader_module, &build);
-        Self {
-            mk,
-            elm_stage_count: build.header.elm_stage_count,
-            rows_each: build.elm_rows_each,
-            util_tick:Tick::new(1)
+    #[inline]
+    pub fn process_ui_events(&mut self, device: &wgpu::Device,queue: &wgpu::Queue) {
+        for ev in self.global_hub.poll() {
+            match ev {
+                mile_api::ModuleEvent::KennelPush(parmas) => {
+                    let des = self.expr_entry_plan(parmas.idx, &parmas.data, device, queue);
+                    self.global_hub.push(ModuleEvent::KennelPushResultReadDes(
+                        ModuleParmas{
+                            module_name: "GpuKennel",
+                            idx: parmas.idx,
+                            data: des.row_start,
+                            _ty: (ModuleEventType::PanelCustomRead).bits() | parmas._ty,
+                        }
+                    ));
+                },
+                _=>{
+
+                }
+            }
         }
     }
 

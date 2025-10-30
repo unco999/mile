@@ -1,12 +1,16 @@
 use std::{cell::RefCell, collections::HashMap, sync::{Arc, Mutex}, time::{Duration, Instant}};
 
+use mile_api::{GlobalEventHub, ModuleEvent, ModuleParmas};
 use mile_font::structs::MileFont;
+use mile_gpu_dsl::core::Expr;
 use mile_graphics::structs::{GlobalState, WGPUContext};
 use mile_ui::{structs::{AnimOp, EasingMask, PanelField, PanelInteractionHold}, TransformAnimFieldInfo};
 use winit::event_loop::{self, EventLoop};
 use crate::structs::{App, AppEvent};
 pub mod structs;
-    
+
+
+
 fn main() {
  // ✅ 正确：创建带用户事件的 EventLoop
     let mut event_loop = EventLoop::<AppEvent>::with_user_event();
@@ -18,9 +22,14 @@ fn main() {
     let global_state: Arc<Mutex<GlobalState>> = Arc::new(Mutex::new(GlobalState::new()));
     let gs = global_state.clone();
 
+
+    let global_hub = Arc::new(GlobalEventHub::<ModuleEvent<ModuleParmas<Expr>>>::new());
+    
+
     
     // ✅ 初始化 app，并保存 proxy
     let mut app = App {
+        global_hub,
         gpu_kennel:None,
         mile_font:None,
         proxy: Some(proxy.clone()),

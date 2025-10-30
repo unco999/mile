@@ -9,7 +9,7 @@ fn vec4_test(){
     use crate::mat::op::compile_to_matrix_plan;
     use crate::core::*;
 
-    let expr = vec4(1.0,1.0,1.0,5.0) + vec4(2.0, 2.0, 2.0,5.0);
+    let expr = wvec4(1.0,1.0,1.0,5.0) + wvec4(2.0, 2.0, 2.0,5.0);
     
     let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
     let inputs = vec![

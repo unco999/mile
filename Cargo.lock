@@ -1331,7 +1331,9 @@ dependencies = [
 name = "mile_api"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.9.4",
  "bytemuck",
+ "flume",
  "wgpu",
  "winit",
 ]
@@ -1404,6 +1406,7 @@ dependencies = [
  "image",
  "itertools 0.11.0",
  "mile_api",
+ "mile_gpu_dsl",
  "mile_graphics",
  "slotmap",
  "wgpu",

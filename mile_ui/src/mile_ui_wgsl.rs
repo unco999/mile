@@ -1,8 +1,10 @@
 use std::{any::Any, cell::{Cell, RefCell}, collections::{self, HashMap}, default, fmt::{self, Debug}, marker::PhantomData, path::Path, rc::Rc, sync::Arc};
 use flume::Sender;
-use glam::{vec2, Vec2};
+use glam::{Vec2, vec2, vec4};
+use mile_api::{ModuleEventType, ModuleParmas};
+use mile_gpu_dsl::{core::{Expr, dsl::{eq, sin, wvec4}}, dsl::*};
 use wgpu::naga::keywords::wgsl::RESERVED;
-use crate::{structs::{ AnimOp, CollectionId, CollectionSampling, EasingMask, EntryState, PanelEvent, PanelField, PanelInteraction, RelLayoutMask}, ui_network::{ collection_by_name, rel_by_name, Collection, Rel}, CpuPanelEvent, GpuUi, NetWorkTransition, Panel, StateTransition, TransformAnimFieldInfo, UIEventHub, UiInteractionScope};
+use crate::{CpuPanelEvent, GpuUi, NetWorkTransition, PANEL_ID, Panel, StateTransition, TransformAnimFieldInfo, UIEventHub, UiInteractionScope, structs::{ AnimOp, CollectionId, CollectionSampling, EasingMask, EntryState, PanelEvent, PanelField, PanelInteraction, RelLayoutMask}, ui_network::{ Collection, Rel, collection_by_name, rel_by_name}};
 
 pub type StateId = u32;
 
@@ -104,7 +106,7 @@ pub struct StateNetWorkConfig{
     pub call: Vec<Box<dyn FnMut(u32) + 'static>>,
     insert_collection:Option<u32>,
     exit_collection:Option<ExitCollectionOp>,
-    immediately_anim:bool
+    immediately_anim:bool,
 }
 
 impl Default for StateNetWorkConfig {
@@ -157,7 +159,7 @@ impl From<Call> for PanelInteraction {
 
 
 /// 
-pub struct StateConfig {
+pub struct StateConfig<T> {
     pub state_id:StateId,
     pub size: Option<Vec2>,
     pub with_image_size:bool,
@@ -167,6 +169,8 @@ pub struct StateConfig {
     pub texture_id:Option<String>,
     pub call: HashMap<Call,Box<dyn FnMut(u32) + 'static>>,
     pub entry_frag_vertex: Vec<Box<dyn FnMut(u32) + 'static>>,
+    pub vertex: Option<Box<dyn FnMut(&mut T, u32) -> Expr + 'static>>,
+    pub frag: Option<Box<dyn FnMut(&mut T, u32) -> Expr + 'static>>,
 }
 
 #[derive(Debug,Clone)]
@@ -177,11 +181,13 @@ pub struct StateConfigDes {
     pub offset:Option<Vec2>,
     pub texture_id:Option<String>,
     pub open_api:Vec<Call>,
+    pub is_open_frag:bool,
+    pub is_open_vertex:bool
 }
 
 
 
-impl StateConfig {
+impl<T> StateConfig<T> {
     fn to_des(&self)->StateConfigDes{
         StateConfigDes{
             state_id:self.state_id,
@@ -189,14 +195,16 @@ impl StateConfig {
             pos: self.pos,
             texture_id:self.texture_id.clone(),
             open_api:self.call.keys().cloned().collect::<Vec<_>>(),
-            offset:self.offset
+            offset:self.offset,
+            is_open_frag:self.frag.is_some(),
+            is_open_vertex:self.vertex.is_some(),
         }
     }
 }
 
 
 // 手动实现 Debug，忽略 `call`
-impl fmt::Debug for StateConfig {
+impl<T> fmt::Debug for StateConfig<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StateConfig")
             .field("size", &self.size)
@@ -206,7 +214,7 @@ impl fmt::Debug for StateConfig {
     }
 }
 
-impl Default for StateConfig {
+impl<T> Default for StateConfig<T> {
     fn default() -> Self {
         Self {
             size: None,
@@ -217,13 +225,13 @@ impl Default for StateConfig {
 }
 
 /// PendingCallbacks 按状态存储
-pub struct PendingCallbacks {
+pub struct PendingCallbacks<T> {
     pub current_state: Cell<StateId>,
-    pub states: RefCell<HashMap<StateId, StateConfig>>,
+    pub states: RefCell<HashMap<StateId, StateConfig<T>>>,
 }
 
 
-impl Default for PendingCallbacks {
+impl<T> Default for PendingCallbacks<T> {
     fn default() -> Self {
         Self {
             current_state: Cell::new(0),
@@ -236,15 +244,14 @@ impl Default for PendingCallbacks {
 pub struct UiState(pub StateId);
 
 pub struct Mui<T> {
-    pub pending: PendingCallbacks,
+    pub pending: PendingCallbacks<T>,
     pub pending_net_work:PendingStateNetWorkBinding,
     pub panel_id: u32,
     pub data: Rc<RefCell<T>>,
     pub default_state:UiState,
     pub emit:Sender<CpuPanelEvent>,
     pub state_config:Rc<RefCell<HashMap<StateId,StateConfigDes>>>,
-    pub wgsl_code:RefCell<Vec<(UiState,EntryState,String)>>,
-    pub ui_out:Option<Box<dyn FnMut(u32) + 'static>>
+    pub ui_out:Option<Box<dyn FnMut(u32) + 'static>>,
 }
 
 #[derive(Clone,Debug)]
@@ -280,7 +287,7 @@ where
     /// 如果当前状态没有设置，就 fallback 到默认状态
     pub fn get_field<F, R>(&self, state_id: StateId, field: F) -> R
     where
-        F: Fn(&StateConfig) -> Option<R>,
+        F: Fn(&StateConfig<T>) -> Option<R>,
         R: Clone,
     {
         let states = self.pending.states.borrow();
@@ -332,16 +339,39 @@ where
             default_state:UiState(0),
             emit: send,
             state_config:Rc::new(RefCell::new(HashMap::new())),
-            wgsl_code:RefCell::new(vec![]),
             pending_net_work: PendingStateNetWorkBinding::default(),
-            ui_out:None
+            ui_out:None,
         }
     }
 
-    pub fn wgsl(&self, anim_entry:EntryState,code: &str) -> &Self {
-        self.wgsl_code.borrow_mut().push((UiState(self.pending.current_state.get()),anim_entry,(*code).to_string()));
+
+
+    pub fn vertex<F>(&self,f:F)-> &Self 
+        where
+        F: Fn(&mut T, u32)-> Expr + 'static
+     {
+        let curr_state = self.pending.current_state.get();
+        let mut pending = self.pending.states.borrow_mut();
+        let mut config_o = pending.get_mut(&curr_state);
+        if let Some(config) = config_o{
+            config.vertex = Some(Box::new(f));
+        };
         self
     }
+
+    pub fn frag<F>(&self,f:F)-> &Self 
+        where
+        F: Fn(&mut T, u32) -> Expr + 'static
+     {
+        let curr_state = self.pending.current_state.get();
+        let mut pending = self.pending.states.borrow_mut();
+        let mut config_o = pending.get_mut(&curr_state);
+        if let Some(config) = config_o{
+             config.frag = Some(Box::new(f));
+        };
+        self
+    }
+
 
     pub fn default_state(&mut self,state: UiState) -> &Self{
         self.default_state = state;
@@ -366,31 +396,14 @@ where
             state_id:state.0,
             entry_frag_vertex:vec![],
             z_index:Some(0),
-            with_image_size:false
+            with_image_size:false,
+            vertex:None,
+            frag:None
         });
         // self
         self
     }
 
-    pub fn frag<F>(&self,cb: F) -> &Self
-    where
-        F: Fn(&mut T, u32)->WgslResult + 'static,
-    {
-        {
-            let curr_state = self.pending.current_state.get();
-            let mut pending = self.pending.states.borrow_mut();
-            let mut config_o = pending.get_mut(&curr_state);
-            let mut config = config_o.unwrap();
-            let input_rc = self.data.clone();
-            let emit = self.emit.clone();
-            config.entry_frag_vertex.push(Box::new(move |panel_id| {
-                let mut input = input_rc.borrow_mut();
-                let result = cb(&mut input,panel_id);
-                emit.send(CpuPanelEvent::WgslResult(result));
-            }));
-        }
-        self
-    }
 
     pub fn texture(&self,path:&str)->&Self{
         let state = &self.pending.current_state.get();
@@ -487,6 +500,8 @@ where
 
     }
 
+
+
     pub fn net_work_build(&self,panel_id:u32){
         // let defualt_state = &self.default_state.0;
         // let net_work_config = self.pending_net_work.state_net_work.borrow();
@@ -515,16 +530,24 @@ where
                     }
             ));
         }
-
-
     }
 
     
     pub fn build(&self,gui_ui:Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::Device) {
         let defualt_state = &self.default_state.0;
-        let states = self.pending.states.borrow();        
+        let mut transfrom_config_des:StateConfigDes;
+        {
+            let des_mut =self.state_config.borrow();
+            let config_des_copy = des_mut.get(&self.default_state.0).cloned().unwrap();
+            transfrom_config_des = config_des_copy.clone();
+            drop(des_mut);
+        }
+
+        let states = self.pending.states.borrow();    
+            
 
         let mut ui = gui_ui.borrow_mut();
+        
 
         let texture_path = self.get_field(*defualt_state, |e|e.texture_id.clone());
 
@@ -572,7 +595,8 @@ where
             texture_id:raw_image_info.index,
             state:*defualt_state,
             collection_state:0,
-            pad: [0u32;2],
+            kennel_des_id:u32::MAX,
+            pad_1:0,
         };
 
         println!("创造了新的面板 {:?}",panel);
@@ -588,6 +612,9 @@ where
         let mut to_entry_register: Vec<(Box<dyn FnMut(u32) + 'static>,u32)> = Vec::new();
         let mut to_out_register: Vec<(Box<dyn FnMut(u32) + 'static>,u32)> = Vec::new();
 
+        let mut to_frag_register= RefCell::new(Vec::new());
+        let mut to_vertex_register = RefCell::new(Vec::new());
+
 
         let mut states = self.pending.states.borrow_mut();
             
@@ -596,6 +623,17 @@ where
             let emit = self.emit.clone();
             let state_des = state_cfg.to_des();
             
+            if let Some(frag)  = state_cfg.frag.take(){
+                {
+                    let mut to_frag_register = to_frag_register.borrow_mut();
+                    to_frag_register.push((frag,*_state_id));
+                }
+            }
+
+            if let Some(vertex) = state_cfg.vertex.take(){
+                    let mut to_vertex_register = to_vertex_register.borrow_mut();
+                    to_vertex_register.push((vertex,*_state_id));
+            }
             
             to_out_register.push((Box::new(move |panel_id|{
                 let mut des = state_des.clone();  
@@ -647,12 +685,55 @@ where
             .push(cb);
         }
 
+        for (mut cb,state) in to_frag_register.borrow_mut().drain(..){
+            let data_ref = self.data.clone();
+            println!("在{}状态注册了自定义frag",state);
+            let emit = ui.global_hub.sender.clone();
+            let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id: PANEL_ID| {
+               // 数据的可变借用
+
+               let mut data = data_ref.borrow_mut();
+               let expr:Expr = cb(&mut data, panel_id); // 使用闭包
+               let _ = emit.send(mile_api::ModuleEvent::KennelPush(ModuleParmas{
+                   module_name: "mile_ui_wgsl",
+                   idx: panel_id,
+                   data: expr,
+                   _ty: (ModuleEventType::Push| ModuleEventType::Frag).bits(),
+               }));
+            });
+            ui.panel_interaction_trigger
+            .frag_callbacks
+            .entry(UiInteractionScope { panel_id: curr_id, state })
+            .or_insert_with(Vec::new)
+            .push(wrap);
+        }
+
+        for (mut cb,state) in to_vertex_register.borrow_mut().drain(..){
+            let data_ref = self.data.clone();
+            println!("在{}状态注册了自定义vertex",state);
+            let emit = ui.global_hub.sender.clone();
+            let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id: PANEL_ID| {
+               // 数据的可变借用
+               let mut data = data_ref.borrow_mut();
+
+               let expr:Expr = cb(&mut data, panel_id); // 使用闭包
+               let _ = emit.send(mile_api::ModuleEvent::KennelPush(ModuleParmas{
+                   module_name: "mile_ui_wgsl",
+                   idx: panel_id,
+                   data: expr,
+                   _ty: (ModuleEventType::Push| ModuleEventType::Vertex).bits(),
+               }));
+            });
+            ui.panel_interaction_trigger
+            .vertex_callbacks
+            .entry(UiInteractionScope { panel_id: curr_id, state })
+            .or_insert_with(Vec::new)
+            .push(wrap);
+        }
+
 
         // 现在安全地注册回调
         for (call_type, mut cb,state) in to_register {
-            
- 
-
             match call_type {
                 Call::CLICK => {
                     ui.panel_interaction_trigger
@@ -680,8 +761,15 @@ where
                 }
             }
         }
-    
+
+
         self.net_work_build(curr_id);
+
+        let _ = ui.event_hub.sender.send(CpuPanelEvent::StateTransition(StateTransition{
+            state_config_des: transfrom_config_des,
+            new_state: self.default_state,
+            panel_id: self.panel_id,
+        }));
         
     }   
         
@@ -859,11 +947,11 @@ where
 
 #[derive(Debug)]
 struct Data {
-    pub index: u32,
+    pub index: f32,
 }
 
 pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::Device) {
-    let data = Rc::new(RefCell::new(Data { index: 10 }));
+    let data = Rc::new(RefCell::new(Data { index: 0.1 }));
     let emit = gpu_ui.borrow_mut().event_hub.sender.clone();
 
 
@@ -1045,48 +1133,59 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::De
             .texture("backgound.png")
             .pos(vec2(300.0, 300.0))
             .size(700.0, 700.0)
-            .net_work()
-                .set_collection(collection_by_name("背包"))
-                .exit()
+            // .frag(|input,panel_id|{
+            //     wvec4(input.index, 0.0, 0.0, 1.0) 
+            // })
             .on()
                 .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-                    println!("当前点击的panel_id {:?}",panel_id);
+                    input.index += 0.1;
                 })
-                .call(Call::DRAG, move |input,panel_id|{
+                // .call(Call::DRAG, move |input,panel_id|{
 
-                })
+                // })
                 .next_state(Call::CLICK, UiState(1))
+                .exit()
+        .state(UiState(1))
+           .pos(vec2(400.0, 300.0))
+            .on()
+                .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
+                    input.index += 0.1;
+                })
+                // .call(Call::DRAG, move |input,panel_id|{
+
+                // })
+                .next_state(Call::CLICK, UiState(0))
                 .exit()
            .build(gpu_ui.clone(), queue, device);
 
 
-        for i in 1..9{
-            Mui::new(data.clone(),emit.clone())
-                .default_state(UiState(0))
-                .net_work()
-                    .set_collection(collection_by_name("背包元素"))
-                    .exit()
-                .state(UiState(0))
-                .pos(vec2(i as f32* 40.0, i as f32* 40.0))
-                .size_with_image()
-                .texture(format!("head ({}).png",i).as_str())
-                .on()
-                        .call(Call::HOVER, move|input,panel_id|{
-                            println!("被悬浮了 {panel_id}");
+        // for i in 1..9{
+        //     Mui::new(data.clone(),emit.clone())
+        //         .default_state(UiState(0))
+        //         .net_work()
+        //             .set_collection(collection_by_name("背包元素"))
+        //             .exit()
+        //         .state(UiState(0))
+        //         .pos(vec2(i as f32* 40.0, i as f32* 40.0))
+        //         .size_with_image()
+        //         .texture(format!("head ({}).png",i).as_str())
+        //         .on()
+        //                 .call(Call::HOVER, move|input,panel_id|{
+        //                     println!("被悬浮了 {panel_id}");
 
-                        })
-                    .next_state(Call::HOVER, UiState(1))
-                    .exit()
-                 .state(UiState(1))
-                    .offset(vec2(0.0, -30.0))
-                    .on()
-                        .call(Call::HOVER, move|input,panel_id|{
-                            println!("被悬浮了 {panel_id}");
-                        })
-                        .next_state(Call::OUT, UiState(0))
-                        .exit()
-                .build(gpu_ui.clone(), queue, device);
-        }
+        //                 })
+        //             .next_state(Call::HOVER, UiState(1))
+        //             .exit()
+        //          .state(UiState(1))
+        //             .offset(vec2(0.0, -30.0))
+        //             .on()
+        //                 .call(Call::HOVER, move|input,panel_id|{
+        //                     println!("被悬浮了 {panel_id}");
+        //                 })
+        //                 .next_state(Call::OUT, UiState(0))
+        //                 .exit()
+        //         .build(gpu_ui.clone(), queue, device);
+        // }
                 
 
         // Mui::new( data.clone(),emit.clone())

@@ -23,10 +23,17 @@ struct VertexInput {
 
     // === Block 5 ===
     @location(14) state: u32,               // panel state
-    @location(15) pad0: u32,                // pad[0]
+    @location(15) kennel_des_id: u32,                // pad[0]
     @location(16) pad1: u32,                // pad[1]
-    @location(17) pad2: u32,                // pad[2]
 };
+
+struct GpuKennelPanelDes {
+    color_input : array<u32, 4>,  // 16 bytes (4 * 4 bytes)
+    vertex_input : array<u32, 4>, // 16 bytes (4 * 4 bytes)
+    blender : u32,                // 4 bytes
+    self_old_index : u32,         // 4 bytes
+};
+
 
 struct GlobalUniform {
       // === block 1: atomic z/layouts ===
@@ -117,6 +124,10 @@ var<storage, read_write> global_uniform: GlobalUniform;
 @group(0) @binding(3)
 var<storage, read> custom_wgsl: array<CustomWgsl>;
 
+@group(0) @binding(4) var<storage, read> V : array<f32>;
+
+@group(0) @binding(5) var<storage, read> kennel_des_store : array<GpuKennelPanelDes>;
+
 @group(1) @binding(0)
 var ui_textures: binding_array<texture_2d<f32>>;
 
@@ -178,6 +189,7 @@ struct VertexOutput {
     @location(5) transparent:f32,
     @location(6) texture_id:u32,
     @location(7) uv: vec2<f32>,
+    @location(8) kennel_des_id:u32,
 };
 
 
@@ -232,6 +244,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 // }
 const WGSL_TIME: f32 = 9999999.0; // 与 Rust 的 MAX_TIME_SEC 对应
 const WGSL_SIN_TIME: f32 = 9999999.1; // 与 Rust 的 MAX_TIME_SEC 对应
+const U32_MAX: u32 = 4294967295u;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
@@ -252,12 +265,19 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sub_uv = sub_image_uv_min + (sub_image_uv_max - sub_image_uv_min) * uv;
     let color = textureSample(tex, samp, sub_uv);
 
-
+    let a = V[0];
     // let panel_frag: vec4<f32> = read_custom_frag(input.texture_id, 0);
 
     // mix 函数做线性混合
     // 这里用 panel_frag.a 控制混合比例
     // let final_color = mix(color, panel_frag, panel_frag.a); 
+
+    if(input.kennel_des_id != U32_MAX){
+        let kennel_des = kennel_des_store[input.kennel_des_id];
+        let output_color_offset = kennel_des.color_input;
+        let output_color_v = vec4<f32>(V[output_color_offset[0]],V[output_color_offset[1]],V[output_color_offset[2]],V[output_color_offset[3]]);
+        return output_color_v;
+    }
 
     // 保持原有透明度
     return vec4<f32>(color.rgb, color.a * input.transparent);

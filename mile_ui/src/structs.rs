@@ -36,6 +36,17 @@ impl<E: GpuPanelAttach> PanelAttachContext<E> {
 }
 
 bitflags! {
+    pub struct KennelUiBlend: u32 {
+        const Normal = 1 << 0;           // 1st bit
+        const Additive = 1 << 1;          // 2nd bit
+        const Multiplicative = 1 << 2;    // 3rd bit
+        const Screen = 1 << 3;            // 4th bit
+        const Difference = 1 << 4;        // 5th bit
+        const Weighted = 1 << 5;          // 6th bit (可以扩展)
+    }
+}
+
+bitflags! {
     /// Interaction Mask
     pub struct EntryState: u32 {
         const Enter = 0b00000001;
