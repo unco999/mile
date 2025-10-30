@@ -211,6 +211,9 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
     let top_outputs = rec(expr, variables, &mut matrices, &mut ops, &mut constant_values, &mut next_idx_local);
     let final_v_len = next_idx_local;
 
+    println!("当前的final_v_len {:?}",final_v_len);
+    println!("当前的top_outputs {:?}",top_outputs);
+
     MatrixPlan {
         matrices,
         ops,

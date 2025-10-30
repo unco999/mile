@@ -1,10 +1,34 @@
-use bytemuck::{Pod, Zeroable};
-use mile_api::Computeable;
-use wgpu::{util::DeviceExt};
+use std::ptr::eq;
 
-use crate::{core::{BinaryOp, UnaryFunc, dsl::vec3}, mat::op::{MatOp, Matrix, MatrixPlan, compile_to_matrix_plan}};
+use bytemuck::{Pod, Zeroable};
+use mile_api::{Computeable, Tick};
+use wgpu::util::{DeviceExt, DownloadBuffer};
+
+use crate::{core::{BinaryOp, UnaryFunc, dsl::{self, vec3, vec4}}, dsl::if_expr, mat::op::{MatOp, Matrix, MatrixPlan, compile_to_matrix_plan}};
 
 // -------------------- GPU ABI: Header / Stage / Recipe --------------------
+
+
+/**
+ * 这里描述的是所有的结构情况
+ */
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MileDesHeader {
+    pub L: u32,          // 每行有多少元素（即 lane 数量）
+    pub count: u32,      // `rows` 数量
+    pub rows_off: u32,   // `rows` 在 `v_buf` 中的偏移（字节单位）
+    pub _pad: u32,
+}
+
+
+/**
+ * instance_id 来获取MileSimpleGPU里面的计算结果 共给vertex 和 frag 使用
+ */
+#[derive(Debug)]
+pub struct MileResultDes {
+    pub row_start:[u32;4],
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -232,7 +256,7 @@ pub fn build_mile_simple_gpu(
     });
 
     // V 至少 4 字节
-    let v_size = (build.header.final_v_len as u64 * build.header.L as u64 * 4).max(4);
+    let v_size: u64 = (build.header.final_v_len as u64 * build.header.L as u64 * 4).max(4);
     let v_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("MK.V"),
         size: v_size,
@@ -338,6 +362,7 @@ pub struct GpuKennel {
     pub mk: MileSimpleGPU,
     pub elm_stage_count: u32,
     pub rows_each: Vec<u32>,
+    pub util_tick:Tick,
 }
 
 pub fn empty_build() -> MileSimpleBuild {
@@ -357,9 +382,30 @@ pub fn empty_build() -> MileSimpleBuild {
 impl GpuKennel {
 
     pub fn test_entry(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
-        let expr = vec3(1.0,1.0,1.0) + vec3(2.0, 2.0, 2.0);
+        let expr = vec3(1.0,1.0,if_expr(dsl::eq(3.0, 4.0), 5.0, 10.0)) + vec3(2.0, 2.0, 5.0);
         let plan = compile_to_matrix_plan(&expr,&[]);
-        self.set_plan(device, queue, &plan, 3, &[]);
+        let des = self.set_plan(device, queue, &plan, 3, &[]);
+        println!("数据偏移 {:?}",des);
+    }
+
+    pub fn read_call_back_cpu(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
+        if(!self.util_tick.tick()) {return;}
+        DownloadBuffer::read_buffer(
+            device,
+            queue,
+            &self.mk.v_buf.slice(0..256),
+            move |e|{
+                if let Ok(downloadBuffer) = e {
+                    let bytes = downloadBuffer;
+                    // cast bytes -> &[MyStruct]
+                    let data: &[f32] = bytemuck::cast_slice(&bytes);
+
+                    data.iter().enumerate().for_each(|e|{
+                        println!("{:?}",e);
+                    });
+                }
+            }
+        );
     }
 
     #[inline]
@@ -379,72 +425,85 @@ impl GpuKennel {
         queue.submit([encoder.finish()]);
     }
 
-     pub fn set_plan(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        plan: &MatrixPlan,
-        lanes: u32,
-        inputs: &[Vec<f32>], // 可为空
-    ) {
-        // 1) 编译 plan -> build（Arena/Header/V 初始化列表）
-        let build = plan_to_mile_simple(plan, lanes, inputs);
+pub fn init_buffer(
+    &mut self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    // 预分配大小，避免重新创建 buffer
+    self.mk.arena_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("MK.arena"),
+        size: std::mem::size_of::<u32>() as u64 * 8192 as u64, // 预分配 arena 大小
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
 
-        // 2) 如果新数据能装进现有 buffer，就直接覆盖；否则重建 buffer
-        // Header 大小固定：直接覆盖
-        queue.write_buffer(&self.mk.header_buf, 0, bytemuck::bytes_of(&build.header));
+    // 预分配 V buffer
+    let new_v_size = 8192 as u64 * 512 as u64 * 4; // 计算预分配的 V buffer 大小
+    self.mk.v_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("MK.V"),
+        size: new_v_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+}
 
-        // Arena：如果容量不够（u32 数变化），重建；否则覆盖
-        let new_arena_bytes = (build.arena_u32.len() * 4) as u64;
-        let mut need_rebuild_arena = false;
-        {
-            // wgpu 没有直接取 buffer 容量的 API，通常你会把容量存在 struct 里
-            // 这里假设你在 MileSimpleGPU 里再加一个 arena_capacity 字段去记录
-        }
+pub fn set_plan(
+    &mut self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    plan: &MatrixPlan,
+    lanes: u32,
+    inputs: &[Vec<f32>], // 可为空
+) -> MileResultDes {
+    // 编译 plan -> build（Arena/Header/V 初始化列表）
+    let build = plan_to_mile_simple(plan, lanes, inputs);
 
-        // 简化：直接重建 arena（实现最简单）
-        self.mk.arena_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("MK.arena"),
-            contents: bytemuck::cast_slice(&build.arena_u32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+    // 1) 更新 Header 数据
+    queue.write_buffer(&self.mk.header_buf, 0, bytemuck::bytes_of(&build.header));
 
-        // 3) V：判断大小，必要时重建（final_v_len * L * 4）
-        let new_v_size = build.header.final_v_len as u64 * build.header.L as u64 * 4;
-        // 同理，简化：直接重建 V
-        self.mk.v_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("MK.V"),
-            size: new_v_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+    // 2) 直接写入 arena 数据，避免重新创建
+    queue.write_buffer(&self.mk.arena_buf, 0, bytemuck::cast_slice(&build.arena_u32));
 
-        // 初始化变量/常量行
-        for (row, data) in &build.v_init_rows {
-            queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(data));
-        }
-        for (row, val) in &build.const_rows {
-            let vecv = vec![*val; build.header.L as usize];
-            queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(&vecv));
-        }
-
-        // 4) 重新绑定（因为 arena/v 重建了）
-        self.mk.bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("MK.bg0"),
-            layout: &self.mk.bg_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.mk.header_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.mk.arena_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: self.mk.v_buf.as_entire_binding() },
-            ],
-        });
-
-        // 5) 更新本地状态
-        self.mk.header_cpu = build.header;
-        self.mk.L = build.header.L;
-        self.elm_stage_count = build.header.elm_stage_count;
-        self.rows_each = build.elm_rows_each;
+    // 3) 判断 V 是否需要重新分配，并更新 V 数据
+    // 初始化变量/常量行数据
+    for (row, data) in &build.v_init_rows {
+        queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(data));
     }
+
+    for (row, val) in &build.const_rows {
+        let vecv = vec![*val; build.header.L as usize];
+        queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(&vecv));
+    }
+
+    // 4) 重新绑定（arena/v 已经更新）
+    self.mk.bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("MK.bg0"),
+        layout: &self.mk.bg_layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: self.mk.header_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: self.mk.arena_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: self.mk.v_buf.as_entire_binding() },
+        ],
+    });
+
+    // 5) 更新本地状态
+    self.mk.header_cpu = build.header;
+    self.mk.L = build.header.L;
+    self.elm_stage_count = build.header.elm_stage_count;
+    self.rows_each = build.elm_rows_each;
+
+    let mut row_start_array: [u32; 4] = [0; 4];
+    for (i, &row) in plan.top_outputs.iter().enumerate() {
+        row_start_array[i] = (row * 3) as u32;
+    }
+    // 返回最终的行号偏移和行号数量
+    // 7) 返回最终的行号偏移（`row_start`）和行号数量（`count`）
+    MileResultDes {
+        row_start:row_start_array,  // 返回最终的行号偏移
+    }
+
+}
 
     pub fn new_empty(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let build = empty_build();
@@ -453,6 +512,7 @@ impl GpuKennel {
             mk,
             elm_stage_count: 0,
             rows_each: vec![],
+            util_tick:Tick::new(1)
         }
     }
 
@@ -467,6 +527,7 @@ impl GpuKennel {
             mk,
             elm_stage_count: build.header.elm_stage_count,
             rows_each: build.elm_rows_each,
+            util_tick:Tick::new(1)
         }
     }
 

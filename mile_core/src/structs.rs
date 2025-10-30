@@ -38,6 +38,10 @@ pub struct App {
 
 impl App {
 
+    pub fn secs_tick(&mut self){
+        
+    }
+
     pub fn render(&self){
         if let (Some(ui_cell), Some(mile_font)) = (&self.wgpu_gpu_ui, &self.mile_font) {
             let ui_ref = ui_cell.borrow();
@@ -79,6 +83,10 @@ impl App {
             ui_cell.borrow_mut().global_unifrom_clear_tick(&ctx.queue);
             ui_cell.borrow_mut().update_dt(self.delta_time.as_secs_f32(), &ctx.queue);
             // ui_cell.borrow_mut().readback(&ctx.device,&ctx.queue);
+        }
+
+        if let Some(gpu_kennel) = &self.gpu_kennel{
+            gpu_kennel.borrow_mut().read_call_back_cpu(&ctx.device,&ctx.queue);
         }
 
 
@@ -258,6 +266,7 @@ impl ApplicationHandler<AppEvent> for App {
 
         let mut gpu_ui = GpuUi::new(&ctx.device, ctx.config.format, self.global_state.clone(),global_unifrom.clone(),&window);
         let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue);
+        gpu_kennel.init_buffer(&ctx.device, &ctx.queue);
 
         self.wgpu_context = Some(ctx.clone());
         self.wgpu_gpu_ui = Some(Arc::new(RefCell::new(gpu_ui)));
@@ -291,8 +300,10 @@ impl ApplicationHandler<AppEvent> for App {
         // }
     }
 
+
    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+
         if now - self.last_tick >= self.tick_interval {
             self.last_tick = now;
             self.update_frame_time();
@@ -408,10 +419,10 @@ impl ApplicationHandler<AppEvent> for App {
                         PhysicalKey::Code(KeyCode::Space) => {
                             let ctx = self.wgpu_context.as_ref().unwrap();
 
-                            if let Some(mile_font) = &self.mile_font{
-                                mile_font.borrow_mut().test_entry(&ctx.queue);
-                                mile_font.borrow_mut().test_entry_text(&ctx.queue);
-                            }
+                            // if let Some(mile_font) = &self.mile_font{
+                            //     mile_font.borrow_mut().test_entry(&ctx.queue);
+                            //     mile_font.borrow_mut().test_entry_text(&ctx.queue);
+                            // }
 
                             if let Some(gpu_kennel) = &self.gpu_kennel{
                                 let mut gpu_kennel = gpu_kennel.borrow_mut();
