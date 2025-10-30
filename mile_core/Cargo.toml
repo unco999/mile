@@ -8,6 +8,7 @@ mile_graphics = { path = "../mile_graphics"}
 mile_ui = { path = "../mile_ui"}
 mile_api = { path = "../mile_api"}
 mile_font = { path = "../mile_font"}
+mile_gpu_dsl = { path = "../mile_gpu_dsl"}
 winit = "0.30"
 rand = "0.9"  # 或者最新版本
 wgpu = "26"

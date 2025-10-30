@@ -1,7 +1,21 @@
-use std::{cell::RefCell, default, rc::Rc, time::{Duration, Instant}};
+use std::{cell::RefCell, collections::HashMap, default, fmt::Debug, hash::Hash, rc::Rc, time::{Duration, Instant}};
 
 use bytemuck::{Pod, Zeroable};
+use flume::{Receiver, Sender};
 use wgpu::{util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}, wgc::device::queue, RenderPass};
+use bitflags::*;
+
+bitflags! {
+    /// Interaction Mask
+    pub struct ModuleEventType: u32 {
+        const DEFUALT = 1 << 0;
+        const Push = 1 << 1;
+        const PanelCustomRead = 1 << 3;
+        const Vertex = 1 << 4;
+        const Frag = 1 << 5;
+    }
+}
+
 
 pub trait Renderable {
     fn render<'a>(
@@ -34,6 +48,33 @@ pub struct GpuDebug{
     last_print: Instant,      // 上一次打印时间
     print_interval: Duration, // 最小间隔
 }
+
+
+
+pub struct Tick {
+    interval: Duration,  // 设定的间隔时间
+    last_tick: Instant,  // 上次 tick 的时间
+}
+
+impl Tick {
+    // 创建一个新的 Tick，设置间隔时间
+    pub fn new(interval_seconds: u64) -> Self {
+        Tick {
+            interval: Duration::from_secs(interval_seconds),
+            last_tick: Instant::now(),
+        }
+    }
+
+    // 检查当前时间是否超过设定的间隔，若是，返回 true，并重置计时器
+    pub fn tick(&mut self) -> bool {
+        if self.last_tick.elapsed() >= self.interval {
+            self.last_tick = Instant::now(); // 重置计时器
+            return true;
+        }
+        false
+    }
+}
+
 
 impl GpuDebugReadCallBack {
     pub fn print(name:&'static str,data: &GpuDebugReadCallBack) {
@@ -192,4 +233,97 @@ impl CpuGlobalUniform  {
         });
         Self { inner: Rc::new(RefCell::new(global_uniform)) ,buffer:global_buffer}
     }
+}
+
+
+/**
+ * 这里是一个模块使用的 des的集合情况 
+ * 用于响应事件时 根据id或者其他索引来获取计算结果值所用的存储结构
+ */
+#[derive(Debug,Clone,Default)]
+pub struct KennelReadDesPool<T:Hash + Clone + Eq>{
+    pool:HashMap<T,MileResultDes>
+}
+
+impl<T:Hash + Clone + Eq> KennelReadDesPool<T> {
+    pub fn get_des(&mut self,key:T)->Option<[u32;4]>{
+        self.pool.get(&key)
+            .map(|e|{
+                e.row_start
+            })
+    }
+
+    pub fn insert(&mut self,k:T,v:MileResultDes){
+        self.pool.insert(k, v);
+    }
+}
+
+
+/**
+ * instance_id 来获取MileSimpleGPU里面的计算结果 共给vertex 和 frag 使用
+ */
+#[derive(Debug,Clone)]
+pub struct MileResultDes {
+    pub row_start:[u32;4],
+}
+
+
+use std::sync::{Arc, Mutex, Condvar};
+
+
+    // 假设 ModuleEvent 和 Expr 是你定义的类型
+#[derive(Clone,Debug)]
+pub enum ModuleEvent<T> {
+    KennelPush(ModuleParmas<T>), //向Kennel写入处理事件
+    KennelPushResultReadDes(ModuleParmas<[u32;4]>)
+}
+
+#[derive(Clone,Debug)]
+pub struct ModuleParmas<T>{
+    pub module_name:&'static str,
+    pub idx:u32,
+    pub data:T,
+    pub _ty:u32
+}
+
+pub struct GlobalEventHub<T:Debug + Clone> {
+    pub sender: Sender<T>,
+    receiver: Receiver<T>,
+    pre_hover_panel_id: Option<u32>,
+    event_condvar: Arc<(Mutex<bool>, Condvar)>, // 用于通知有新事件
+}
+
+impl<T:Debug + Clone> GlobalEventHub<T> {
+    // 创建一个新的 GlobalEventHub 实例
+    pub fn new() -> Self {
+        let (sender, receiver) = flume::unbounded();
+        let event_condvar = Arc::new((Mutex::new(false), Condvar::new())); // 初始状态为无事件
+
+        Self {
+            sender,
+            receiver,
+            pre_hover_panel_id: None,
+            event_condvar,
+        }
+    }
+
+    // 将事件推送到发送队列
+    pub fn push(&self, event: T) {
+        let _ = self.sender.send(event);
+        // 发送事件后通知等待的线程
+        let (lock, cvar) = &*self.event_condvar;
+        let mut event_available = lock.lock().unwrap();
+        *event_available = true; // 新事件到达
+        cvar.notify_all(); // 通知所有等待的线程
+    }
+
+    pub fn poll(&self) -> Vec<T> {
+        let mut events = Vec::new();
+        while let Ok(ev) = self.receiver.try_recv() {
+            events.push(ev);
+        }
+        events
+    }
+
+
 }

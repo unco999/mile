@@ -11,15 +11,15 @@ pub mod dsl {
     v.into()
 }
 
-pub fn vec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
+pub fn wvec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
     Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
 }
 
-pub fn vec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
+pub fn wvec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
     Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
 }
 
-pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a: A, b: B, c: C, d: D) -> Expr {
+pub fn wvec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a: A, b: B, c: C, d: D) -> Expr {
     Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
 }
 
@@ -519,7 +519,7 @@ mod tests {
     fn test_debug_vector_creation() {
         println!("=== Debug Vector Creation ===");
         
-        let vec_expr = vec2(var("x"), var("y"));
+        let vec_expr = wvec2(var("x"), var("y"));
         println!("Vector expression: {:?}", vec_expr);
         
         let variables = vec!["x", "y"];
@@ -553,7 +553,7 @@ mod tests {
     #[test]
     fn test_correct_input_structure() {
         // 正确的理解：每个变量对应一个输入缓冲区
-        let vec_expr = vec2(var("position_x"), var("position_y"));
+        let vec_expr = wvec2(var("position_x"), var("position_y"));
         let variables = vec!["position_x", "position_y"];
         
         // 输入数据：每个变量是一个独立的缓冲区
@@ -598,8 +598,8 @@ mod tests {
 
     #[test]
     fn test_vector_addition_correct() {
-        let v1 = vec2(var("a_x"), var("a_y"));
-        let v2 = vec2(lit(1.0), lit(2.0));
+        let v1 = wvec2(var("a_x"), var("a_y"));
+        let v2 = wvec2(lit(1.0), lit(2.0));
         let sum = v1 + v2;
 
         let variables = vec!["a_x", "a_y"];
@@ -634,7 +634,7 @@ mod tests {
         // - 输出缓冲区 0: 向量 x 分量（直接来自输入缓冲区 0）
         // - 输出缓冲区 1: 向量 y 分量（直接来自输入缓冲区 1）
         
-        let expr = vec2(var("x"), var("y"));
+        let expr = wvec2(var("x"), var("y"));
         let variables = vec!["x", "y"];
         let inputs = vec![
             vec![100.0, 200.0, 300.0], // x 数据

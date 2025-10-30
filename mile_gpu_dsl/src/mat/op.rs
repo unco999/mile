@@ -211,6 +211,9 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
     let top_outputs = rec(expr, variables, &mut matrices, &mut ops, &mut constant_values, &mut next_idx_local);
     let final_v_len = next_idx_local;
 
+    println!("当前的final_v_len {:?}",final_v_len);
+    println!("当前的top_outputs {:?}",top_outputs);
+
     MatrixPlan {
         matrices,
         ops,
@@ -613,7 +616,7 @@ fn once_batch_matrix() {
     use crate::core::dsl::*;
     // expr = a*b + c*d
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
-    let expr = vec3(_if.clone(), _if.clone(),32.0);
+    let expr = wvec3(_if.clone(), _if.clone(),32.0);
     let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
     let inputs = vec![
         vec![1.0_f32], // a
@@ -630,7 +633,7 @@ fn once_batch_matrix() {
 fn gpu_once_batch_matrix(){
     use crate::core::dsl::*;
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
-    let expr = vec3(_if.clone(), _if.clone(),33.0);
+    let expr = wvec3(_if.clone(), _if.clone(),33.0);
     let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
     let inputs = vec![
         vec![1.0_f32], // a

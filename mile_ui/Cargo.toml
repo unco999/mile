@@ -15,3 +15,4 @@ flume = "0.11.1"
 image = "0.25.8"
 slotmap = "1.0.7"
 mile_api = { path = "../mile_api" }   # 引用核心逻辑
+mile_gpu_dsl = { path = "../mile_gpu_dsl" }   # 引用核心逻辑
