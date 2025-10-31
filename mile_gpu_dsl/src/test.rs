@@ -22,6 +22,22 @@ fn vec4_test(){
     println!("batch 输出: {:?}", outputs);
 }
 
+
+#[test]
+fn var_xyzw_test(){
+    use crate::core::dsl::*; // 或按你原来路径
+    use crate::mat::op::compile_to_matrix_plan;
+    use crate::core::*;
+
+    let expr = wvec4(1.0,1.0,1.0,5.0);
+    let point = wvec4(expr.x(), expr.y(), expr.z(), expr.w());
+    
+    let plan = compile_to_matrix_plan(&point);
+
+    let outputs = simulate_matrix_plan_batch_generic(&plan);
+    println!("batch 输出: {:?}", outputs);
+}
+
 // #[test]
 // fn simulate_gpu_test(){
 //     use crate::core::dsl::*; // 或按你原来路径

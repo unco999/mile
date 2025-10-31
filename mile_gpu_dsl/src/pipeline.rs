@@ -81,7 +81,8 @@ fn map_unary_code(f: &UnaryFunc) -> u32 { use UnaryFunc::*; match f {
 
 fn map_binary_code(b: &BinaryOp) -> u32 { use BinaryOp::*; match b {
     Add=>10, Subtract=>11, Multiply=>12, Divide=>13, Modulo=>14, Pow=>15,
-    GreaterThan=>20, GreaterEqual=>21, LessThan=>22, LessEqual=>23, Equal=>24, NotEqual=>25
+    GreaterThan=>20, GreaterEqual=>21, LessThan=>22, LessEqual=>23, Equal=>24, NotEqual=>25,
+    Index => 26
 }}
 
 // -------------------- Host 构建产物 --------------------

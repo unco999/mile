@@ -109,7 +109,35 @@ pub fn compile_to_matrix_plan(expr: &Expr) -> MatrixPlan {
                 let w = rec(&v.w, matrices, ops, constant_values, next_index);
                 vec![x[0], y[0], z[0], w[0]]
             }
-            Expr::BinaryOp(op, left, right) => {
+           Expr::BinaryOp(op, left, right) => {
+    if let BinaryOp::Index = op {
+        // 在编译阶段展开 Index 操作
+        let l_idxs = rec(left, matrices, ops, constant_values, next_index);
+        let r_idxs = rec(right, matrices, ops, constant_values, next_index);
+        
+        // 右操作数应该是常量索引
+        if r_idxs.len() == 1 {
+            let index_idx = r_idxs[0];
+            // 检查索引是否在左操作数的范围内
+            let index_val = if let Some((_, val)) = constant_values.iter().find(|(idx, _)| *idx == index_idx) {
+                *val as usize
+            } else {
+                // 如果不是常量，默认为0
+                0
+            };
+            
+            if index_val < l_idxs.len() {
+                // 直接返回对应的分量索引
+                vec![l_idxs[index_val]]
+            } else {
+                // 索引越界，返回第一个分量
+                vec![l_idxs[0]]
+            }
+        } else {
+            // 右操作数不是标量，返回第一个分量
+            vec![l_idxs[0]]
+        }
+    } else {
                 // 先递归子节点（它们会把自身的中间量/常量分配到 v 中）
                 let l_idxs = rec(left, matrices, ops, constant_values, next_index);
                 let r_idxs = rec(right, matrices, ops, constant_values, next_index);
@@ -149,6 +177,7 @@ pub fn compile_to_matrix_plan(expr: &Expr) -> MatrixPlan {
                 }
                 outs
             }
+        }
             Expr::UnaryOp(func, sub) => {
                 let s_idxs = rec(sub, matrices, ops, constant_values, next_index);
                 let comps = s_idxs.len();
@@ -221,131 +250,6 @@ pub fn compile_to_matrix_plan(expr: &Expr) -> MatrixPlan {
     }
 }
 
-/// 在 CPU 上用「矩阵流水线」一次性模拟（per-lane）执行 plan
-/// - inputs: 每个输入变量对应一个 Vec<f32>（长度 vector_len）
-/// - 返回：Vec<output_buffer> 每个 output_buffer 长度为 vector_len
-pub fn simulate_matrix_plan_once(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
-    if inputs.is_empty() {
-        return vec![];
-    }
-    let vector_len = inputs[0].len();
-    // 输出初始化
-    let mut outputs: Vec<Vec<f32>> = vec![vec![0.0; vector_len]; plan.top_outputs.len()];
-
-    for lane in 0..vector_len {
-        // 构造初始 v：variables + constants (constants 填入对应索引)
-        let mut v: Vec<f32> = vec![0.0; plan.final_v_len];
-        // 填变量
-        // for i in 0..plan.variable_count {
-        //     v[i] = inputs[i][lane];
-        // }
-        // 填常量（如果常量 index < final_v_len）
-        for (idx, val) in &plan.constant_values {
-            v[*idx] = *val;
-        }
-        // 中间位初始 0 已经设置
-
-        // 按 ops 顺序执行矩阵流水线：每个 op 先用选择矩阵乘 v 得到一列向量（rows 长度），
-        // 然后对每行做非线性逐元素操作，写回 v 的预留位置 out_start + r
-        for op in &plan.ops {
-            match op {
-                MatOp::BinaryMat { op: bop, left_mat, right_mat, out_start, rows } => {
-                    let left = &plan.matrices[*left_mat];
-                    let right = &plan.matrices[*right_mat];
-                    for r in 0..*rows {
-                        // compute left_val = dot(left.row(r), v)
-                        let mut left_val = 0.0f32;
-                        let row_slice = left.row_slice(r);
-                        for (c, coeff) in row_slice.iter().enumerate() {
-                            if *coeff != 0.0 {
-                                left_val += coeff * v[c];
-                            }
-                        }
-                        let mut right_val = 0.0f32;
-                        let row_slice_r = right.row_slice(r);
-                        for (c, coeff) in row_slice_r.iter().enumerate() {
-                            if *coeff != 0.0 {
-                                right_val += coeff * v[c];
-                            }
-                        }
-                        let res = match bop {
-                            BinaryOp::Add => left_val + right_val,
-                            BinaryOp::Subtract => left_val - right_val,
-                            BinaryOp::Multiply => left_val * right_val,
-                            BinaryOp::Divide => left_val / right_val,
-                            BinaryOp::Modulo => left_val % right_val,
-                            BinaryOp::Pow => left_val.powf(right_val),
-                            BinaryOp::GreaterThan => if left_val > right_val { 1.0 } else { 0.0 },
-                            BinaryOp::GreaterEqual => if left_val >= right_val { 1.0 } else { 0.0 },
-                            BinaryOp::LessThan => if left_val < right_val { 1.0 } else { 0.0 },
-                            BinaryOp::LessEqual => if left_val <= right_val { 1.0 } else { 0.0 },
-                            BinaryOp::Equal => if (left_val - right_val).abs() < std::f32::EPSILON { 1.0 } else { 0.0 },
-                            BinaryOp::NotEqual => if (left_val - right_val).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 },
-                        };
-                        v[out_start + r] = res;
-                    }
-                }
-                MatOp::UnaryMat { func, mat, out_start, rows } => {
-                    let m = &plan.matrices[*mat];
-                    for r in 0..*rows {
-                        let mut a_val = 0.0f32;
-                        let row_slice = m.row_slice(r);
-                        for (c, coeff) in row_slice.iter().enumerate() {
-                            if *coeff != 0.0 {
-                                a_val += coeff * v[c];
-                            }
-                        }
-                        let res = match func {
-                            UnaryFunc::Sin => a_val.sin(),
-                            UnaryFunc::Cos => a_val.cos(),
-                            UnaryFunc::Tan => a_val.tan(),
-                            UnaryFunc::Exp => a_val.exp(),
-                            UnaryFunc::Log => a_val.ln(),
-                            UnaryFunc::Sqrt => a_val.sqrt(),
-                            UnaryFunc::Abs => a_val.abs(),
-                        };
-                        v[out_start + r] = res;
-                    }
-                }
-                MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows } => {
-                    let cmat = &plan.matrices[*cond_mat];
-                    let tmat = &plan.matrices[*then_mat];
-                    let emat = &plan.matrices[*else_mat];
-                    for r in 0..*rows {
-                        let mut cond_val = 0.0f32;
-                        for (c, coeff) in cmat.row_slice(r).iter().enumerate() {
-                            if *coeff != 0.0 {
-                                cond_val += coeff * v[c];
-                            }
-                        }
-                        let mut then_val = 0.0f32;
-                        for (c, coeff) in tmat.row_slice(r).iter().enumerate() {
-                            if *coeff != 0.0 {
-                                then_val += coeff * v[c];
-                            }
-                        }
-                        let mut else_val = 0.0f32;
-                        for (c, coeff) in emat.row_slice(r).iter().enumerate() {
-                            if *coeff != 0.0 {
-                                else_val += coeff * v[c];
-                            }
-                        }
-                        // blend: cond * then + (1-cond) * else
-                        v[out_start + r] = cond_val * then_val + (1.0 - cond_val) * else_val;
-                    }
-                }
-            }
-        }
-
-        // 从 v 中读取 top outputs并写入 outputs
-        for (out_i, &v_idx) in plan.top_outputs.iter().enumerate() {
-            outputs[out_i][lane] = v[v_idx];
-        }
-    }
-
-    outputs
-}
-
 // ---------- helper types: represent V as rows x cols (rows = final_v_len, cols = vector_len) ----------
 type Mat2D = Vec<Vec<f32>>; // row-major: Mat2D[r][c]  (r: 0..rows-1, c: 0..cols-1)
 
@@ -400,6 +304,7 @@ fn mat_elemwise_binary(a: &Mat2D, b: &Mat2D, op: &BinaryOp) -> Mat2D {
                 BinaryOp::LessEqual => if av <= bv { 1.0 } else { 0.0 },
                 BinaryOp::Equal => if (av - bv).abs() < std::f32::EPSILON { 1.0 } else { 0.0 },
                 BinaryOp::NotEqual => if (av - bv).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 },
+                BinaryOp::Index => av,
             };
         }
     }

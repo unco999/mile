@@ -125,6 +125,7 @@ pub enum BinaryOp {
     LessEqual,
     Equal,
     NotEqual,
+    Index
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,6 +303,7 @@ impl GPUGraph {
                             BinaryOp::NotEqual => {
                                 if (buffers[*a][i] - buffers[*b][i]).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 }
                             }
+                            _=>0.0
                         };
                     }
                 }

@@ -1,5 +1,6 @@
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 use std::f32::EPSILON;
+use std::rc::Rc;
 use crate::core::*;
 
 
@@ -128,6 +129,31 @@ pub fn if_expr<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, 
     Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
 }
 
+impl Expr {
+    pub fn x(&self) -> Expr {
+        self.take(0)
+    }
+
+    pub fn y(&self) -> Expr {
+        self.take(1)
+    }
+
+    pub fn z(&self) -> Expr {
+        self.take(2)
+    }
+
+    pub fn w(&self) -> Expr {
+        self.take(3)
+    }
+
+    pub fn take<T: Into<Expr>>(&self, index_expr: T) -> Expr {
+        Expr::BinaryOp(
+            BinaryOp::Index, 
+            Box::new(self.clone()),  // 使用 Rc 共享而不是克隆
+            Box::new(index_expr.into())
+        )
+    }
+}
 
 // ... 同样提供 cos_expr, sqrt_expr 等（按需添加） ...
 
