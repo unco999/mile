@@ -382,7 +382,7 @@ impl GpuKennel {
     }
 
     pub fn expr_entry_plan(&mut self,idx:u32,expr:&Expr,device: &wgpu::Device,queue:  &wgpu::Queue)->MileResultDes{
-        let plan = compile_to_matrix_plan(expr,&[]);
+        let plan = compile_to_matrix_plan(expr);
         let des = self.set_plan(device, queue, &plan, 3, &[]);
         des
     }

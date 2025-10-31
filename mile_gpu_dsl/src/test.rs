@@ -11,7 +11,7 @@ fn vec4_test(){
 
     let expr = wvec4(1.0,1.0,1.0,5.0) + wvec4(2.0, 2.0, 2.0,5.0);
     
-    let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
+    let plan = compile_to_matrix_plan(&expr);
     let inputs = vec![
         vec![-2.0_f32], // a
         vec![3.0_f32], // b

@@ -55,7 +55,6 @@ pub struct MatrixPlan {
     pub matrices: Vec<Matrix>,      // 选择矩阵集合 (rows x current_v_length_at_creation)
     pub ops: Vec<MatOp>,            // 按执行顺序
     pub top_outputs: Vec<usize>,    // 顶层表达式输出在最终 v 中的位置（分量化）
-    pub variable_count: usize,      // 初始变量数量（inputs.len())
     pub constant_values: Vec<(usize, f32)>, // (index_in_v, value) for constants placed into initial v
     pub final_v_len: usize,         // 编译结束时 final v 的长度 (variable + constants + intermediates)
 }
@@ -64,18 +63,17 @@ pub struct MatrixPlan {
 /// 原则：按自底向上遍历，遇到常量就把常量 append 到初始 v（并记录其 index），
 /// 每遇到一个操作，先确定当前 v 长度 cur_len（这是矩阵的列数），根据子节点索引创建选择矩阵，
 /// 然后为该 op 的 outputs 预留 out_start..out_start+rows-1（并 advance next_index）。
-pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
+pub fn compile_to_matrix_plan(expr: &Expr) -> MatrixPlan {
     let mut matrices: Vec<Matrix> = Vec::new();
     let mut ops: Vec<MatOp> = Vec::new();
     let mut constant_values: Vec<(usize, f32)> = Vec::new();
 
     // next_index 是当前 v 的长度（初始 = variable_count)
-    let mut next_index: usize = variables.len();
+    let mut next_index: usize = 0;
 
     // 递归函数返回当前子表达式对应的索引列表（在 v 中）
     fn rec(
         expr: &Expr,
-        variables: &[&str],
         matrices: &mut Vec<Matrix>,
         ops: &mut Vec<MatOp>,
         constant_values: &mut Vec<(usize, f32)>,
@@ -83,8 +81,8 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
     ) -> Vec<usize> {
         match expr {
             Expr::Variable(name) => {
-                let idx = variables.iter().position(|&v| v == name).expect("unknown variable");
-                vec![idx]
+                // let idx = variables.iter().position(|&v| v == name).expect("unknown variable");
+                vec![0]
             }
             Expr::Constant(val) => {
                 // 把常量放到初始 v（append），并记录
@@ -94,27 +92,27 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
                 vec![idx]
             }
             Expr::Vec2(v) => {
-                let x = rec(&v.x, variables, matrices, ops, constant_values, next_index);
-                let y = rec(&v.y, variables, matrices, ops, constant_values, next_index);
+                let x = rec(&v.x, matrices, ops, constant_values, next_index);
+                let y = rec(&v.y, matrices, ops, constant_values, next_index);
                 vec![x[0], y[0]]
             }
             Expr::Vec3(v) => {
-                let x = rec(&v.x, variables, matrices, ops, constant_values, next_index);
-                let y = rec(&v.y, variables, matrices, ops, constant_values, next_index);
-                let z = rec(&v.z, variables, matrices, ops, constant_values, next_index);
+                let x = rec(&v.x, matrices, ops, constant_values, next_index);
+                let y = rec(&v.y, matrices, ops, constant_values, next_index);
+                let z = rec(&v.z, matrices, ops, constant_values, next_index);
                 vec![x[0], y[0], z[0]]
             }
             Expr::Vec4(v) => {
-                let x = rec(&v.x, variables, matrices, ops, constant_values, next_index);
-                let y = rec(&v.y, variables, matrices, ops, constant_values, next_index);
-                let z = rec(&v.z, variables, matrices, ops, constant_values, next_index);
-                let w = rec(&v.w, variables, matrices, ops, constant_values, next_index);
+                let x = rec(&v.x, matrices, ops, constant_values, next_index);
+                let y = rec(&v.y, matrices, ops, constant_values, next_index);
+                let z = rec(&v.z, matrices, ops, constant_values, next_index);
+                let w = rec(&v.w, matrices, ops, constant_values, next_index);
                 vec![x[0], y[0], z[0], w[0]]
             }
             Expr::BinaryOp(op, left, right) => {
                 // 先递归子节点（它们会把自身的中间量/常量分配到 v 中）
-                let l_idxs = rec(left, variables, matrices, ops, constant_values, next_index);
-                let r_idxs = rec(right, variables, matrices, ops, constant_values, next_index);
+                let l_idxs = rec(left, matrices, ops, constant_values, next_index);
+                let r_idxs = rec(right, matrices, ops, constant_values, next_index);
 
                 let comps = l_idxs.len().max(r_idxs.len());
                 let mut outs = Vec::with_capacity(comps);
@@ -152,7 +150,7 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
                 outs
             }
             Expr::UnaryOp(func, sub) => {
-                let s_idxs = rec(sub, variables, matrices, ops, constant_values, next_index);
+                let s_idxs = rec(sub, matrices, ops, constant_values, next_index);
                 let comps = s_idxs.len();
                 let cur_cols = *next_index;
                 let mut mat = Matrix::new(comps, cur_cols);
@@ -168,9 +166,9 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
                 (0..comps).map(|i| out_start + i).collect()
             }
             Expr::If { condition, then_branch, else_branch } => {
-                let c_idxs = rec(condition, variables, matrices, ops, constant_values, next_index);
-                let t_idxs = rec(then_branch, variables, matrices, ops, constant_values, next_index);
-                let e_idxs = rec(else_branch, variables, matrices, ops, constant_values, next_index);
+                let c_idxs = rec(condition, matrices, ops, constant_values, next_index);
+                let t_idxs = rec(then_branch, matrices, ops, constant_values, next_index);
+                let e_idxs = rec(else_branch, matrices, ops, constant_values, next_index);
 
                 let comps = t_idxs.len().max(e_idxs.len());
                 let cur_cols = *next_index;
@@ -208,7 +206,7 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
     }
 
     let mut next_idx_local = next_index;
-    let top_outputs = rec(expr, variables, &mut matrices, &mut ops, &mut constant_values, &mut next_idx_local);
+    let top_outputs = rec(expr, &mut matrices, &mut ops, &mut constant_values, &mut next_idx_local);
     let final_v_len = next_idx_local;
 
     println!("当前的final_v_len {:?}",final_v_len);
@@ -218,7 +216,6 @@ pub fn compile_to_matrix_plan(expr: &Expr, variables: &[&str]) -> MatrixPlan {
         matrices,
         ops,
         top_outputs,
-        variable_count: variables.len(),
         constant_values,
         final_v_len,
     }
@@ -239,9 +236,9 @@ pub fn simulate_matrix_plan_once(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<
         // 构造初始 v：variables + constants (constants 填入对应索引)
         let mut v: Vec<f32> = vec![0.0; plan.final_v_len];
         // 填变量
-        for i in 0..plan.variable_count {
-            v[i] = inputs[i][lane];
-        }
+        // for i in 0..plan.variable_count {
+        //     v[i] = inputs[i][lane];
+        // }
         // 填常量（如果常量 index < final_v_len）
         for (idx, val) in &plan.constant_values {
             v[*idx] = *val;
@@ -480,10 +477,10 @@ pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec
     // 构造 V (rows x cols)
     let mut V: Mat2D = vec![vec![0.0; cols]; rows];
 
-    // fill input variable rows
-    for i in 0..plan.variable_count {
-        V[i].copy_from_slice(&inputs[i]);
-    }
+    // // fill input variable rows
+    // for i in 0..plan.variable_count {
+    //     V[i].copy_from_slice(&inputs[i]);
+    // }
     // fill constants
     for (idx, val) in &plan.constant_values {
         for c in 0..cols { V[*idx][c] = *val; }
@@ -538,10 +535,10 @@ pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan, inputs: &[Vec<f32>]
     let rows = plan.final_v_len;
     let mut V: Mat2D = vec![vec![0.0; cols]; rows];
 
-    // 初始化V矩阵（变量和常量）
-    for i in 0..plan.variable_count {
-        V[i].copy_from_slice(&inputs[i]);
-    }
+    // // 初始化V矩阵（变量和常量）
+    // for i in 0..plan.variable_count {
+    //     V[i].copy_from_slice(&inputs[i]);
+    // }
     for (idx, val) in &plan.constant_values {
         for c in 0..cols { V[*idx][c] = *val; }
     }
@@ -617,7 +614,7 @@ fn once_batch_matrix() {
     // expr = a*b + c*d
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
     let expr = wvec3(_if.clone(), _if.clone(),32.0);
-    let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
+    let plan = compile_to_matrix_plan(&expr);
     let inputs = vec![
         vec![1.0_f32], // a
         vec![3.0_f32], // b
@@ -634,7 +631,7 @@ fn gpu_once_batch_matrix(){
     use crate::core::dsl::*;
     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
     let expr = wvec3(_if.clone(), _if.clone(),33.0);
-    let plan = compile_to_matrix_plan(&expr, &["a","b","c","d"]);
+    let plan = compile_to_matrix_plan(&expr);
     let inputs = vec![
         vec![1.0_f32], // a
         vec![3.0_f32], // b
