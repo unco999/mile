@@ -529,9 +529,8 @@ struct GenericMatOp {
 }
 
 /// 批量模拟的通用版本
-pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
-    if inputs.is_empty() { return vec![]; }
-    let cols = inputs[0].len();
+pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan) -> Vec<Vec<f32>> {
+    let cols = 1;
     let rows = plan.final_v_len;
     let mut V: Mat2D = vec![vec![0.0; cols]; rows];
 
@@ -638,6 +637,6 @@ fn gpu_once_batch_matrix(){
         vec![5.0_f32], // c
         vec![7.0_f32], // d
     ];
-    let outputs = simulate_matrix_plan_batch_generic(&plan, &inputs);
+    let outputs = simulate_matrix_plan_batch_generic(&plan);
     println!("outputs {:?}",outputs);
 }

@@ -18,7 +18,7 @@ fn vec4_test(){
         vec![5.0_f32], // c
         vec![7.0_f32], // d
     ];
-    let outputs = simulate_matrix_plan_batch_generic(&plan, &inputs);
+    let outputs = simulate_matrix_plan_batch_generic(&plan);
     println!("batch 输出: {:?}", outputs);
 }
 

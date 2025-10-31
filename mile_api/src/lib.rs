@@ -1,9 +1,34 @@
-use std::{cell::RefCell, collections::HashMap, default, fmt::Debug, hash::Hash, rc::Rc, time::{Duration, Instant}};
-
+use std::{cell::RefCell, collections::HashMap, default, fmt::Debug, hash::{DefaultHasher, Hash,Hasher}, rc::Rc, time::{Duration, Instant}};
 use bytemuck::{Pod, Zeroable};
 use flume::{Receiver, Sender};
 use wgpu::{util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}, wgc::device::queue, RenderPass};
 use bitflags::*;
+
+use lazy_static::lazy_static;
+
+// 使用 lazy_static 创建一个全局的 HashMap
+lazy_static! {
+    static ref GLOBAL_VARIABLES: Mutex<HashMap<u32, String>> = Mutex::new(HashMap::new());
+}
+
+fn get_variable_hash(name: &str) -> u32 {
+    // 计算字符串的哈希值
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    hasher.finish() as u32
+}
+
+fn store_variable(name: &str, value: &str) {
+    let hash = get_variable_hash(name);
+    let mut globals = GLOBAL_VARIABLES.lock().unwrap();
+    globals.insert(hash, value.to_string());
+}
+
+fn get_variable(hash: u32) -> Option<String> {
+    let globals = GLOBAL_VARIABLES.lock().unwrap();
+    globals.get(&hash).cloned()
+}
+
 
 bitflags! {
     /// Interaction Mask
