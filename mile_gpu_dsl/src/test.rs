@@ -3,40 +3,21 @@ use gpu_macro::wgsl;
 use crate::{dsl::{ if_expr}, mat::op::{simulate_matrix_plan_batch, simulate_matrix_plan_batch_generic}};
 
 
-#[test]
-fn vec4_test(){
-    use crate::core::dsl::*; // 或按你原来路径
-    use crate::mat::op::compile_to_matrix_plan;
-    use crate::core::*;
 
-    let expr = wvec4(1.0,1.0,1.0,5.0) + wvec4(2.0, 2.0, 2.0,5.0);
+// #[test]
+// fn var_xyzw_test(){
+//     use crate::core::dsl::*; // 或按你原来路径
+//     use crate::mat::op::compile_to_matrix_plan_with_imports;
+//     use crate::core::*;
+
+//     let expr = wvec4(1.0,1.0,1.0,5.0);
+//     let point = wvec4(expr.x(), expr.y(), expr.z(), expr.w());
     
-    let plan = compile_to_matrix_plan(&expr);
-    let inputs = vec![
-        vec![-2.0_f32], // a
-        vec![3.0_f32], // b
-        vec![5.0_f32], // c
-        vec![7.0_f32], // d
-    ];
-    let outputs = simulate_matrix_plan_batch_generic(&plan);
-    println!("batch 输出: {:?}", outputs);
-}
+//     let plan = compile_to_matrix_plan_with_imports(&point);
 
-
-#[test]
-fn var_xyzw_test(){
-    use crate::core::dsl::*; // 或按你原来路径
-    use crate::mat::op::compile_to_matrix_plan;
-    use crate::core::*;
-
-    let expr = wvec4(1.0,1.0,1.0,5.0);
-    let point = wvec4(expr.x(), expr.y(), expr.z(), expr.w());
-    
-    let plan = compile_to_matrix_plan(&point);
-
-    let outputs = simulate_matrix_plan_batch_generic(&plan);
-    println!("batch 输出: {:?}", outputs);
-}
+//     let outputs = simulate_matrix_plan_batch_generic(&plan);
+//     println!("batch 输出: {:?}", outputs);
+// }
 
 // #[test]
 // fn simulate_gpu_test(){

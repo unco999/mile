@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use mile_api::{Computeable, GlobalEventHub, ModuleEventType, ModuleParmas, Tick};
 use wgpu::util::{DeviceExt, DownloadBuffer};
 use mile_api::{MileResultDes,ModuleEvent};
-use crate::{core::{BinaryOp, Expr, UnaryFunc, dsl::{self, wvec3, wvec4}}, dsl::if_expr, mat::op::{MatOp, Matrix, MatrixPlan, compile_to_matrix_plan}};
+use crate::{core::{BinaryOp, Expr, UnaryFunc, dsl::{self, var, wvec2, wvec3, wvec4}}, dsl::if_expr, mat::op::{ImportType, MatOp, Matrix, MatrixPlan, compile_to_matrix_plan_with_imports}};
 
 // -------------------- GPU ABI: Header / Stage / Recipe --------------------
 
@@ -20,6 +20,34 @@ pub struct MileDesHeader {
     pub rows_off: u32,   // `rows` 在 `v_buf` 中的偏移（字节单位）
     pub _pad: u32,
 }
+
+
+
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct RenderOperation {
+    pub op_type: u32,           // 操作类型
+    pub source_type: u32,       // 数据源类型
+    pub buffer_offset: u32,     // 在V_buffer中的字节偏移量
+    pub component_count: u32,   // 分量数量
+    pub component_stride: u32,  // 分量步长
+    pub data_format: u32,       // 数据格式
+    pub blend_factor: f32,      // 混合因子
+    pub custom_param: f32,      // 自定义参数
+    pub condition_source: u32,  // 条件数据源 (对于条件操作)
+    pub then_source: u32,       // then分支数据源  
+    pub else_source: u32,       // else分支数据源
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+pub struct RenderPlan {
+    pub operations: [RenderOperation; 8], // 最多支持8个操作
+    pub operation_count: u32,
+    pub final_output_mask: u32, // 输出掩码，决定哪些分量写入最终颜色
+}
+
 
 
 
@@ -358,8 +386,10 @@ pub struct GpuKennel {
     pub elm_stage_count: u32,
     pub rows_each: Vec<u32>,
     pub util_tick:Tick,
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr>>>
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>
 }
+
+
 
 pub fn empty_build() -> MileSimpleBuild {
     MileSimpleBuild {
@@ -377,17 +407,537 @@ pub fn empty_build() -> MileSimpleBuild {
 
 impl GpuKennel {
 
-    pub fn test_entry(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
-        let expr = wvec3(1.0,1.0,if_expr(dsl::eq(3.0, 4.0), 5.0, 10.0)) + wvec3(2.0, 2.0, 5.0);
+    pub fn expr_entry_plan_with_render(
+        &mut self,
+        idx: u32,
+        expr: &Expr,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> RenderPlan {
+        use crate::mat::op::{compile_to_matrix_plan_with_imports, ImportRegistry, ImportType};
+        
+        let mut registry = ImportRegistry::new();
+        
+        // 注册渲染导入（UV等）
+        registry.register_render_import("uv", 0b01, Box::new(|input| {
+            // 默认UV处理
+            if input.is_empty() {
+                vec![0.5, 0.5, 0.0, 1.0]
+            } else {
+                vec![input[0], input[1], 0.0, 1.0]
+            }
+        }));
+        
+        let plan = compile_to_matrix_plan_with_imports(expr, &registry);
+        
+        // 分析计划，生成渲染操作描述
+        let render_plan = self.analyze_render_operations(&plan);
+        
+        // 设置计算计划
+        let mut result = self.set_plan_layered(device, queue, &plan, 4, &[]); // 使用4个lanes对应RGBA
+        
+        // 设置渲染计划
+        render_plan
+    }
 
+        // 更新渲染操作参数（供UI动态调整）
+    pub fn update_render_operation(
+        &self,
+        queue: &wgpu::Queue,
+        operation_index: usize,
+        op_type: u32,
+        blend_factor: f32,
+    ) {
+        // 这里可以更新uniform buffer或者通过其他方式传递到渲染管线
+        // 具体实现取决于你的渲染管线架构
+    }
+    
+    // 获取计算结果的缓冲区引用
+    pub fn get_compute_buffer(&self) -> &wgpu::Buffer {
+        &self.mk.v_buf
+    }
+    
+    // 获取计算结果的布局信息
+    pub fn get_compute_layout(&self) -> (u32, u32) {
+        (self.mk.L, self.mk.header_cpu.final_v_len)
+    }
+        fn analyze_render_operations(&self, plan: &MatrixPlan) -> RenderPlan {
+        let mut operations = [RenderOperation {
+            op_type: 0,
+            source_type: 0,
+            buffer_offset: 0,
+            component_count: 0,
+            component_stride: 0,
+            data_format: 0,
+            blend_factor: 0.0,
+            custom_param: 0.0,
+            condition_source: 0,
+            then_source: 0,
+            else_source: 0,
+        }; 8];
+        
+        let mut operation_count = 0;
+        let lanes = 4;
+
+        // 按组处理，而不是按单个行
+        let output_groups = self.group_outputs_by_operation(plan);
+        let (compute_final_ops, render_final_ops) = self.split_compute_render_operations(plan);
+        
+        println!("输出分组: {:?}", output_groups);
+        println!("最终计算操作: {:?}", compute_final_ops);
+        println!("最终渲染操作: {:?}", render_final_ops);
+
+        // 1. 处理渲染操作（按组）
+        for (op_type, first_output) in render_final_ops {
+            if operation_count >= 8 { break; }
+            
+            // 找到这个输出对应的组
+            if let Some(group) = output_groups.iter().find(|g| !g.is_empty() && g[0] == first_output) {
+                let buffer_offset = (first_output as u32) * lanes * 4;
+                let component_count = group.len() as u32;
+                
+                let mut operation = RenderOperation {
+                    op_type,
+                    source_type: 1, // 在渲染管线中计算
+                    buffer_offset,
+                    component_count,
+                    component_stride: 4,
+                    data_format: self.get_data_format(group.len()),
+                    blend_factor: 1.0,
+                    custom_param: 0.0,
+                    condition_source: 0,
+                    then_source: 0,
+                    else_source: 0,
+                };
+                
+                // 设置条件操作的分支信息
+                if op_type == 20 {
+                    if let Some((cond, then, else_)) = self.get_condition_branches(first_output, plan) {
+                        operation.condition_source = cond as u32;
+                        operation.then_source = then as u32;
+                        operation.else_source = else_ as u32;
+                    }
+                }
+                
+                operations[operation_count] = operation;
+                operation_count += 1;
+            }
+        }
+
+        // 2. 处理compute缓存操作（按组）
+        for &first_output in &compute_final_ops {
+            if operation_count >= 8 { break; }
+            
+            // 找到这个输出对应的组
+            if let Some(group) = output_groups.iter().find(|g| !g.is_empty() && g[0] == first_output) {
+                let buffer_offset = (first_output as u32) * lanes * 4;
+                let component_count = group.len() as u32;
+                
+                operations[operation_count] = RenderOperation {
+                    op_type: 0, // 直接使用compute缓存
+                    source_type: 0, // 来自计算缓存
+                    buffer_offset,
+                    component_count,
+                    component_stride: 4,
+                    data_format: self.get_data_format(group.len()),
+                    blend_factor: 1.0,
+                    custom_param: 0.0,
+                    condition_source: 0,
+                    then_source: 0,
+                    else_source: 0,
+                };
+                operation_count += 1;
+            }
+        }
+
+        // 3. 处理渲染导入节点（如UV输入）
+        for import in &plan.imports {
+            if operation_count >= 8 { break; }
+            
+            if let ImportType::Render(name) = &import.import_type {
+                let buffer_offset = (import.index as u32) * lanes * 4;
+                
+                operations[operation_count] = RenderOperation {
+                    op_type: match name.as_str() {
+                        "uv" => 0,
+                        "pos" => 1,
+                        "normal" => 2,
+                        _ => 0,
+                    },
+                    source_type: 2, // 渲染输入（如UV坐标）
+                    buffer_offset,
+                    component_count: lanes,
+                    component_stride: 4,
+                    data_format: 3, // vec4
+                    blend_factor: 1.0,
+                    custom_param: 0.0,
+                    condition_source: 0,
+                    then_source: 0,
+                    else_source: 0,
+                };
+                operation_count += 1;
+            }
+        }
+
+        // 计算最终输出掩码
+        let final_output_mask = self.calculate_output_mask(plan);
+
+        RenderPlan {
+            operations,
+            operation_count:operation_count as u32,
+            final_output_mask,
+        }
+    }
+
+
+     fn calculate_output_mask(&self, plan: &MatrixPlan) -> u32 {
+        // 根据输出数量计算掩码
+        // 例如：1个输出 -> 0b0001 (R), 2个输出 -> 0b0011 (RG), 3个输出 -> 0b0111 (RGB), 4个输出 -> 0b1111 (RGBA)
+        match plan.top_outputs.len() {
+            1 => 0b0001,
+            2 => 0b0011, 
+            3 => 0b0111,
+            4 => 0b1111,
+            _ => 0b1111, // 默认输出所有通道
+        }
+    }
+
+
+ // 分离计算和渲染操作
+    fn split_compute_render_operations(&self, plan: &MatrixPlan) -> (Vec<usize>, Vec<(u32, usize)>) {
+        let mut compute_final_rows = Vec::new();
+        let mut render_final_rows = Vec::new();
+        
+        // 按输出组处理，而不是按单个行处理
+        let output_groups = self.group_outputs_by_operation(plan);
+        
+        for group in output_groups {
+            if group.is_empty() { continue; }
+            
+            let first_output = group[0];
+            let depends_on_render = self.output_depends_on_render(first_output, plan);
+            
+            if depends_on_render {
+                // 整个组在render管线执行
+                let op_type = self.get_final_op_type(first_output, plan);
+                // 只记录组的第一个行，渲染管线会处理整个向量
+                render_final_rows.push((op_type, first_output));
+            } else {
+                // 整个组在compute管线执行
+                compute_final_rows.push(first_output);
+            }
+        }
+        
+        (compute_final_rows, render_final_rows)
+    }
+    
+    // 将输出按操作分组（同一个操作的多个输出分为一组）
+    fn group_outputs_by_operation(&self, plan: &MatrixPlan) -> Vec<Vec<usize>> {
+        let mut groups = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        
+        for &output in &plan.top_outputs {
+            if visited.contains(&output) { continue; }
+            
+            // 找到产生这个输出的操作
+            if let Some(op_range) = self.find_operation_range(output, plan) {
+                let group: Vec<usize> = (op_range.start..op_range.end)
+                    .filter(|&row| plan.top_outputs.contains(&row))
+                    .collect();
+                
+                for &row in &group {
+                    visited.insert(row);
+                }
+                
+                if !group.is_empty() {
+                    groups.push(group);
+                }
+            }
+        }
+        
+        groups
+    }
+
+     // 找到操作输出的范围
+    fn find_operation_range(&self, output_row: usize, plan: &MatrixPlan) -> Option<std::ops::Range<usize>> {
+        for op in &plan.ops {
+            match op {
+                MatOp::BinaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return Some(*out_start..out_start + rows);
+                    }
+                }
+                MatOp::UnaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return Some(*out_start..out_start + rows);
+                    }
+                }
+                MatOp::CondBlendMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return Some(*out_start..out_start + rows);
+                    }
+                }
+            }
+        }
+        None
+    }
+      // 获取最终操作的类型
+    fn get_final_op_type(&self, output_row: usize, plan: &MatrixPlan) -> u32 {
+        // 找到产生这个最终输出的操作
+        for op in plan.ops.iter().rev() { // 从后往前找
+            match op {
+                MatOp::BinaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return self.get_op_type(op);
+                    }
+                }
+                MatOp::UnaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return self.get_op_type(op);
+                    }
+                }
+                MatOp::CondBlendMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return 20; // 条件混合
+                    }
+                }
+            }
+        }
+        0
+    }
+    // 检查最终输出是否依赖渲染输入
+    fn output_depends_on_render(&self, output_row: usize, plan: &MatrixPlan) -> bool {
+        // 遍历所有操作，找到产生这个输出的操作
+        for op in &plan.ops {
+            match op {
+                MatOp::BinaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return self.operation_depends_on_render(op, plan);
+                    }
+                }
+                MatOp::UnaryMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return self.operation_depends_on_render(op, plan);
+                    }
+                }
+                MatOp::CondBlendMat { out_start, rows, .. } => {
+                    if (out_start..&(out_start + rows)).contains(&&output_row) {
+                        return self.operation_depends_on_render(op, plan);
+                    }
+                }
+            }
+        }
+        false
+    }
+    
+    // 检查操作是否依赖渲染输入
+    fn operation_depends_on_render(&self, op: &MatOp, plan: &MatrixPlan) -> bool {
+        match op {
+            MatOp::BinaryMat { left_mat, right_mat, .. } => {
+                self.matrix_depends_on_render(&plan.matrices[*left_mat], plan) ||
+                self.matrix_depends_on_render(&plan.matrices[*right_mat], plan)
+            }
+            MatOp::UnaryMat { mat, .. } => {
+                self.matrix_depends_on_render(&plan.matrices[*mat], plan)
+            }
+            MatOp::CondBlendMat { cond_mat, then_mat, else_mat, .. } => {
+                self.matrix_depends_on_render(&plan.matrices[*cond_mat], plan) ||
+                self.matrix_depends_on_render(&plan.matrices[*then_mat], plan) ||
+                self.matrix_depends_on_render(&plan.matrices[*else_mat], plan)
+            }
+        }
+    }
+
+      fn analyze_plan_structure(&self, plan: &RenderPlan, test_name: &str) {
+        println!("{}表达式分析:", test_name);
+        println!("  总操作数: {}", plan.operation_count);
+        
+        let mut compute_ops = 0;
+        let mut render_ops = 0;
+        let mut render_inputs = 0;
+        
+        for i in 0..plan.operation_count as usize {
+            let op = &plan.operations[i];
+            match op.source_type {
+                0 => {
+                    compute_ops += 1;
+                    println!("  操作{}: COMPUTE缓存 [偏移: {}, 类型: {}]", 
+                        i, op.buffer_offset, op.op_type);
+                }
+                1 => {
+                    render_ops += 1;
+                    println!("  操作{}: RENDER计算 [偏移: {}, 类型: {}]", 
+                        i, op.buffer_offset, op.op_type);
+                }
+                _ => {
+                    render_inputs += 1;
+                    println!("  操作{}: RENDER输入 [偏移: {}, 类型: {}]", 
+                        i, op.buffer_offset, op.op_type);
+                }
+            }
+        }
+        
+        println!("  统计: Compute操作={}, Render操作={}, Render输入={}", 
+            compute_ops, render_ops, render_inputs);
+    }
+
+    // 检查矩阵是否依赖渲染输入
+    fn matrix_depends_on_render(&self, matrix: &Matrix, plan: &MatrixPlan) -> bool {
+        for r in 0..matrix.rows {
+            let row = matrix.row_slice(r);
+            for (col, &value) in row.iter().enumerate() {
+                if value != 0.0 {
+                    // 检查这个列索引是否对应渲染导入
+                    for import in &plan.imports {
+                        if import.index == col && matches!(import.import_type, ImportType::Render(_)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn get_op_type(&self, op: &MatOp) -> u32 {
+        match op {
+            MatOp::BinaryMat { op, .. } => {
+                match op {
+                    BinaryOp::Add => 1,
+                    BinaryOp::Multiply => 2,
+                    BinaryOp::Subtract => 4,
+                    BinaryOp::Divide => 5,
+                    _ => 0,
+                }
+            }
+            MatOp::UnaryMat { func, .. } => {
+                match func {
+                    UnaryFunc::Sin => 10,
+                    UnaryFunc::Cos => 11,
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        }
+    }
+
+     fn get_data_format(&self, output_count: usize) -> u32 {
+        match output_count {
+            1 => 0, // 标量
+            2 => 1, // vec2  
+            3 => 2, // vec3
+            4 => 3, // vec4
+            _ => 3, // 默认vec4
+        }
+    }
+
+        fn analyze_operation_type(&self, ops: &[MatOp]) -> u32 {
+        use crate::core::{BinaryOp, UnaryFunc};
+        
+        for op in ops.iter().rev() { // 从后往前分析，找到最后的操作
+            match op {
+                MatOp::BinaryMat { op, .. } => {
+                    return match op {
+                        BinaryOp::Add => 1,      // 加法
+                        BinaryOp::Multiply => 2, // 乘法
+                        BinaryOp::Subtract => 4, // 减法
+                        BinaryOp::Divide => 5,   // 除法
+                        BinaryOp::GreaterThan => 6,   // 大于比较
+                        BinaryOp::LessThan => 7,      // 小于比较
+                        BinaryOp::Equal => 8,         // 等于比较
+                        _ => 0, // 其他操作默认处理
+                    };
+                }
+                MatOp::UnaryMat { func, .. } => {
+                    return match func {
+                        UnaryFunc::Sin => 10,   // 正弦
+                        UnaryFunc::Cos => 11,   // 余弦
+                        UnaryFunc::Exp => 12,   // 指数
+                        UnaryFunc::Log => 13,   // 对数
+                        UnaryFunc::Sqrt => 14,  // 平方根
+                        _ => 0,
+                    };
+                }
+                MatOp::CondBlendMat { .. } => {
+                    return 20; // 条件混合操作
+                }
+            }
+        }
+        0 // 默认操作
+    }
+
+    
+
+    pub fn test_entry(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
+      // 测试1: 纯计算表达式
+        use crate::core::dsl::*;
+        
+        println!("\n=== 测试分层计算 ===");
+        
+        // 测试1: 纯计算表达式 (应该在compute管线执行)
+        println!("\n1. 纯计算表达式: time * 3 + 1.0");
+        let expr1 = var("time") * 3.0 + 1.0;
+        let output1 = self.expr_entry_plan_with_render(0, &expr1, device, queue);
+        self.analyze_plan_structure(&output1, "纯计算");
+        
+        // 测试2: 纯渲染表达式 (应该在render管线执行)  
+        println!("\n2. 纯渲染表达式: uv + 2.0");
+        let expr2 = var("uv") + 2.0;
+        let output2 = self.expr_entry_plan_with_render(1, &expr2, device, queue);
+        self.analyze_plan_structure(&output2, "纯渲染");
+        
+        // 测试3: 混合表达式 (compute + render)
+        println!("\n3. 混合表达式: uv + 2.0 + time * 3");
+        let expr3 = var("uv") + 2.0 + var("time") * 3.0;
+        let output3 = self.expr_entry_plan_with_render(2, &expr3, device, queue);
+        self.analyze_plan_structure(&output3, "混合");
+        
+        // 测试4: 复杂混合表达式
+        println!("\n4. 复杂混合表达式: (uv * 2.0) + (time * sin(cache))");
+        let expr4 = var("uv") * 2.0 + var("time") * sin(var("cache"));
+        let output4 = self.expr_entry_plan_with_render(3, &expr4, device, queue);
+        self.analyze_plan_structure(&output4, "复杂混合");
+        
+        // 测试5: 条件混合表达式
+        println!("\n5. 条件表达式: if time > 0.5 then uv else vec2(1.0, 0.0)");
+        let expr5 = if_expr(eq(var("time"),5.0), var("uv"), wvec2(1.0, 0.0));
+        let output5 = self.expr_entry_plan_with_render(4, &expr5, device, queue);
+        self.analyze_plan_structure(&output5, "条件");
     }
 
     pub fn expr_entry_plan(&mut self,idx:u32,expr:&Expr,device: &wgpu::Device,queue:  &wgpu::Queue)->MileResultDes{
-        let plan = compile_to_matrix_plan(expr);
-        let des = self.set_plan(device, queue, &plan, 3, &[]);
-        des
+        // let plan = compile_to_matrix_plan_with_imports(expr);
+        // let des = self.set_plan(device, queue, &plan, 3, &[]);
+        // des
+        todo!()
     }
 
+      // 获取条件操作的分支信息
+    fn get_condition_branches(&self, output_row: usize, plan: &MatrixPlan) -> Option<(usize, usize, usize)> {
+        for op in &plan.ops {
+            if let MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows } = op {
+                if (out_start..&(out_start + rows)).contains(&&output_row) {
+                    // 找到对应的条件、then、else数据行
+                    let cond_row = self.get_first_nonzero_row(&plan.matrices[*cond_mat]);
+                    let then_row = self.get_first_nonzero_row(&plan.matrices[*then_mat]);
+                    let else_row = self.get_first_nonzero_row(&plan.matrices[*else_mat]);
+                    
+                    return Some((cond_row, then_row, else_row));
+                }
+            }
+        }
+        None
+    }
+    
+    fn get_first_nonzero_row(&self, matrix: &Matrix) -> usize {
+        for r in 0..matrix.rows {
+            let row = matrix.row_slice(r);
+            if let Some(col) = row.iter().position(|&v| v != 0.0) {
+                return col;
+            }
+        }
+        0
+    }
 
     pub fn read_call_back_cpu(&mut self,device: &wgpu::Device,queue:  &wgpu::Queue){
         if(!self.util_tick.tick()) {return;}
@@ -449,68 +999,145 @@ pub fn init_buffer(
     });
 }
 
-pub fn get_compute_buffer(&mut self)->wgpu::Buffer{
-    self.mk.v_buf.clone()
-}
+fn split_compute_render_plan(&self, plan: &MatrixPlan) -> (MatrixPlan, RenderPlan) {
+        let mut compute_ops = Vec::new();
+        let mut compute_matrices = Vec::new();
+        let mut compute_constants = plan.constant_values.clone();
+        
+        // 收集不依赖渲染输入的操作
+        for op in &plan.ops {
+            if !self.operation_depends_on_render(op, plan) {
+                compute_ops.push(op.clone());
+                // 添加相关的矩阵
+                match op {
+                    MatOp::BinaryMat { left_mat, right_mat, .. } => {
+                        compute_matrices.push(plan.matrices[*left_mat].clone());
+                        compute_matrices.push(plan.matrices[*right_mat].clone());
+                    }
+                    MatOp::UnaryMat { mat, .. } => {
+                        compute_matrices.push(plan.matrices[*mat].clone());
+                    }
+                    MatOp::CondBlendMat { cond_mat, then_mat, else_mat, .. } => {
+                        compute_matrices.push(plan.matrices[*cond_mat].clone());
+                        compute_matrices.push(plan.matrices[*then_mat].clone());
+                        compute_matrices.push(plan.matrices[*else_mat].clone());
+                    }
+                }
+            }
+        }
 
-pub fn set_plan(
-    &mut self,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    plan: &MatrixPlan,
-    lanes: u32,
-    inputs: &[Vec<f32>], // 可为空
-) -> MileResultDes {
-    // 编译 plan -> build（Arena/Header/V 初始化列表）
-    let build = plan_to_mile_simple(plan, lanes, inputs);
+        // 创建compute计划
+        let compute_plan = MatrixPlan {
+            matrices: compute_matrices,
+            ops: compute_ops,
+            top_outputs: self.get_compute_outputs(plan), // 只包含compute管线的输出
+            constant_values: compute_constants,
+            final_v_len: plan.final_v_len, // 可能需要调整
+            imports: plan.imports.iter()
+                .filter(|i| matches!(i.import_type, ImportType::Compute(_)))
+                .cloned()
+                .collect(),
+            render_only_ops: Vec::new(),
+            compute_only_ops: Vec::new(),
+        };
 
-    // 1) 更新 Header 数据
-    queue.write_buffer(&self.mk.header_buf, 0, bytemuck::bytes_of(&build.header));
+        // 创建render计划
+        let render_plan = self.analyze_render_operations(plan);
 
-    // 2) 直接写入 arena 数据，避免重新创建
-    queue.write_buffer(&self.mk.arena_buf, 0, bytemuck::cast_slice(&build.arena_u32));
-
-    // 3) 判断 V 是否需要重新分配，并更新 V 数据
-    // 初始化变量/常量行数据
-    for (row, data) in &build.v_init_rows {
-        queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(data));
+        (compute_plan, render_plan)
     }
 
-    for (row, val) in &build.const_rows {
-        let vecv = vec![*val; build.header.L as usize];
-        queue.write_buffer(&self.mk.v_buf, (*row as u64) * build.header.L as u64 * 4, bytemuck::cast_slice(&vecv));
+        fn get_compute_outputs(&self, plan: &MatrixPlan) -> Vec<usize> {
+        // 找出compute管线应该计算的输出
+        // 这些是render管线需要读取的中间结果
+        let mut outputs = Vec::new();
+        
+        for op in &plan.ops {
+            if !self.operation_depends_on_render(op, plan) {
+                match op {
+                    MatOp::BinaryMat { out_start, rows, .. } => {
+                        for i in 0..*rows {
+                            outputs.push(out_start + i);
+                        }
+                    }
+                    MatOp::UnaryMat { out_start, rows, .. } => {
+                        for i in 0..*rows {
+                            outputs.push(out_start + i);
+                        }
+                    }
+                    MatOp::CondBlendMat { out_start, rows, .. } => {
+                        for i in 0..*rows {
+                            outputs.push(out_start + i);
+                        }
+                    }
+                }
+            }
+        }
+        
+        outputs
     }
 
-    // 4) 重新绑定（arena/v 已经更新）
-    self.mk.bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("MK.bg0"),
-        layout: &self.mk.bg_layout,
-        entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: self.mk.header_buf.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: self.mk.arena_buf.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 2, resource: self.mk.v_buf.as_entire_binding() },
-        ],
-    });
+    pub fn set_plan_layered(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        plan: &MatrixPlan,
+        lanes: u32,
+        inputs: &[Vec<f32>],
+    ) -> (MileResultDes, RenderPlan) {
+        // 1. 分析哪些操作应该在compute管线执行
+        let (compute_plan, render_plan) = self.split_compute_render_plan(plan);
+        
+        println!("Compute计划操作数: {}", compute_plan.ops.len());
+        println!("Render计划操作数: {}", render_plan.operation_count);
 
-    // 5) 更新本地状态
-    self.mk.header_cpu = build.header;
-    self.mk.L = build.header.L;
-    self.elm_stage_count = build.header.elm_stage_count;
-    self.rows_each = build.elm_rows_each;
+        // 2. 只设置compute管线的计划（不包含依赖UV的操作）
+        let compute_build = plan_to_mile_simple(&compute_plan, lanes, inputs);
+        
+        // 更新compute管线的buffer
+        queue.write_buffer(&self.mk.header_buf, 0, bytemuck::bytes_of(&compute_build.header));
+        queue.write_buffer(&self.mk.arena_buf, 0, bytemuck::cast_slice(&compute_build.arena_u32));
+        
+        // 初始化compute数据
+        for (row, data) in &compute_build.v_init_rows {
+            queue.write_buffer(&self.mk.v_buf, (*row as u64) * compute_build.header.L as u64 * 4, bytemuck::cast_slice(data));
+        }
+        
+        for (row, val) in &compute_build.const_rows {
+            let vecv = vec![*val; compute_build.header.L as usize];
+            queue.write_buffer(&self.mk.v_buf, (*row as u64) * compute_build.header.L as u64 * 4, bytemuck::cast_slice(&vecv));
+        }
 
-    let mut row_start_array: [u32; 4] = [0; 4];
-    for (i, &row) in plan.top_outputs.iter().enumerate() {
-        row_start_array[i] = (row * 3) as u32;
+        // 3. 更新绑定组
+        self.mk.bindgroup = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("MK.bg0"),
+            layout: &self.mk.bg_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.mk.header_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.mk.arena_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: self.mk.v_buf.as_entire_binding() },
+            ],
+        });
+
+        // 4. 更新本地状态
+        self.mk.header_cpu = compute_build.header;
+        self.mk.L = compute_build.header.L;
+        self.elm_stage_count = compute_build.header.elm_stage_count;
+        self.rows_each = compute_build.elm_rows_each;
+
+        // 5. 返回结果
+        let mut row_start_array: [u32; 4] = [0; 4];
+        for (i, &row) in compute_plan.top_outputs.iter().enumerate() {
+            row_start_array[i] = (row as u32 * lanes) as u32;
+        }
+
+        (
+            MileResultDes { row_start: row_start_array },
+            render_plan
+        )
     }
-    // 返回最终的行号偏移和行号数量
-    // 7) 返回最终的行号偏移（`row_start`）和行号数量（`count`）
-    MileResultDes {
-        row_start:row_start_array,  // 返回最终的行号偏移
-    }
 
-}
-
-    pub fn new_empty(device: &wgpu::Device, queue: &wgpu::Queue,global_hub:Arc<GlobalEventHub<ModuleEvent<Expr>>>) -> Self {
+    pub fn new_empty(device: &wgpu::Device, queue: &wgpu::Queue,global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>) -> Self {
         let build = empty_build();
         let mk = build_mile_simple_gpu(device, queue, &create_mile_shader(device), &build);
         Self {
@@ -526,17 +1153,25 @@ pub fn set_plan(
     pub fn process_ui_events(&mut self, device: &wgpu::Device,queue: &wgpu::Queue) {
         for ev in self.global_hub.poll() {
             match ev {
-                mile_api::ModuleEvent::KennelPush(parmas) => {
-                    let des = self.expr_entry_plan(parmas.idx, &parmas.data, device, queue);
-                    self.global_hub.push(ModuleEvent::KennelPushResultReadDes(
-                        ModuleParmas{
-                            module_name: "GpuKennel",
-                            idx: parmas.idx,
-                            data: des.row_start,
-                            _ty: (ModuleEventType::PanelCustomRead).bits() | parmas._ty,
-                        }
-                    ));
+
+
+                mile_api::ModuleEvent::KennelPush(params) => {
+                    let des = self.expr_entry_plan_with_render(
+                        params.idx, 
+                        &params.data, 
+                        device, 
+                        queue
+                    );
                 },
+
+
+
+
+
+
+
+
+
                 _=>{
 
                 }

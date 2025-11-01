@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, sync::{Arc, Mutex}, time::{Durati
 
 use mile_api::{GlobalEventHub, ModuleEvent, ModuleParmas};
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::core::Expr;
+use mile_gpu_dsl::{core::Expr, pipeline::RenderPlan};
 use mile_graphics::structs::{GlobalState, WGPUContext};
 use mile_ui::{structs::{AnimOp, EasingMask, PanelField, PanelInteractionHold}, TransformAnimFieldInfo};
 use winit::event_loop::{self, EventLoop};
@@ -23,7 +23,7 @@ fn main() {
     let gs = global_state.clone();
 
 
-    let global_hub = Arc::new(GlobalEventHub::<ModuleEvent<ModuleParmas<Expr>>>::new());
+    let global_hub = Arc::new(GlobalEventHub::<ModuleEvent<ModuleParmas<Expr>,RenderPlan>>::new());
     
 
     

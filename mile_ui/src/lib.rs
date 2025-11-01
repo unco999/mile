@@ -4,7 +4,7 @@ use glam::{Vec2, vec2};
 use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
 use itertools::Itertools;
 use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, Renderable};
-use mile_gpu_dsl::core::Expr;
+use mile_gpu_dsl::{core::Expr, pipeline::RenderPlan};
 use mile_graphics::structs::{
      GlobalState, GlobalStateRecord, GlobalStateType, 
 };
@@ -518,7 +518,7 @@ pub struct GpuUi {
     pub custom_wgsl_buffer:wgpu::Buffer,
     pub kennel_compute_buffer:wgpu::Buffer,
     pub ui_kennel_des:KennelReadDesPool<PANEL_ID>,
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<mile_gpu_dsl::core::Expr>>>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
     gpu_debug:RefCell<GpuDebug>,
     indirects_len: u32,
 }
@@ -835,7 +835,7 @@ impl GpuUi {
         cpu_global_uniform:Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
         kennel_compute_buffer:&wgpu::Buffer,
-        global_hub:Arc<GlobalEventHub<ModuleEvent<mile_gpu_dsl::core::Expr>>>
+        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>
     ) -> Self {
         println!(
             "size = {}, align = {}",
@@ -2285,42 +2285,42 @@ for atlas_key in atlas_keys.iter() {
                 if (parmas._ty & ModuleEventType::Vertex.bits()) != 0 {
                     // 获取或插入面板
                     let self_old_index = self.kennel_des_record.len() as u32;
-                    let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
-                        // 如果没有找到对应的面板，则创建一个新的面板
-                        GpuKennelPanelDes {
-                            color_input: [u32::MAX,u32::MAX,u32::MAX,u32::MAX], // 假设初始化默认值
-                            vertex_input: parmas.data,           // 使用传入的数据初始化
-                            blender: 0,                          // 假设初始化为 0
-                            self_old_index: self_old_index as u32,                   // 假设初始化为 0
-                        }
-                    });
+                    // let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
+                    //     // 如果没有找到对应的面板，则创建一个新的面板
+                    //     GpuKennelPanelDes {
+                    //         color_input: [u32::MAX,u32::MAX,u32::MAX,u32::MAX], // 假设初始化默认值
+                    //         vertex_input: parmas.data,           // 使用传入的数据初始化
+                    //         blender: 0,                          // 假设初始化为 0
+                    //         self_old_index: self_old_index as u32,                   // 假设初始化为 0
+                    //     }
+                    // });
                     
                 
-                    // 计算偏移并写入缓冲区
-                    let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
-                    queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
-                    self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                    // // 计算偏移并写入缓冲区
+                    // let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
+                    // queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
+                    // self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
                 }
 
                  if (parmas._ty & ModuleEventType::Frag.bits()) != 0 {
                     // 获取或插入面板
                     let self_old_index = self.kennel_des_record.len() as u32;
-                    let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
-                        // 如果没有找到对应的面板，则创建一个新的面板
-                        GpuKennelPanelDes {
-                            color_input: parmas.data, // 假设初始化默认值
-                            vertex_input:[u32::MAX,u32::MAX,u32::MAX,u32::MAX],           // 使用传入的数据初始化
-                            blender: 0,                          // 假设初始化为 0
-                            self_old_index: self_old_index as u32,                   // 假设初始化为 0
-                        }
-                    });
+                    // let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
+                    //     // 如果没有找到对应的面板，则创建一个新的面板
+                    //     GpuKennelPanelDes {
+                    //         color_input: parmas.data, // 假设初始化默认值
+                    //         vertex_input:[u32::MAX,u32::MAX,u32::MAX,u32::MAX],           // 使用传入的数据初始化
+                    //         blender: 0,                          // 假设初始化为 0
+                    //         self_old_index: self_old_index as u32,                   // 假设初始化为 0
+                    //     }
+                    // });
                     
-                    println!("写入片段着色器 {:?} 写入的panel_id{:?} 写入的desid {}",parmas.data,panel_id,self_old_index);
+                    // println!("写入片段着色器 {:?} 写入的panel_id{:?} 写入的desid {}",parmas.data,panel_id,self_old_index);
                 
-                    // 计算偏移并写入缓冲区
-                    let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
-                    queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
-                    self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                    // // 计算偏移并写入缓冲区
+                    // let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
+                    // queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
+                    // self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
                 }
             }
                 _=>{}

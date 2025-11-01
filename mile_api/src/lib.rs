@@ -298,9 +298,9 @@ use std::sync::{Arc, Mutex, Condvar};
 
     // 假设 ModuleEvent 和 Expr 是你定义的类型
 #[derive(Clone,Debug)]
-pub enum ModuleEvent<T> {
+pub enum ModuleEvent<T,T1> {
     KennelPush(ModuleParmas<T>), //向Kennel写入处理事件
-    KennelPushResultReadDes(ModuleParmas<[u32;4]>)
+    KennelPushResultReadDes(ModuleParmas<T1>)
 }
 
 #[derive(Clone,Debug)]

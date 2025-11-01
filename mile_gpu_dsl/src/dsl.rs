@@ -16,10 +16,6 @@ impl From<bool> for Expr {
     fn from(b: bool) -> Self { Expr::Constant(if b { 1.0 } else { 0.0 }) }
 }
 
-impl From<String> for Expr {
-    fn from(s: String) -> Self { Expr::Variable(s) }
-}
-
 // VecN -> Expr (wrap a VecN as an Expr::VecN)
 impl From<Vec2> for Expr {
     fn from(v: Vec2) -> Self { Expr::Vec2(v) }
@@ -181,10 +177,10 @@ impl Add<i32> for Expr {
     }
 }
 
-impl Add<&str> for Expr {
+impl Add<&'static str> for Expr {
     type Output = Expr;
-    fn add(self, rhs: &str) -> Expr {
-        self + Expr::Variable(rhs.to_string())
+    fn add(self, rhs: &'static str) -> Expr {
+        self + Expr::RenderImport(rhs)
     }
 }
 
@@ -256,24 +252,24 @@ impl Sub<Expr> for i32 {
     fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
 }
 
-impl Mul<Expr> for &str {
+impl Mul<Expr> for &'static str {
     type Output = Expr;
-    fn mul(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) * rhs}
+    fn mul(self, rhs: Expr) -> Expr { Expr::RenderImport(self) * rhs}
 }
 
-impl Div<Expr> for &str {
+impl Div<Expr> for &'static str {
     type Output = Expr;
-    fn div(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) / rhs}
+    fn div(self, rhs: Expr) -> Expr { Expr::RenderImport(self) / rhs}
 }
 
-impl Add<Expr> for &str {
+impl Add<Expr> for&'static str {
     type Output = Expr;
-    fn add(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) + rhs}
+    fn add(self, rhs: Expr) -> Expr { Expr::RenderImport(self) + rhs}
 }
 
-impl Sub<Expr> for &str {
+impl Sub<Expr> for &'static str {
     type Output = Expr;
-    fn sub(self, rhs: Expr) -> Expr { Expr::Variable(self.to_string()) - rhs}
+    fn sub(self, rhs: Expr) -> Expr { Expr::RenderImport(self) - rhs}
 }
 
 

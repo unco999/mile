@@ -4,7 +4,7 @@ use std::{
 
 use mile_api::{Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable};
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::{core::Expr, pipeline::{GpuKennel, MileSimpleBuild, create_mile_shader, plan_to_mile_simple_empty}};
+use mile_gpu_dsl::{core::Expr, pipeline::{GpuKennel, MileSimpleBuild, RenderPlan, create_mile_shader, plan_to_mile_simple_empty}};
 use mile_graphics::structs::{WGPUContext};
 use mile_ui::{
     mile_ui_wgsl::mile_test, structs::{AnimOp, MouseState, PanelEvent, PanelField, PanelInteraction}, GpuUi, Panel
@@ -24,7 +24,7 @@ use winit::{
 use crate::GlobalState;
 #[derive(Clone)]
 pub struct App {
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<ModuleParmas<Expr>>>>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<ModuleParmas<Expr>,RenderPlan>>>,
     pub wgpu_context: Option<WGPUContext>,
     pub wgpu_gpu_ui: Option<Arc<RefCell<GpuUi>>>,
     pub mile_font:Option<Arc<RefCell<MileFont>>>,
