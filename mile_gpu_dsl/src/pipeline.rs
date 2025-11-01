@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use mile_api::{Computeable, CpuGlobalUniform, GlobalEventHub, ModuleEventType, ModuleParmas, Tick};
 use wgpu::util::{DeviceExt, DownloadBuffer};
 use mile_api::{MileResultDes,ModuleEvent};
-use crate::{core::{BinaryOp, Expr, UnaryFunc, dsl::{self, var, wvec2, wvec3, wvec4}}, dsl::if_expr, mat::op::{ImportType, MatOp, Matrix, MatrixPlan, compile_to_matrix_plan_with_imports}};
+use crate::{core::{BinaryOp, Expr, UnaryFunc, dsl::{self, var, wvec2, wvec3, wvec4}}, dsl::if_expr, mat::op::{ImportType, MatOp, Matrix, MatrixPlan, compile_to_matrix_plan_with_imports}, render_plan::RenderPlanManager};
 
 // -------------------- GPU ABI: Header / Stage / Recipe --------------------
 
@@ -41,7 +41,7 @@ pub struct RenderOperation {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
+#[derive(Copy, Clone, Debug, Pod, Zeroable,Default)]
 pub struct RenderPlan {
     pub operations: [RenderOperation; 8], // 最多支持8个操作
     pub operation_count: u32,
@@ -485,7 +485,8 @@ pub struct GpuKennel {
     pub rows_each: Vec<u32>,
     pub util_tick:Tick,
     pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
-    pub global_unitfrom:Rc<CpuGlobalUniform>
+    pub global_unitfrom:Rc<CpuGlobalUniform>,
+    pub render_plan_manager:Rc<RefCell<RenderPlanManager>>
 }
 
 
@@ -984,9 +985,12 @@ impl GpuKennel {
         
         println!("\n=== 测试分层计算 ===");
         
-        // 测试1: 纯计算表达式 (应该在compute管线执行)
         let expr1 = var("time") * 10.0 + 10.0 * var("uv");
+
+
         let output1 = self.expr_entry_plan_with_render(0, &expr1, device, queue);
+
+        
         self.analyze_plan_structure(&output1, "简单测试");
         
     }
@@ -1455,7 +1459,11 @@ fn split_compute_render_plan(&self, plan: &MatrixPlan) -> (MatrixPlan, RenderPla
         device: &wgpu::Device, 
         queue: &wgpu::Queue,
         global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
-        global_unitfrom:Rc<CpuGlobalUniform>) -> Self {
+        global_unitfrom:Rc<CpuGlobalUniform>,
+        render_plan_manager:Rc<RefCell<RenderPlanManager>>
+    ) 
+        
+        -> Self {
         let build = empty_build();
         let mk = build_mile_simple_gpu(device, queue, &create_mile_shader(device), &build,global_unitfrom.clone());
         Self {
@@ -1464,9 +1472,31 @@ fn split_compute_render_plan(&self, plan: &MatrixPlan) -> (MatrixPlan, RenderPla
             rows_each: vec![],
             util_tick:Tick::new(1),
             global_hub,
-            global_unitfrom
+            global_unitfrom,
+            render_plan_manager
         }
     }
+
+
+    // 在设置计划时更新渲染计划管理器
+    pub fn set_plan_with_manager(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        plan: &MatrixPlan,
+        lanes: u32,
+        inputs: &[Vec<f32>],
+        plan_manager: &mut RenderPlanManager,
+        plan_index: usize,
+    ) -> (MileResultDes, RenderPlan) {
+        let (result, render_plan) = self.set_plan_layered(device, queue, plan, lanes, inputs);
+        
+        // 更新渲染计划管理器
+        plan_manager.update_plan(plan_index, render_plan);
+        
+        (result, render_plan)
+    }
+
 
     #[inline]
     pub fn process_ui_events(&mut self, device: &wgpu::Device,queue: &wgpu::Queue) {
@@ -1474,14 +1504,16 @@ fn split_compute_render_plan(&self, plan: &MatrixPlan) -> (MatrixPlan, RenderPla
             match ev {
 
 
-                mile_api::ModuleEvent::KennelPush(params) => {
-                    let des = self.expr_entry_plan_with_render(
-                        params.idx, 
-                        &params.data, 
-                        device, 
-                        queue
-                    );
-                },
+                // mile_api::ModuleEvent::KennelPush(params) => {
+                //     let des = self.set_plan_with_manager(
+                //         params.idx, 
+                //         &params.data, 
+                //         device, 
+                //         queue,
+                //         &[],
+                //         self
+                //     );
+                // },
 
                 _=>{
 

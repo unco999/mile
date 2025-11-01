@@ -4,7 +4,7 @@ use glam::{Vec2, vec2};
 use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
 use itertools::Itertools;
 use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, Renderable};
-use mile_gpu_dsl::{core::Expr, pipeline::RenderPlan};
+use mile_gpu_dsl::{core::Expr, pipeline::RenderPlan, render_plan::RenderPlanManager};
 use mile_graphics::structs::{
      GlobalState, GlobalStateRecord, GlobalStateType, 
 };
@@ -486,6 +486,7 @@ pub struct GlobalLayout{
 }
 
 pub struct GpuUi {
+    pub render_plan_manager:Rc<RefCell<RenderPlanManager>>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
@@ -835,7 +836,8 @@ impl GpuUi {
         cpu_global_uniform:Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
         kennel_compute_buffer:&wgpu::Buffer,
-        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>
+        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
+        render_plan_manager:Rc<RefCell<RenderPlanManager>>
     ) -> Self {
         println!(
             "size = {}, align = {}",
@@ -929,6 +931,7 @@ impl GpuUi {
         gpu_debug.create_buffer(device);
 
         Self {
+            render_plan_manager:render_plan_manager,
             kennel_des_record:HashMap::new(),
             global_hub,
             ui_kennel_des:KennelReadDesPool::default(),
@@ -1790,6 +1793,7 @@ impl GpuUi {
             bind_group_layouts: &[
                 &self.render_bind_group_layout.clone().unwrap(),
                 &self.texture_bind_group_layout.clone().unwrap(),
+                &self.render_plan_manager.borrow().bind_group_layout
             ],
             push_constant_ranges: &[],
         });
@@ -3120,6 +3124,7 @@ impl Renderable for GpuUi {
             }
             pass.set_bind_group(0, &self.render_bind_group, &[]);
             pass.set_bind_group(1, &self.ui_texture_bind_group, &[]);
+            pass.set_bind_group(2, &self.render_plan_manager.borrow().bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

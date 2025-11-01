@@ -2,6 +2,8 @@
 
 // -------------------- 动态 RenderPlan 存储结构 --------------------
 
+use bytemuck::{Zeroable,Pod};
+use crate::pipeline::RenderPlan;
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct RenderPlanHeader {
@@ -21,6 +23,9 @@ pub struct RenderPlanStorage {
 }
 
 impl RenderPlanStorage {
+
+
+
     pub fn new(max_plans: usize) -> Self {
         let buffer_size = std::mem::size_of::<RenderPlanHeader>() + 
                          max_plans * std::mem::size_of::<RenderPlan>();
@@ -146,7 +151,7 @@ impl RenderPlanManager {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("render_plan_storage_buffer"),
             size: buffer_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -158,7 +163,7 @@ impl RenderPlanManager {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: Some(std::num::NonZeroU64::new(buffer_size).unwrap()),
                     },
@@ -224,33 +229,9 @@ impl RenderPlanManager {
 
     // 获取绑定组布局
     pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
-        &bind_group_layout
+        &self.bind_group_layout
     }
 }
 
 // -------------------- 在 GpuKennel 中集成 --------------------
 
-impl GpuKennel {
-    pub fn create_render_plan_manager(device: &wgpu::Device, max_plans: usize) -> RenderPlanManager {
-        RenderPlanManager::new(device, max_plans)
-    }
-
-    // 在设置计划时更新渲染计划管理器
-    pub fn set_plan_with_manager(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        plan: &MatrixPlan,
-        lanes: u32,
-        inputs: &[Vec<f32>],
-        plan_manager: &mut RenderPlanManager,
-        plan_index: usize,
-    ) -> (MileResultDes, RenderPlan) {
-        let (result, render_plan) = self.set_plan_layered(device, queue, plan, lanes, inputs);
-        
-        // 更新渲染计划管理器
-        plan_manager.update_plan(plan_index, render_plan);
-        
-        (result, render_plan)
-    }
-}

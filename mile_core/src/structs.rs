@@ -4,7 +4,7 @@ use std::{
 
 use mile_api::{Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable};
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::{core::Expr, pipeline::{GpuKennel, MileSimpleBuild, RenderPlan, create_mile_shader, plan_to_mile_simple_empty}};
+use mile_gpu_dsl::{core::Expr, pipeline::{GpuKennel, MileSimpleBuild, RenderPlan, create_mile_shader, plan_to_mile_simple_empty}, render_plan::RenderPlanManager};
 use mile_graphics::structs::{WGPUContext};
 use mile_ui::{
     mile_ui_wgsl::mile_test, structs::{AnimOp, MouseState, PanelEvent, PanelField, PanelInteraction}, GpuUi, Panel
@@ -270,7 +270,9 @@ impl ApplicationHandler<AppEvent> for App {
 
         let global_hub = Arc::new(GlobalEventHub::new());
 
-        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue,global_hub.clone(),global_unifrom.clone());
+        let render_plan_manager = Rc::new(RefCell::new(RenderPlanManager::new(&ctx.device, 512)));
+
+        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue,global_hub.clone(),global_unifrom.clone(),render_plan_manager.clone());
         gpu_kennel.init_buffer(&ctx.device, &ctx.queue);
 
         let mut gpu_ui = GpuUi::new(
@@ -279,7 +281,8 @@ impl ApplicationHandler<AppEvent> for App {
             global_unifrom.clone(),
             &window,
             &gpu_kennel.get_compute_buffer(),
-            global_hub.clone()
+            global_hub.clone(),
+            render_plan_manager.clone()
         );
 
 
