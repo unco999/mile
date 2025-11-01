@@ -24,6 +24,7 @@ pub enum Call{
     OUT
 }
 
+
 #[derive(Debug,Clone,Default)]
 pub enum ExitCollectionOp{
     #[default]
@@ -1127,36 +1128,34 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::De
     // }
 
 
-        // Mui::new( data.clone(),emit.clone())
-        // .default_state(UiState(0))
-        // .state(UiState(0))
-        //     .texture("backgound.png")
-        //     .pos(vec2(300.0, 300.0))
-        //     .size(700.0, 700.0)
-        //     .frag(|input,panel_id|{
-        //         wvec4(uv.x, 0.0, 0.0, 1.0) 
-        //     })
-        //     .on()
-        //         .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-        //             input.index += 0.1;
-        //         })
-        //         // .call(Call::DRAG, move |input,panel_id|{
-
-        //         // })
-        //         .next_state(Call::CLICK, UiState(1))
-        //         .exit()
-        // .state(UiState(1))
-        //    .pos(vec2(400.0, 300.0))
-        //     .on()
-        //         .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-        //             input.index += 0.1;
-        //         })
-        //         // .call(Call::DRAG, move |input,panel_id|{
-
-        //         // })
-        //         .next_state(Call::CLICK, UiState(0))
-        //         .exit()
-        //    .build(gpu_ui.clone(), queue, device);
+        Mui::new( data.clone(),emit.clone())
+        .default_state(UiState(0))
+        .state(UiState(0))
+            .texture("backgound.png")
+            .pos(vec2(300.0, 300.0))
+            .size(700.0, 700.0)
+            .frag(|input,panel_id|{
+                wvec4(input.index, 0.0, 0.0, 1.0) 
+            })
+             .on()
+                 .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
+                     input.index += 0.1;
+                 })
+                 // .call(Call::DRAG, move |input,panel_id|
+                 // })
+                 .next_state(Call::CLICK, UiState(1))
+                 .exit()
+         .state(UiState(1))
+            .pos(vec2(400.0, 300.0))
+             .on()
+                 .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
+                     input.index += 0.1;
+                 })
+                 // .call(Call::DRAG, move |input,panel_id|
+                 // })
+                 .next_state(Call::CLICK, UiState(0))
+                 .exit()
+            .build(gpu_ui.clone(), queue, device);
 
 
         // for i in 1..9{

@@ -223,6 +223,7 @@ pub struct GlobalUniform {
     pub pad_extra: [f32; 2], // 16 bytes
 }
 
+
 pub struct CpuGlobalUniform{
     inner:Rc<RefCell<GlobalUniform>>,
     buffer:wgpu::Buffer

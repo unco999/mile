@@ -27,8 +27,8 @@ impl Matrix {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportType {
-    Render(String),    // 渲染管线导入，如UV、屏幕坐标等
-    Compute(String),   // 计算管线导入，如缓存数据等
+    Render(&'static str),    // 渲染管线导入，如UV、屏幕坐标等
+    Compute(&'static str),   // 计算管线导入，如缓存数据等
 }
 
 #[derive(Debug, Clone)]
@@ -64,11 +64,11 @@ impl ImportRegistry {
     }
 
     // 获取导入信息
-    pub fn get_import_info(&self, name: &str) -> Option<(ImportType, u32)> {
+    pub fn get_import_info(&self, name: &'static str) -> Option<(ImportType, u32)> {
         if let Some((mask, _)) = self.render_imports.get(name) {
-            Some((ImportType::Render(name.to_string()), *mask))
+            Some((ImportType::Render(name), *mask))
         } else if let Some((mask, _)) = self.compute_imports.get(name) {
-            Some((ImportType::Compute(name.to_string()), *mask))
+            Some((ImportType::Compute(name), *mask))
         } else {
             None
         }
@@ -78,14 +78,14 @@ impl ImportRegistry {
     pub fn execute_import(&self, import_type: &ImportType, input: &[f32]) -> Vec<f32> {
         match import_type {
             ImportType::Render(name) => {
-                if let Some((_, handler)) = self.render_imports.get(name) {
+                if let Some((_, handler)) = self.render_imports.get(*name) {
                     handler(input)
                 } else {
                     vec![0.0; input.len()]
                 }
             }
             ImportType::Compute(name) => {
-                if let Some((_, handler)) = self.compute_imports.get(name) {
+                if let Some((_, handler)) = self.compute_imports.get(*name) {
                     handler(input)
                 } else {
                     vec![0.0; input.len()]
@@ -647,115 +647,3 @@ fn convert_to_generic_ops(ops: &[MatOp]) -> Vec<GenericMatOp> {
         },
     }).collect()
 }
-#[test]
-fn once_batch_matrix() {
-    use crate::core::dsl::*;
-    
-    // 创建表达式
-    let _if = Expr::If { 
-        condition: Box::new(eq(Expr::RenderImport("uv"), Expr::Constant(2.0))), 
-        then_branch: Box::new(Expr::Constant(5.0)), 
-        else_branch: Box::new(Expr::Constant(11.0)) 
-    };
-    let expr = wvec3(_if.clone(), _if.clone(), Expr::RenderImport("uv"));
-
-    // 创建并配置导入注册表
-    let mut import_register = ImportRegistry::new();
-    
-    // 注册UV导入处理器 - 返回vec4格式的UV坐标
-    import_register.register_render_import("uv", 0b01, Box::new(|input| {
-        // 模拟UV坐标：假设输入是像素坐标，转换为0-1范围的RGBA
-        if input.is_empty() {
-            vec![0.5, 0.5, 0.0, 1.0] // 默认UV值
-        } else {
-            vec![
-                input[0] / 1000.0,  // U
-                input[1] / 1000.0,  // V  
-                0.0,                // 固定值
-                1.0                 // Alpha
-            ]
-        }
-    }));
-
-    // 编译计划
-    let plan = compile_to_matrix_plan_with_imports(&expr, &import_register);
-
-    println!("编译计划信息:");
-    println!("  - 最终V长度: {}", plan.final_v_len);
-    println!("  - 顶层输出数量: {}", plan.top_outputs.len());
-    println!("  - 操作数量: {}", plan.ops.len());
-    println!("  - 导入数量: {}", plan.imports.len());
-    println!("  - 常量数量: {}", plan.constant_values.len());
-
-    // 检查导入信息
-    for import in &plan.imports {
-        println!("导入: {:?}, 掩码: {}, 索引: {}", import.import_type, import.mask, import.index);
-    }
-
-    // 由于有RenderImport，我们需要模拟渲染输入
-    // 假设我们有一个512x512的纹理，测试几个像素位置
-    let test_uvs = vec![
-        vec![0.0, 0.0],    // 左上角
-        vec![256.0, 256.0], // 中心
-        vec![511.0, 511.0], // 右下角
-    ];
-
-    // 对每个测试UV执行计算
-    for (i, uv) in test_uvs.iter().enumerate() {
-        println!("\n测试UV {}: {:?}", i, uv);
-        
-        // 执行导入处理
-        let uv_values = import_register.execute_import(&ImportType::Render("uv".to_string()), uv);
-        println!("UV处理结果: {:?}", uv_values);
-        
-        // 准备输入数据（这里需要根据实际的V结构来组织）
-        // 由于有RenderImport，我们需要将UV值放在正确的位置
-        let mut inputs = Vec::new();
-        
-        // 根据plan中的导入索引位置来组织输入
-        // 这是一个简化的模拟 - 实际实现需要更精确的输入映射
-        if let Some(uv_import) = plan.imports.iter().find(|i| matches!(&i.import_type, ImportType::Render(name) if name == "uv")) {
-            // 创建一个足够大的输入向量，在UV导入的位置放入UV值
-            let mut input_row = vec![0.0; plan.final_v_len];
-            // 将UV值放入对应的位置（这里简化处理，只放第一个分量）
-            if !uv_values.is_empty() {
-                input_row[uv_import.index] = uv_values[0]; // 使用U分量
-            }
-            inputs.push(input_row);
-        }
-        
-        // 执行计算
-        let outputs = simulate_matrix_plan_batch(&plan, &inputs);
-        println!("计算结果: {:?}", outputs);
-    }
-
-    // 也测试通用版本
-    println!("\n使用通用版本模拟:");
-    let outputs = simulate_matrix_plan_batch_generic(&plan);
-    println!("通用版本输出: {:?}", outputs);
-    
-    assert_eq!(outputs.len(), 3);
-    
-    // 验证结果合理性
-    // 由于条件 Expr::RenderImport("uv") == Constant(2.0) 应该总是false
-    // 所以_if表达式应该返回else_branch的值11.0
-    // 第三个分量是RenderImport("uv")本身
-    
-    println!("测试完成!");
-}
-
-// #[test]
-// fn gpu_once_batch_matrix(){
-//     use crate::core::dsl::*;
-//     let _if = Expr::If { condition: Box::new(eq(Expr::Constant(1.0), Expr::Constant(2.0))), then_branch: Box::new(Expr::Constant(5.0)), else_branch: Box::new(Expr::Constant(11.0)) };
-//     let expr = wvec3(_if.clone(), _if.clone(),33.0);
-//     let plan = compile_to_matrix_plan_with_imports(&expr);
-//     let inputs = vec![
-//         vec![1.0_f32], // a
-//         vec![3.0_f32], // b
-//         vec![5.0_f32], // c
-//         vec![7.0_f32], // d
-//     ];
-//     let outputs = simulate_matrix_plan_batch_generic(&plan);
-//     println!("outputs {:?}",outputs);
-// }

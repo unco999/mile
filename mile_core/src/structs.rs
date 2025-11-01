@@ -266,12 +266,12 @@ impl ApplicationHandler<AppEvent> for App {
 
         let window = Arc::new(window);
         let ctx = WGPUContext::new(window.clone(), self.global_state.clone());
+        let global_unifrom = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
 
         let global_hub = Arc::new(GlobalEventHub::new());
 
-        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue,global_hub.clone());
+        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue,global_hub.clone(),global_unifrom.clone());
         gpu_kennel.init_buffer(&ctx.device, &ctx.queue);
-        let global_unifrom = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
 
         let mut gpu_ui = GpuUi::new(
             &ctx.device, ctx.config.format,
