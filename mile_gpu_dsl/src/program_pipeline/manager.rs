@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::render_layer::RenderLayerDescriptor;
+use super::render_layer::{encode_render_expr_nodes, RenderExprNodeGpu, RenderLayerDescriptor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProgramHandle(pub u32);
@@ -48,6 +48,8 @@ pub struct ProgramSlot {
     handle: ProgramHandle,
     node_offset: u32,
     node_count: u32,
+    expr_offset: u32,
+    expr_count: u32,
     render_layer: RenderLayerDescriptor,
     stage_stats: StageStats,
     precompute_nodes: Vec<u32>,
@@ -58,6 +60,7 @@ pub struct ProgramSlot {
 pub struct ProgramSlotInfo {
     pub handle: ProgramHandle,
     pub compute_range: Range<u32>,
+    pub expr_range: Range<u32>,
     pub stage_stats: StageStats,
     pub precompute_nodes: Vec<u32>,
     pub per_frame_nodes: Vec<u32>,
@@ -80,6 +83,7 @@ impl From<ProgramBuildError> for ProgramPipelineError {
 pub struct ProgramPipeline {
     compute_pipeline: GpuComputePipeline,
     nodes: Vec<GpuAstNode>,
+    render_expr_nodes: Vec<RenderExprNodeGpu>,
     programs: Vec<ProgramSlot>,
     next_program_id: u32,
     dirty: bool,
@@ -98,6 +102,7 @@ impl ProgramPipeline {
         Self {
             compute_pipeline,
             nodes: Vec::new(),
+            render_expr_nodes: Vec::new(),
             programs: Vec::new(),
             next_program_id: 0,
             dirty: false,
@@ -129,14 +134,21 @@ impl ProgramPipeline {
         let mut gpu_nodes = convert_program_nodes(&program, node_offset);
         self.nodes.append(&mut gpu_nodes);
 
+        let expr_offset = self.render_expr_nodes.len() as u32;
+        let mut expr_nodes =
+            encode_render_expr_nodes(&program.render_expr_nodes, node_offset, expr_offset);
+        self.render_expr_nodes.append(&mut expr_nodes);
+
         let render_layer =
-            RenderLayerDescriptor::from_program(&program, handle, node_offset);
+            RenderLayerDescriptor::from_program(&program, handle, node_offset, expr_offset);
         let stage_info = collect_stage_info(&program, node_offset);
 
         self.programs.push(ProgramSlot {
             handle,
             node_offset,
             node_count: node_count as u32,
+            expr_offset,
+            expr_count: program.render_expr_nodes.len() as u32,
             render_layer,
             stage_stats: stage_info.stats,
             precompute_nodes: stage_info.precompute_nodes,
@@ -191,6 +203,7 @@ impl ProgramPipeline {
             .map(|slot| ProgramSlotInfo {
                 handle: slot.handle,
                 compute_range: slot.node_offset..(slot.node_offset + slot.node_count),
+                expr_range: slot.expr_offset..(slot.expr_offset + slot.expr_count),
                 stage_stats: slot.stage_stats,
                 precompute_nodes: slot.precompute_nodes.clone(),
                 per_frame_nodes: slot.per_frame_nodes.clone(),
@@ -204,6 +217,10 @@ impl ProgramPipeline {
 
     pub fn compute_nodes(&self) -> &[GpuAstNode] {
         &self.nodes
+    }
+
+    pub fn render_expr_nodes(&self) -> &[RenderExprNodeGpu] {
+        &self.render_expr_nodes
     }
 
     pub fn node_buffer(&self) -> &wgpu::Buffer {

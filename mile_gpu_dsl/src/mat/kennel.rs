@@ -1,8 +1,8 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use bytemuck::{cast_slice, Zeroable};
-use mile_api::{CpuGlobalUniform, Tick};
-use wgpu::util::DownloadBuffer;
+use mile_api::{CpuGlobalUniform, GlobalEventHub, ModuleEvent, ModuleEventType, ModuleParmas, Tick};
+use wgpu::{Device, util::DownloadBuffer};
 
 pub use crate::program_pipeline::{
     ProgramHandle, ProgramPipelineError, ProgramSlotInfo, RenderBindingLayer,
@@ -54,6 +54,7 @@ pub struct Kennel {
     render_binding_resources: Option<RenderBindingResources>,
     render_binding_capacity: usize,
     _global_uniform: Rc<CpuGlobalUniform>,
+    _global_hub:Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>
 }
 
 impl Kennel {
@@ -62,6 +63,7 @@ impl Kennel {
         queue: &wgpu::Queue,
         global_uniform: Rc<CpuGlobalUniform>,
         config: KennelConfig,
+        _global_hub:Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>
     ) -> Self {
         let tick_interval = config.readback_interval_secs.max(1);
         let pipeline = ProgramPipeline::new(
@@ -80,6 +82,7 @@ impl Kennel {
             render_binding_resources: None,
             render_binding_capacity: 0,
             _global_uniform: global_uniform,
+            _global_hub
         }
     }
 
@@ -114,6 +117,7 @@ impl Kennel {
             device,
             cap,
             self.pipeline.result_buffer(),
+            self.pipeline.render_expr_nodes(),
         ));
     }
 
@@ -155,6 +159,7 @@ impl Kennel {
         self.pipeline.result_buffer()
     }
 
+
     /// 重新生成渲染绑定层数据与 GPU 资源
     pub fn rebuild_render_bindings(
         &mut self,
@@ -173,6 +178,7 @@ impl Kennel {
                 device,
                 required,
                 self.pipeline.result_buffer(),
+                self.pipeline.render_expr_nodes(),
             ));
         } else if self.render_binding_layers.len() != self.render_binding_capacity {
             self.render_binding_layers
@@ -196,9 +202,41 @@ impl Kennel {
 
         if let Some(resources) = &mut self.render_binding_resources {
             resources.write_layers(queue, &self.render_binding_layers);
+            resources.write_expr_nodes(device, queue, self.pipeline.render_expr_nodes());
             Some(resources)
         } else {
             None
+        }
+    }
+
+    pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
+        for ev in self._global_hub.poll() {
+            match ev {
+            ModuleEvent::KennelPush(parmas) => {
+                let panel_id = parmas.idx;
+
+                let mut registry = ImportRegistry::new();
+        
+                // 注册必要的导入
+                registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
+                registry.register_render_import("uv", 1, Box::new(|_| vec![0.0]));
+                registry.register_render_import("color", 2, Box::new(|_| vec![0.0]));
+                                
+                      let result = self.register_program(&parmas.data,&registry);
+                      println!("当前注册新面板情况 {:?}",result);
+                      
+                      let layer_index = self.render_layers().len();
+                      self.rebuild_render_bindings(device,queue);
+                      self._global_hub.push(ModuleEvent::KennelPushResultReadDes(ModuleParmas{
+                            module_name: "Kennel",
+                            idx: layer_index as u32,
+                            data: layer_index as u32,
+                            _ty: ModuleEventType::Frag.bits(),
+                    }));
+
+            }
+                _=>{}
+            }
         }
     }
 
