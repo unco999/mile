@@ -2,7 +2,7 @@ use std::{any::Any, cell::{Cell, RefCell}, collections::{self, HashMap}, default
 use flume::Sender;
 use glam::{Vec2, vec2, vec4};
 use mile_api::{ModuleEventType, ModuleParmas};
-use mile_gpu_dsl::{core::{Expr, dsl::{eq, sin, wvec4}}, dsl::*};
+use mile_gpu_dsl::{core::{Expr, dsl::{eq, sin, var, wvec4}}, dsl::*};
 use wgpu::naga::keywords::wgsl::RESERVED;
 use crate::{CpuPanelEvent, GpuUi, NetWorkTransition, PANEL_ID, Panel, StateTransition, TransformAnimFieldInfo, UIEventHub, UiInteractionScope, structs::{ AnimOp, CollectionId, CollectionSampling, EasingMask, EntryState, PanelEvent, PanelField, PanelInteraction, RelLayoutMask}, ui_network::{ Collection, Rel, collection_by_name, rel_by_name}};
 
@@ -1135,7 +1135,7 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::De
             .pos(vec2(300.0, 300.0))
             .size(700.0, 700.0)
             .frag(|input,panel_id|{
-                wvec4(input.index, 1.0, 1.0, 1.0) 
+                wvec4(var("time") * 0.1,1.0,2.0,3.0)
             })
              .on()
                  .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{

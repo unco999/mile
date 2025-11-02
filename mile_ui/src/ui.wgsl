@@ -132,20 +132,23 @@ struct RenderOperation {
     else_source: u32,       // else分支数据源
 };
 
-// 渲染计划描述
-struct RenderPlan {
-    operations: array<RenderOperation, 8>, // 8个操作
-    operation_count: u32,
-    final_output_mask: u32, // 输出掩码
+
+struct RenderBindingComponent {
+    channel_type: u32,
+    source_index: u32,
+    component_index: u32,
+    reserved: u32,
+    payload: vec4<f32>,
 };
 
-// 渲染计划存储
-struct RenderPlanStorage {
-    plans: array<RenderPlan, 16>, // 支持16个渲染计划
-    plan_count: u32,
-    dirty_flags: u32,
-    frame_index: u32,
+struct RenderBindingLayer {
+    compute_start: u32,
+    compute_count: u32,
+    reserved0: u32,
+    reserved1: u32,
+    components: array<RenderBindingComponent, 4>,
 };
+
 
 
 @group(0) @binding(1)
@@ -154,9 +157,9 @@ var<storage, read_write> global_uniform: GlobalUniform;
 @group(0) @binding(3)
 var<storage, read> custom_wgsl: array<CustomWgsl>;
 
-@group(0) @binding(4) var<storage, read> compute_buffer: array<f32>;
 
-@group(0) @binding(5) var<storage, read> kennel_des_store : array<GpuKennelPanelDes>;
+
+
 
 @group(1) @binding(0)
 var ui_textures: binding_array<texture_2d<f32>>;
@@ -168,6 +171,14 @@ var ui_sampler:  binding_array<sampler>;
 var<storage, read> sub_image_struct_array: array<GpuUiTextureInfo>;
 
 
+
+@group(2) @binding(0)
+var<storage, read> kennel_render_layers: array<RenderBindingLayer>;
+
+@group(2) @binding(1)
+var<storage, read> kennel_results_buffer: array<vec4<f32>>;
+
+
 // 操作类型常量
 const OP_DIRECT: u32 = 0u;      // 直接使用
 const OP_ADD: u32 = 1u;         // 加法
@@ -175,6 +186,10 @@ const OP_MULTIPLY: u32 = 2u;    // 乘法
 const OP_SUBTRACT: u32 = 4u;    // 减法
 const OP_DIVIDE: u32 = 5u;      // 除法
 const OP_CONDITIONAL: u32 = 20u; // 条件混合
+
+const CHANNEL_CONSTANT: u32 = 0u;
+const CHANNEL_COMPUTE: u32 = 1u;
+const CHANNEL_RENDER_IMPORT: u32 = 2u;
 
 // 数据源类型常量
 const SOURCE_COMPUTE_BUFFER: u32 = 0u;  // 计算缓冲区
@@ -187,8 +202,15 @@ const FORMAT_VEC2: u32 = 1u;    // vec2
 const FORMAT_VEC3: u32 = 2u;    // vec3  
 const FORMAT_VEC4: u32 = 3u;    // vec4
 
+
+struct RenderPlanHeader {
+    plan_count: u32,      // 实际计划数量
+    dirty_flags: u32,     // 脏标记
+    frame_index: u32,     // 帧索引
+    _padding: u32,        // 填充
+}
+
 // 绑定组
-@group(2) @binding(0) var<storage, read> render_plans: RenderPlanStorage;
 
 fn read_custom_frag(panel_id: u32, slot: u32) -> vec4<f32> {
     let frag_value = custom_wgsl[panel_id].frag[slot];
@@ -243,6 +265,17 @@ struct VertexOutput {
     @location(8) kennel_des_id:u32,
 };
 
+struct GpuAstNode {
+    data: vec4<f32>,
+    state: u32,
+    op: u32,
+    data_type: u32,
+    left_child: u32,
+    right_child: u32,
+    import_info: u32,
+    constant_value: f32,
+    pad: u32,
+};
 
 @vertex
 fn vs_main(input: VertexInput) -> VertexOutput {
@@ -275,96 +308,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     out.texture_id = input.texture_id;
     out.uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
 
-    
 
     return out;
 }
 
-fn read_from_compute_buffer(offset: u32, component_count: u32) -> vec4<f32> {
-    var result: vec4<f32>;
-    let start_index = offset / 4u; // 转换为float索引
-    for (var i: u32 = 0u; i < min(component_count, 4u); i++) {
-        result[i] = compute_buffer[start_index + i];
-    }
-    return result;
-}
-
-// 获取渲染输入数据
-fn get_render_input(op: RenderOperation, uv: vec2<f32>, position: vec4<f32>) -> vec4<f32> {
-    // 根据buffer_offset区分不同的渲染输入
-    switch (op.buffer_offset) {
-        case 0u: { // UV坐标
-            return vec4<f32>(uv, 0.0, 1.0);
-        }
-        case 1u: { // 像素位置
-            return position;
-        }
-        default: {
-            return vec4<f32>(uv, 0.0, 1.0);
-        }
-    }
-}
-
-fn perform_render_calculation(op: RenderOperation, uv: vec2<f32>) -> vec4<f32> {
-    // 这里可以实现复杂的渲染计算
-    // 例如：uv * blend_factor + custom_param 等
-    let base_value = vec4<f32>(uv, op.custom_param, 1.0);
-    return base_value * op.blend_factor;
-}
-
-
-fn execute_operation(
-    op: RenderOperation, 
-    uv: vec2<f32>, 
-    position: vec4<f32>,
-) -> vec4<f32> {
-    var result: vec4<f32>;
-    
-    // 根据数据源类型获取数据
-    var data: vec4<f32>;
-    switch (op.source_type) {
-        case SOURCE_COMPUTE_BUFFER: {
-            data = read_from_compute_buffer(op.buffer_offset, op.component_count);
-        }
-        case SOURCE_RENDER_INPUT: {
-            data = get_render_input(op, uv, position);
-        }
-        case SOURCE_RENDER_CALC: {
-            data = perform_render_calculation(op, uv);
-        }
-        default: {
-            data = vec4<f32>(1.0, 0.0, 1.0, 1.0); // 错误颜色
-        }
-    }
-    
-    // 根据操作类型处理数据
-    switch (op.op_type) {
-        case OP_DIRECT: {
-            result = data;
-        }
-        case OP_CONDITIONAL: {
-            let condition = read_from_compute_buffer(op.condition_source, 1);
-            let then_val = read_from_compute_buffer(op.then_source, op.component_count);
-            let else_val = read_from_compute_buffer(op.else_source, op.component_count);
-            result = select(else_val, then_val, condition.x > 0.0);
-        }
-        default: {
-            result = data;
-        }
-    }
-    
-    return result;
-}
-
-
-fn apply_output_mask(color: vec4<f32>, mask: u32) -> vec4<f32> {
-    return vec4<f32>(
-        color.r * f32((mask & 1u) != 0u),
-        color.g * f32((mask & 2u) != 0u), 
-        color.b * f32((mask & 4u) != 0u),
-        color.a * f32((mask & 8u) != 0u)
-    );
-}
 // @fragment
 // fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 //     let tex_index = input.texture_id;
@@ -382,6 +329,49 @@ fn apply_output_mask(color: vec4<f32>, mask: u32) -> vec4<f32> {
 const WGSL_TIME: f32 = 9999999.0; // 与 Rust 的 MAX_TIME_SEC 对应
 const WGSL_SIN_TIME: f32 = 9999999.1; // 与 Rust 的 MAX_TIME_SEC 对应
 const U32_MAX: u32 = 4294967295u;
+
+fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>) -> f32 {
+    // 目前仅支持 UV 采样掩码 0x1，其余按需扩展
+    if (mask & 0x1u) != 0u {
+        let uv_ext = vec4<f32>(uv, 0.0, 1.0);
+        return uv_ext[component_index];
+    }
+    return 0.0;
+}
+
+fn evaluate_render_layer(layer_index: u32, input: VertexOutput) -> vec4<f32> {
+    if (layer_index >= arrayLength(&kennel_render_layers)) {
+        return vec4<f32>(0.0);
+    }
+
+    let layer = kennel_render_layers[layer_index];
+    var composed = vec4<f32>(0.0);
+
+    // 逐个分量计算
+    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
+        let comp = layer.components[i];
+        let lane = comp.component_index % 4u;
+        switch comp.channel_type {
+            case CHANNEL_CONSTANT: {
+                composed[lane] = comp.payload.x;
+            }
+            case CHANNEL_COMPUTE: {
+                let node_index = comp.source_index;
+                if (node_index < arrayLength(&kennel_results_buffer)) {
+                    composed[lane] = kennel_results_buffer[node_index][lane];
+                }
+            }
+            case CHANNEL_RENDER_IMPORT: {
+                composed[lane] = read_render_import(comp.source_index, lane, input.uv);
+            }
+            default: {
+                composed[lane] = 0.0;
+            }
+        }
+    }
+
+    return composed;
+}
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
@@ -402,50 +392,22 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let sub_uv = sub_image_uv_min + (sub_image_uv_max - sub_image_uv_min) * uv;
     let color = textureSample(tex, samp, sub_uv);
 
-
-    //这里开始是批量计划的一部分
-    let plan_index = input.kennel_des_id;
-    let plan = render_plans.plans[plan_index];
-
-    var final_color: vec4<f32> = vec4<f32>(0.0);
     
-    // 执行所有操作
-    for (var i: u32 = 0u; i < plan.operation_count; i++) {
-        let op = plan.operations[i];
-        let result = execute_operation(op, uv, input.position);
-        
-        // 根据操作类型组合结果
-        switch (op.op_type) {
-            case OP_ADD: {
-                final_color = final_color + result;
-            }
-            case OP_MULTIPLY: {
-                final_color = final_color * result;
-            }
-            default: {
-                final_color = result;
-            }
-        }
+    // 使用compute计算的结果
+    let layer_index = input.kennel_des_id;
+    let compute_color = evaluate_render_layer(layer_index, input);
+
+    var final_color = color;
+    if any(compute_color != vec4<f32>(0.0)) {
+        // 若 compute 有输出，优先使用计算结果，同时沿用纹理透明度作为基础
+        final_color = vec4<f32>(
+            compute_color.xyz,
+            color.w * max(compute_color.w, 0.0),
+        );
     }
-    
-    // 应用输出掩码
-    return apply_output_mask(final_color, plan.final_output_mask);
 
-    // let panel_frag: vec4<f32> = read_custom_frag(input.texture_id, 0);
-
-    // mix 函数做线性混合
-    // 这里用 panel_frag.a 控制混合比例
-    // let final_color = mix(color, panel_frag, panel_frag.a); 
-
-    //if(input.kennel_des_id != U32_MAX){
-    //    let kennel_des = kennel_des_store[input.kennel_des_id];
-    //    let output_color_offset = kennel_des.color_input;
-    //    let output_color_v = vec4<f32>(V[output_color_offset[0]],V[output_color_offset[1]],V[output_color_offset[2]],V[output_color_offset[3]]);
-    //    return output_color_v;
-    //}
-
+    return final_color;
     // 保持原有透明度
-    return vec4<f32>(color.rgb, color.a * input.transparent);
 }
 
 // @fragment

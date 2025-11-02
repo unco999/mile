@@ -4,7 +4,7 @@ use std::{
 
 use mile_api::{Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable};
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::{core::Expr, pipeline::{GpuKennel, MileSimpleBuild, RenderPlan, create_mile_shader, plan_to_mile_simple_empty}, render_plan::RenderPlanManager};
+use mile_gpu_dsl::{core::{Expr, dsl::{var, wvec4}}, dsl::cv, mat::{gpu_ast_compute_pipeline::ComputePipelineConfig, kennel::{Kennel, KennelConfig}, op::ImportRegistry}};
 use mile_graphics::structs::{WGPUContext};
 use mile_ui::{
     mile_ui_wgsl::mile_test, structs::{AnimOp, MouseState, PanelEvent, PanelField, PanelInteraction}, GpuUi, Panel
@@ -24,17 +24,17 @@ use winit::{
 use crate::GlobalState;
 #[derive(Clone)]
 pub struct App {
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<ModuleParmas<Expr>,RenderPlan>>>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<ModuleParmas<Expr>,u32>>>,
     pub wgpu_context: Option<WGPUContext>,
     pub wgpu_gpu_ui: Option<Arc<RefCell<GpuUi>>>,
     pub mile_font:Option<Arc<RefCell<MileFont>>>,
     pub proxy: Option<EventLoopProxy<AppEvent>>,
-    pub gpu_kennel:Option<Arc<RefCell<GpuKennel>>>,
+    pub kennel:Option<Arc<RefCell<Kennel>>>,
     pub global_state: Arc<Mutex<GlobalState>>,
     pub last_tick: Instant,
     pub tick_interval: Duration,
     pub last_frame_time: Instant,
-    pub delta_time:Duration
+    pub delta_time:Duration,
 }
 
 impl App {
@@ -59,8 +59,8 @@ impl App {
         if let (
         Some(ui_cell)
         ,Some(mile_font)
-        ,Some(gpu_kennel)
-    ) = (&self.wgpu_gpu_ui,&self.mile_font,&self.gpu_kennel) {
+        ,Some(kennel)
+    ) = (&self.wgpu_gpu_ui,&self.mile_font,&self.kennel) {
             let ctx = self.wgpu_context.as_ref().unwrap();
             ui_cell.borrow_mut().mouse_press_tick_first(&ctx.queue);
             ui_cell.borrow_mut().interaction_compute(&ctx.device,&ctx.queue);
@@ -69,7 +69,8 @@ impl App {
             ui_cell.borrow_mut().mouse_press_tick_post(&ctx.queue);
             mile_font.borrow().batch_enqueue_compute(&ctx.device,&ctx.queue);
             mile_font.borrow_mut().copy_store_texture_to_render_texture(&ctx.device,&ctx.queue);
-            gpu_kennel.borrow_mut().compute(&ctx.device,&ctx.queue);
+            kennel.borrow_mut().compute(&ctx.device, &ctx.queue);
+            kennel.borrow_mut().compute(&ctx.device, &ctx.queue);
         }
     }
 
@@ -88,10 +89,12 @@ impl App {
             // ui_cell.borrow_mut().readback(&ctx.device,&ctx.queue);
         }
 
-        if let Some(gpu_kennel) = &self.gpu_kennel{
-            let mut gpu_kennel = gpu_kennel.borrow_mut();
-            gpu_kennel.read_call_back_cpu(&ctx.device,&ctx.queue);
-            gpu_kennel.process_ui_events(&ctx.device,&ctx.queue);
+        if let Some(kennel) = &self.kennel{
+            let mut kennel = kennel.borrow_mut();
+            kennel.compute(&ctx.device, &ctx.queue);
+            kennel.debug_readback(&ctx.device, &ctx.queue);
+            // kennel.read_call_back_cpu(&ctx.device,&ctx.queue);
+            // kennel.process_ui_events(&ctx.device,&ctx.queue);
         }
 
 
@@ -270,27 +273,32 @@ impl ApplicationHandler<AppEvent> for App {
 
         let global_hub = Arc::new(GlobalEventHub::new());
 
-        let render_plan_manager = Rc::new(RefCell::new(RenderPlanManager::new(&ctx.device, 512)));
 
-        let mut gpu_kennel = GpuKennel::new_empty(&ctx.device, &ctx.queue,global_hub.clone(),global_unifrom.clone(),render_plan_manager.clone());
-        gpu_kennel.init_buffer(&ctx.device, &ctx.queue);
+        let kennel = Arc::new(RefCell::new(Kennel::new( &ctx.device,&ctx.queue,global_unifrom.clone(),KennelConfig{
+            compute_config: ComputePipelineConfig{
+                max_nodes: 512,
+                max_imports:32,
+                workgroup_size: (8,8,1),
+            },
+            readback_interval_secs: 2,
+        })));
+
 
         let mut gpu_ui = GpuUi::new(
             &ctx.device, ctx.config.format,
             self.global_state.clone(),
             global_unifrom.clone(),
             &window,
-            &gpu_kennel.get_compute_buffer(),
             global_hub.clone(),
-            render_plan_manager.clone()
+            kennel.clone()
         );
 
 
         self.wgpu_context = Some(ctx.clone());
         self.wgpu_gpu_ui = Some(Arc::new(RefCell::new(gpu_ui)));
         self.mile_font = Some(Arc::new(RefCell::new(MileFont::new(global_unifrom.clone()))));
-        self.gpu_kennel = Some(Arc::new(RefCell::new(gpu_kennel)));
         self.ui_build();
+        self.kennel = Some(kennel)
         
         // self.read_all_image();
         // self.load_get_texture_view_bind_layout(&ctx.queue, &ctx.device,bind_group_layout);
@@ -442,9 +450,19 @@ impl ApplicationHandler<AppEvent> for App {
                             //     mile_font.borrow_mut().test_entry_text(&ctx.queue);
                             // }
 
-                            if let Some(gpu_kennel) = &self.gpu_kennel{
-                                let mut gpu_kennel = gpu_kennel.borrow_mut();
-                                gpu_kennel.test_entry(&ctx.device,&ctx.queue);
+                            if let Some(kennel) = &self.kennel{
+                                let mut kennel = kennel.borrow_mut();
+                                let mut registry = ImportRegistry::new();
+        
+                                // 注册必要的导入
+                                registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
+                                
+                                let expr = wvec4(1.0, cv("time") * 0.1, 0.1, 1.0);
+                                if let Ok(output) = kennel.register_program(&expr,&registry){
+                                    println!("绑定号码 output {:?}",output);
+                                    kennel.rebuild_render_bindings(&ctx.device,&ctx.queue);
+                                };
+
                             }
 
                         }

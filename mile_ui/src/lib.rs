@@ -3,8 +3,8 @@ use flume::{Receiver, Sender};
 use glam::{Vec2, vec2};
 use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
 use itertools::Itertools;
-use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, Renderable};
-use mile_gpu_dsl::{core::Expr, pipeline::RenderPlan, render_plan::RenderPlanManager};
+use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, PLAN_ID, Renderable};
+use mile_gpu_dsl::{core::Expr, mat::kennel::Kennel, program_pipeline::RenderBindingLayer};
 use mile_graphics::structs::{
      GlobalState, GlobalStateRecord, GlobalStateType, 
 };
@@ -56,14 +56,7 @@ pub enum CpuPanelEvent {
     Vertex((FRAME, UiInteractionScope)),
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable,Default)]
-pub struct GpuKennelPanelDes {
-    pub color_input: [u32; 4], // 16 字节
-    pub vertex_input: [u32; 4], // 16 字节
-    pub blender: u32,           // 4 字节
-    pub self_old_index: u32,               // 4 字节（填充到 16 字节）
-}
+
 
 #[derive(Debug, Clone)]
 pub struct StateTransition {
@@ -486,12 +479,10 @@ pub struct GlobalLayout{
 }
 
 pub struct GpuUi {
-    pub render_plan_manager:Rc<RefCell<RenderPlanManager>>,
+    pub kennel:Arc<RefCell<Kennel>>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
-    pub kennel_des_buffer:Option<wgpu::Buffer>,
-    pub kennel_des_record:HashMap<PanelId,GpuKennelPanelDes>,
     pub num_indices: u32,
     pub num_instances: u32,
     pub pipeline: Option<wgpu::RenderPipeline>,
@@ -517,9 +508,8 @@ pub struct GpuUi {
     pub global_layout:Option<GlobalLayout>,
     pub custom_wgsl:Box<[CustomWgsl;1024]>,
     pub custom_wgsl_buffer:wgpu::Buffer,
-    pub kennel_compute_buffer:wgpu::Buffer,
     pub ui_kennel_des:KennelReadDesPool<PANEL_ID>,
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,PLAN_ID>>>,
     gpu_debug:RefCell<GpuDebug>,
     indirects_len: u32,
 }
@@ -835,9 +825,8 @@ impl GpuUi {
         global_state: Arc<Mutex<GlobalState>>,
         cpu_global_uniform:Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
-        kennel_compute_buffer:&wgpu::Buffer,
-        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,RenderPlan>>>,
-        render_plan_manager:Rc<RefCell<RenderPlanManager>>
+        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,PLAN_ID>>>,
+        kennel:Arc<RefCell<Kennel>>
     ) -> Self {
         println!(
             "size = {}, align = {}",
@@ -931,11 +920,9 @@ impl GpuUi {
         gpu_debug.create_buffer(device);
 
         Self {
-            render_plan_manager:render_plan_manager,
-            kennel_des_record:HashMap::new(),
             global_hub,
+            kennel,
             ui_kennel_des:KennelReadDesPool::default(),
-            kennel_compute_buffer:kennel_compute_buffer.clone(),
             gpu_debug:RefCell::new(gpu_debug),
             custom_wgsl:wgsl_structs,
             custom_wgsl_buffer:wgsl_buffer,
@@ -971,7 +958,6 @@ impl GpuUi {
             animation_pipe_line_cahce: AnimationPipelineCache::default(),
             interaction_pipeline_cache: InteractionPipelineCache::default(),
             panel_interaction_trigger: PanelInteractionTrigger::default(),
-            kennel_des_buffer:None,
         }
     }
 
@@ -1787,13 +1773,22 @@ impl GpuUi {
             label: Some("UI Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ui.wgsl").into()),
         });
+        
+        let mut kennel_ref = self.kennel.borrow_mut();
+        if kennel_ref.render_binding_resources().is_none() {
+            kennel_ref.reserve_render_layers(device, 256);
+        }
+        let kennel_bind = kennel_ref
+            .rebuild_render_bindings(device, queue)
+            .expect("kennel render bindings");
+
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("UI Pipeline Layout"),
             bind_group_layouts: &[
                 &self.render_bind_group_layout.clone().unwrap(),
                 &self.texture_bind_group_layout.clone().unwrap(),
-                &self.render_plan_manager.borrow().bind_group_layout
+                &kennel_bind.bind_group_layout
             ],
             push_constant_ranges: &[],
         });
@@ -1982,34 +1977,9 @@ impl GpuUi {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
 
-        let kennel_des_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("PanelAnimDelta Global Buffer"),
-            size: std::mem::size_of::<GpuKennelPanelDes>() as u64  * 512 as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+
+            ],
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2032,18 +2002,10 @@ impl GpuUi {
                     binding: 3,
                     resource:  self.custom_wgsl_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource:  self.kennel_compute_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource:kennel_des_buffer.as_entire_binding(),
-                },
+
             ],
         });
 
-        self.kennel_des_buffer = Some(kennel_des_buffer);
         self.render_bind_group = Some(bind_group);
         self.render_bind_group_layout = Some(bind_group_layout);
 
@@ -2275,6 +2237,7 @@ for atlas_key in atlas_keys.iter() {
     pub fn change_panel_kennel_des_idx(&mut self, queue: &wgpu::Queue,panel_id:u32,kennel_des_idx:u32){
         let offsets = (panel_id as wgpu::BufferAddress  * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
         let field_offsets = offset_of!(Panel,kennel_des_id) as  wgpu::BufferAddress;
+        println!("写入的kennel_des_idx panelid:{panel_id}=>{:?}",kennel_des_idx);
         queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&kennel_des_idx));
     }
 
@@ -2284,47 +2247,18 @@ for atlas_key in atlas_keys.iter() {
             match ev {
            mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {
                 let panel_id = parmas.idx;
-                    
+                println!("{:?}",parmas);
                 // 证明是一个顶点回读
                 if (parmas._ty & ModuleEventType::Vertex.bits()) != 0 {
-                    // 获取或插入面板
-                    let self_old_index = self.kennel_des_record.len() as u32;
-                    // let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
-                    //     // 如果没有找到对应的面板，则创建一个新的面板
-                    //     GpuKennelPanelDes {
-                    //         color_input: [u32::MAX,u32::MAX,u32::MAX,u32::MAX], // 假设初始化默认值
-                    //         vertex_input: parmas.data,           // 使用传入的数据初始化
-                    //         blender: 0,                          // 假设初始化为 0
-                    //         self_old_index: self_old_index as u32,                   // 假设初始化为 0
-                    //     }
-                    // });
-                    
-                
+                    let link_plan_id = parmas.data;
                     // // 计算偏移并写入缓冲区
-                    // let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
-                    // queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
-                    // self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                    self.change_panel_kennel_des_idx(queue,panel_id,link_plan_id);
                 }
 
                  if (parmas._ty & ModuleEventType::Frag.bits()) != 0 {
-                    // 获取或插入面板
-                    let self_old_index = self.kennel_des_record.len() as u32;
-                    // let panel = self.kennel_des_record.entry(panel_id).or_insert_with(|| {
-                    //     // 如果没有找到对应的面板，则创建一个新的面板
-                    //     GpuKennelPanelDes {
-                    //         color_input: parmas.data, // 假设初始化默认值
-                    //         vertex_input:[u32::MAX,u32::MAX,u32::MAX,u32::MAX],           // 使用传入的数据初始化
-                    //         blender: 0,                          // 假设初始化为 0
-                    //         self_old_index: self_old_index as u32,                   // 假设初始化为 0
-                    //     }
-                    // });
-                    
-                    // println!("写入片段着色器 {:?} 写入的panel_id{:?} 写入的desid {}",parmas.data,panel_id,self_old_index);
-                
+                    let link_plan_id = parmas.data;
                     // // 计算偏移并写入缓冲区
-                    // let offset = std::mem::size_of::<GpuKennelPanelDes>() as u64 * panel.self_old_index as u64;
-                    // queue.write_buffer(&self.kennel_des_buffer.as_ref().unwrap(), offset, bytemuck::cast_slice(&[panel.clone()]));
-                    // self.change_panel_kennel_des_idx(queue,panel_id,self_old_index);
+                    self.change_panel_kennel_des_idx(queue,panel_id,link_plan_id);
                 }
             }
                 _=>{}
@@ -3124,7 +3058,7 @@ impl Renderable for GpuUi {
             }
             pass.set_bind_group(0, &self.render_bind_group, &[]);
             pass.set_bind_group(1, &self.ui_texture_bind_group, &[]);
-            pass.set_bind_group(2, &self.render_plan_manager.borrow().bind_group, &[]);
+            pass.set_bind_group(2, &self.kennel.borrow().render_binding_resources().as_ref().unwrap().bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

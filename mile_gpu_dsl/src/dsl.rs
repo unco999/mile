@@ -16,6 +16,7 @@ impl From<bool> for Expr {
     fn from(b: bool) -> Self { Expr::Constant(if b { 1.0 } else { 0.0 }) }
 }
 
+
 // VecN -> Expr (wrap a VecN as an Expr::VecN)
 impl From<Vec2> for Expr {
     fn from(v: Vec2) -> Self { Expr::Vec2(v) }
@@ -123,6 +124,14 @@ pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a:A,b:B,
 
 pub fn if_expr<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, else_v: E) -> Expr {
     Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
+}
+
+pub fn cv(v:&'static str)->Expr{
+    Expr::ComputeImport(v)
+}
+
+pub fn rv(v:&'static str)->Expr{
+    Expr::RenderImport(v)
 }
 
 impl Expr {

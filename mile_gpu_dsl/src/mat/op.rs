@@ -367,11 +367,6 @@ pub fn compile_to_matrix_plan_with_imports(
     );
     let final_v_len = next_index;
 
-    println!("编译结果 - 最终V长度: {:?}", final_v_len);
-    println!("编译结果 - 顶层输出: {:?}", top_outputs);
-    println!("编译结果 - 导入节点: {:?}", imports);
-    println!("编译结果 - 渲染操作: {:?}", render_only_ops);
-    println!("编译结果 - 计算操作: {:?}", compute_only_ops);
 
     MatrixPlan {
         matrices,
