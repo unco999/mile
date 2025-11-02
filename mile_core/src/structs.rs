@@ -448,16 +448,16 @@ impl ApplicationHandler<AppEvent> for App {
                         PhysicalKey::Code(KeyCode::Space) => {
                             let ctx = self.wgpu_context.as_ref().unwrap();
 
-                            // if let Some(mile_font) = &self.mile_font{
-                            //     mile_font.borrow_mut().test_entry(&ctx.queue);
-                            //     mile_font.borrow_mut().test_entry_text(&ctx.queue);
-                            // }
+                            if let Some(mile_font) = &self.mile_font{
+                                mile_font.borrow_mut().test_entry(&ctx.queue);
+                                mile_font.borrow_mut().test_entry_text(&ctx.queue);
+                            }
 
-                            if let Some(kennel) = &self.kennel{
-                                let mut kennel = kennel.borrow_mut();
+                            // if let Some(kennel) = &self.kennel{
+                            //     let mut kennel = kennel.borrow_mut();
                 
 
-                            }
+                            // }
 
                         }
                         PhysicalKey::Code(KeyCode::Escape) => {

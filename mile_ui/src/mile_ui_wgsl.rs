@@ -951,393 +951,54 @@ struct Data {
     pub index: f32,
 }
 
+//    {
+//         let mut gpu_ui_b = gpu_ui.borrow_mut();
+//         {
+//             // let net_work =gpu_ui_b.new_work_store.as_mut().unwrap();
+
+//             // let mut rel = Rel::new("测试关系","背包","背包元素");
+//             // rel.layout = RelLayoutMask::GRID.bits();
+//             // // rel.animation_field = PanelField::Not.bits();
+
+//             // net_work.add_rel(rel);
+         
+//         }
+//     }  
+
+#[derive(Debug)]
+struct Counter{
+    count:u32
+}
+
 pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::Device) {
-    let data = Rc::new(RefCell::new(Data { index: 0.1 }));
-    let emit = gpu_ui.borrow_mut().event_hub.sender.clone();
+    let counter = Rc::new(RefCell::new(Counter{count:0}));
+    let emit = gpu_ui.borrow().event_hub.sender.clone();
+    
 
+    Mui::new(counter, emit)
+        .default_state(UiState(0))
+        .state(UiState(0))
+        .texture("caton (2).png")
+        .size_with_image()
+        .pos(vec2(300.0, 300.0))
+        .frag(|data,panel_id|{
+            let t = rv("color");
+            let time = sin(cv("time"));
+            wvec4(time, t.y(), t.z(), t.w())
+        })
+        .on()
+            .call(Call::CLICK, move | data,panelid|{
+                data.count += 1;
+                println!("当前的点击次数 {:?}",data.count);
+            })
+            .next_state(Call::CLICK, UiState(1))
+            .exit()
+        .build(gpu_ui, queue, device);
+ 
 
-    {
-        let mut gpu_ui_b = gpu_ui.borrow_mut();
-        {
-            let net_work =gpu_ui_b.new_work_store.as_mut().unwrap();
-
-            let mut rel = Rel::new("测试关系","背包","背包元素");
-            rel.layout = RelLayoutMask::GRID.bits();
-            // rel.animation_field = PanelField::Not.bits();
-
-            net_work.add_rel(rel);
-            // let mut net_work=  gpu_ui_b.ui_net_work.borrow_mut();
-            // let mut ids = net_work.net_work_panel_ids.clone();
-
-            // let id1 = net_work.add_collection("背包容器空间");
-            // let id2 = net_work.add_collection("装备栏格子");
-            // let id3 = net_work.add_collection("战利品宝箱");
-            // let id4 = net_work.add_collection("测试");
-            // let buff_set = net_work.buffer_set.as_ref().unwrap();
-            // let collections_buffer = buff_set.collection_buffer.as_ref().unwrap().clone();
-            // let rel_buffer = buff_set.ui_rel_buffer.as_ref().unwrap().clone();
-            // let id_to_rel_buffer = buff_set.panel_id_to_rel_buffer.as_ref().unwrap().clone();
-
-            // net_work.change_item_with_collection_layout_mask("背包容器空间", CollectionLayoutMask::Ring,queue,&collections_buffer);
-            // net_work.change_collection_paramas("背包容器空间"
-            // ,ColliectionLayoutParmas::Ring {
-            //     radius: 250.0,
-            //     start_angle: 100.0,
-            // }
-            // , queue, &collections_buffer);
-
-
-            // net_work.add_relation("旋转维持", "测试", "背包容器空间", PanelField::POSITION_X | PanelField::POSITION_Y, 1.0, 0.0, CollectionSampling::FIRST);
-            // net_work.update_rel_gpu(queue,&rel_buffer);
-
-            // net_work.collection_update_gpu("背包容器空间",queue,&collections_buffer);
-            // net_work.collection_update_gpu("测试",queue,&collections_buffer);
-
-
-        // for i in (1..5){
-        // net_work.with_collection_by_name("背包容器空间", move |input,gpu_ids|{
-        //     input.add_panel_id(&[1]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        //     net_work.with_collection_by_name("装备栏格子", move |input,gpu_ids|{
-        //     input.add_panel_id(&[55]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        //     net_work.with_collection_by_name("战利品宝箱", move |input,gpu_ids|{
-        //     input.add_panel_id(&[999]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-
-
-        // net_work.with_collection_by_name("背包容器空间", move |input,gpu_ids|{
-        //     input.add_panel_id(&[2,3,4,5,6]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        //     net_work.with_collection_by_name("装备栏格子", move |input,gpu_ids|{
-        //     input.add_panel_id(&[55,66,77,88,99]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        //     net_work.with_collection_by_name("战利品宝箱", move |input,gpu_ids|{
-        //     input.add_panel_id(&[999,1111,2222,3333]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        // }
-
-        //     net_work.with_collection_by_name("测试", move |input,gpu_ids|{
-        //     input.add_panel_id(&[666,666,666,666]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-        // net_work.with_collection_by_name("装备栏格子", move |input,gpu_ids|{
-        //     input.add_panel_id(&[100,200,300,400,500]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("装备栏格子 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-            
-        // net_work.with_collection_by_name("背包容器空间", move |input,gpu_ids|{
-        //     input.add_panel_id(&[8,9]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-        // net_work.with_collection_by_name("战利品宝箱", move |input: &mut crate::ui_network::UiCollection,gpu_ids|{
-        //     input.add_panel_id(&[1000,2000]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("战利品宝箱 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-        // net_work.with_collection_by_name("战利品宝箱", move |input: &mut crate::ui_network::UiCollection,gpu_ids|{
-        //     input.add_panel_id(&[5000,6000,7000,8000,9000]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("战利品宝箱 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-        // net_work.with_collection_by_name("背包容器空间", move |input,gpu_ids|{
-        //     input.add_panel_id(&[10,11,13,14,15,16]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("背包容器空间 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-        // net_work.with_collection_by_name("装备栏格子", move |input,gpu_ids|{
-        //     input.add_panel_id(&[700]);
-        //     input.refresh_gpu_ids(gpu_ids);
-        //     println!("装备栏格子 新偏移 {:?}",input.cpu_offset);
-        // },ids.clone());
-
-        // println!("items {:?}",ids.borrow().items);
-        }
-    }  
-        // net_work.buffer_init(device);
 
    
 
 
-        // collection1.add_panel_id(&[0,2,3,4,5,6]);
-
-        // collection1.refresh_gpu_ids(&mut gpu_ids,queue);
-
-        // collection1.add_panel_id(&[5,6,7,8,9]);
-        // collection1.refresh_gpu_ids(&mut gpu_ids,queue);
-
-        // collection2.add_panel_id(&[100,200,300,400]);
-        // collection2.refresh_gpu_ids(&mut gpu_ids,queue);
-
-    
-    // for x in (0..10){
-    //     for y in (0..10){
-    //          Mui::new( data.clone(),emit.clone())
-    //          .default_state(UiState(0))
-    //          .state(UiState(0))
-    //              .net_work()
-    //                   .transform_entry_anim_type()
-    //                 //  .set_collection("背包容器空间")
-    //                  .exit()
-    //              .pos(vec2(x as f32 * 100.0, y as f32 * 100.0))
-    //              .size(64.0, 64.0)
-    //              .texture("statbranch_button_lvlup_psd.png")
-    //              .on()
-    //                  .call(Call::CLICK, move |input,panel_id: u32|{
-    //                      input.index += 22;
-    //                  })
-    //                  .exit()
-    //             .build(gpu_ui.clone(), queue, device);
-    //     }
-    // } 
-
-    // for i in 0..10{
-    //     Mui::new( data.clone(),emit.clone())
-    //     .default_state(UiState(0))
-    //     .state(UiState(0))
-    //         .net_work()
-    //             .transform_entry_anim_type()
-    //             .set_collection(collection_by_name("集合1"))
-    //             .exit()
-    //         .pos(vec2(100.0, 300.0))
-    //         .size(64.0, 64.0)
-    //         .texture("statbranch_button_lvlup_psd.png")
-    //         .on()
-    //             .exit()
-    //        .build(gpu_ui.clone(), queue, device);
-    // }
-
-
-        Mui::new( data.clone(),emit.clone())
-        .default_state(UiState(0))
-        .state(UiState(0))
-            .texture("backgound.png")
-            .pos(vec2(300.0, 300.0))
-            .size(700.0, 700.0)
-            .frag(|input,panel_id|{
-                let time = cv("time");
-                let base = rv("color");
-
-                let wave = sin(time * 2.0);            // 纯 compute
-                let uvx = rv("uv").x();
-
-                let factor = wave * 0.4 + 0.6 * uvx;         // 纯 compute
-                
-                wvec4(
-                    base.x() + factor.clone(),
-                    factor.clone(),
-                    1.0,
-                    1.0,
-                )
-
-            })
-             .on()
-                 .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-                     input.index += 0.1;
-                 })
-                 // .call(Call::DRAG, move |input,panel_id|
-                 // })
-                 .next_state(Call::CLICK, UiState(1))
-                 .exit()
-         .state(UiState(1))
-            .pos(vec2(400.0, 300.0))
-             .on()
-                 .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-                     input.index += 0.1;
-                 })
-                 // .call(Call::DRAG, move |input,panel_id|
-                 // })
-                 .next_state(Call::CLICK, UiState(0))
-                 .exit()
-            .build(gpu_ui.clone(), queue, device);
-
-
-        // for i in 1..9{
-        //     Mui::new(data.clone(),emit.clone())
-        //         .default_state(UiState(0))
-        //         .net_work()
-        //             .set_collection(collection_by_name("背包元素"))
-        //             .exit()
-        //         .state(UiState(0))
-        //         .pos(vec2(i as f32* 40.0, i as f32* 40.0))
-        //         .size_with_image()
-        //         .texture(format!("head ({}).png",i).as_str())
-        //         .on()
-        //                 .call(Call::HOVER, move|input,panel_id|{
-        //                     println!("被悬浮了 {panel_id}");
-
-        //                 })
-        //             .next_state(Call::HOVER, UiState(1))
-        //             .exit()
-        //          .state(UiState(1))
-        //             .offset(vec2(0.0, -30.0))
-        //             .on()
-        //                 .call(Call::HOVER, move|input,panel_id|{
-        //                     println!("被悬浮了 {panel_id}");
-        //                 })
-        //                 .next_state(Call::OUT, UiState(0))
-        //                 .exit()
-        //         .build(gpu_ui.clone(), queue, device);
-        // }
-                
-
-        // Mui::new( data.clone(),emit.clone())
-        // .default_state(UiState(0))
-        // .state(UiState(1))
-        //     .pos(vec2(300.0, 300.0))
-        //     .size(64.0, 64.0)
-        //     .texture("red_med_button_on_png.png")
-        //     .on()
-        //         .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-        //             println!("当前id {:?}",panel_id);
-        //         })
-        //         .call(Call::HOVER, move |input: &mut Data,panel_id: u32|{
-        //             println!("当前hover id {:?}",panel_id);
-        //         })
-        //         .next_state(Call::HOVER, UiState(2))
-        //         .next_state(Call::CLICK, UiState(0))
-        //         .exit()
-        // .state(UiState(2))
-        //     .offset(vec2(0.0, 100.0))
-        //     .on()
-        //         .call(Call::HOVER, move |input: &mut Data,panel_id: u32|{
-        //             println!("当前hover id {:?}",panel_id);
-        //         })
-        //         .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-        //             println!("当前点击了目标 {:?}",panel_id);
-        //         })
-        //         .next_state(Call::OUT, UiState(1))
-        //         .exit()
-        // .state(UiState(0))
-        //     .pos(vec2(400.0, 300.0))
-        //     .size(64.0, 64.0)
-        //     .texture("red_med_button_on_png.png")
-        //     .on()
-        //         .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
-        //             println!("当前id {:?}",panel_id);
-
-        //         })
-        //         .next_state(Call::CLICK, UiState(1))
-        //         .exit()
-        //    .build(gpu_ui.clone(), queue, device);
-    // Mui::new( data.clone(),emit.clone())
-    // .default_state(UiState(0))
-    // .state(UiState(0))
-    //     .pos(vec2(100.0, 100.0))
-    //     .size(64.0, 64.0)
-    //     .texture("statbranch_button_lvlup_psd.png")
-    //     .on()
-    //         .next_state(Call::CLICK,UiState(1))
-    //         .call(Call::CLICK, move |input,panel_id: u32|{
-    //             input.index += 22;
-    //         })
-    //         .exit()
-    // .state(UiState(1))
-    //      .net_work()
-    //         .set_collection("背包容器空间")
-    //         .exit_collection(ExitCollectionOp::ExitAllOldCollection)
-    //         .exit()
-    //      .pos(vec2(900.0, 600.0))
-    //      .size(256.0, 256.0)
-    //       .on()
-    //         .call(Call::CLICK, move |input,panel_id|{
-    //             input.index += 1000;
-    //         })
-    //         // .network_call(Call::CLICK,|e:network|{
-    //         //     e.event("ssss")   //这个关系网络实际上是  初始化的时候就绑定的数据流 这个关系网络的数据流呢  分为source 和 target
-    //         //                       // 他描述N组UI之间的关系  
-    //         // })
-    //         .next_state(Call::CLICK,UiState(2))
-    //         .exit()
-    // .state(UiState(2))
-    //      .net_work()
-    //         .set_collection("装备栏格子")
-    //         .exit()
-    //      .pos(vec2(700.0, 30.0))
-    //      .size(128.0, 128.0)
-    //       .on()
-    //         .call(Call::CLICK, move |input,panel_id: u32|{
-    //             input.index += 1000;
-    //         })
-    //         .call(Call::DRAG, move |input,panel_id|{
-    //         })
-    //         .next_state(Call::CLICK,UiState(0))
-    //         .exit()
-    // .build(gpu_ui.clone(),queue,device);
-    
-
-
-    // Mui::new( data.clone(),emit.clone())
-    // .default_state(UiState(0))
-    // .state(UiState(0))
-    //     .pos(vec2(500.0, 500.0))
-    //     .size(64.0, 64.0)
-    //     .texture("red_med_button_on_png.png")
-    //     .on()
-    //         .next_state(Call::CLICK,UiState(1))
-    //         .call(Call::CLICK, move |input,panel_id: u32|{
-    //             input.index += 22;
-    //         })
-    //         .exit()
-    // .state(UiState(1))
-    //      .net_work()
-    //         .set_collection("背包容器空间")
-    //         .exit_collection(ExitCollectionOp::ExitAllOldCollection)
-    //         .exit()
-    //      .pos(vec2(100.0, 100.0))
-    //      .size(256.0, 256.0)
-    //       .on()
-    //         .call(Call::CLICK, move |input,panel_id|{
-    //             input.index += 1000;
-    //         })
-    //         // .network_call(Call::CLICK,|e:network|{
-    //         //     e.event("ssss")   //这个关系网络实际上是  初始化的时候就绑定的数据流 这个关系网络的数据流呢  分为source 和 target
-    //         //                       // 他描述N组UI之间的关系  
-    //         // })
-    //         .next_state(Call::CLICK,UiState(2))
-    //         .exit()
-    // .state(UiState(2))
-    //      .net_work()
-    //         .set_collection("装备栏格子")
-    //         .exit()
-    //      .pos(vec2(100.0, 100.0))
-    //      .size(128.0, 128.0)
-    //       .on()
-    //         .call(Call::CLICK, move |input,panel_id: u32|{
-    //             input.index += 1000;
-    //         })
-    //         .call(Call::DRAG, move |input,panel_id|{
-    //         })
-    //         .next_state(Call::CLICK,UiState(0))
-    //         .exit()
-    // .build(gpu_ui.clone(),queue,device);
-
-
-
-
-
-    //         // .on()
-    //         //     .next_state(2)
-    //         //     .exit()
-    //     .build();
+     
 }

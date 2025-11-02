@@ -261,7 +261,7 @@ impl MileFont{
 
    pub fn test_entry(&mut self,queue:&wgpu::Queue){
         self.load_to_face("../ttf/BIZUDPGothic-Regular.ttf");
-        let result = self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["道".to_string()],16);
+        let result = self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["币".to_string()],16);
         let cache =  self.cache.generic_buffer_cache.as_mut().unwrap();
 
         if let Ok(mut res) = result{
