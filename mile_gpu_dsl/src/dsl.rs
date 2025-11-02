@@ -134,6 +134,16 @@ pub fn rv(v:&'static str)->Expr{
     Expr::RenderImport(v)
 }
 
+pub fn mix<A: Into<Expr>, B: Into<Expr>, T: Into<Expr>>(a: A, b: B, t: T) -> Expr {
+    let a_expr = a.into();
+    let b_expr = b.into();
+    let t_expr = t.into();
+    let one_minus_t = Expr::from(1.0f32) - t_expr.clone();
+    let first = a_expr * one_minus_t;
+    let second = b_expr * t_expr;
+    first + second
+}
+
 impl Expr {
     pub fn x(&self) -> Expr {
         self.take(0)

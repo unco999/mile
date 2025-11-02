@@ -3,7 +3,7 @@ use flume::{Receiver, Sender};
 use glam::{Vec2, vec2};
 use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
 use itertools::Itertools;
-use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, PLAN_ID, Renderable};
+use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, LayerID, Renderable};
 use mile_gpu_dsl::{core::Expr, mat::kennel::Kennel, program_pipeline::RenderBindingLayer};
 use mile_graphics::structs::{
      GlobalState, GlobalStateRecord, GlobalStateType, 
@@ -509,7 +509,7 @@ pub struct GpuUi {
     pub custom_wgsl:Box<[CustomWgsl;1024]>,
     pub custom_wgsl_buffer:wgpu::Buffer,
     pub ui_kennel_des:KennelReadDesPool<PANEL_ID>,
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,PLAN_ID>>>,
+    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,LayerID>>>,
     gpu_debug:RefCell<GpuDebug>,
     indirects_len: u32,
 }
@@ -825,7 +825,7 @@ impl GpuUi {
         global_state: Arc<Mutex<GlobalState>>,
         cpu_global_uniform:Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
-        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,PLAN_ID>>>,
+        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,LayerID>>>,
         kennel:Arc<RefCell<Kennel>>
     ) -> Self {
         println!(
@@ -1778,6 +1778,7 @@ impl GpuUi {
         if kennel_ref.render_binding_resources().is_none() {
             kennel_ref.reserve_render_layers(device, 256);
         }
+
         let kennel_bind = kennel_ref
             .rebuild_render_bindings(device, queue)
             .expect("kennel render bindings");
@@ -2241,7 +2242,6 @@ for atlas_key in atlas_keys.iter() {
         queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&kennel_des_idx));
     }
 
-    #[inline]
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
         for ev in self.global_hub.poll() {
             match ev {

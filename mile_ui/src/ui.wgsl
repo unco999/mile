@@ -1,11 +1,11 @@
 struct VertexInput {
-    // --- 顶点基础 ---
-    @location(0) pos: vec2<f32>,        // 顶点局部位置
-    @location(1) uv: vec2<f32>,         // 顶点 UV
+    // --- 椤剁偣鍩虹 ---
+    @location(0) pos: vec2<f32>,        // 椤剁偣灞€閮ㄤ綅�?
+    @location(1) uv: vec2<f32>,         // 椤剁�?UV
 
-    // --- Panel 实例数据 ---
-    @location(2) instance_pos: vec2<f32>,   // panel 位置
-    @location(3) instance_size: vec2<f32>,  // panel 尺寸
+    // --- Panel 瀹炰緥鏁版嵁 ---
+    @location(2) instance_pos: vec2<f32>,   // panel 浣嶇�?
+    @location(3) instance_size: vec2<f32>,  // panel 灏哄�?
     @location(4) uv_offset: vec2<f32>,      // panel UV offset
     @location(5) uv_scale: vec2<f32>,       // panel UV scale
 
@@ -18,7 +18,7 @@ struct VertexInput {
     // === Block 4 ===
     @location(10) event_mask: u32,          // panel event response mask
     @location(11) state_mask: u32,          // panel state mask
-    @location(12) transparent: f32,         // panel transparent (对齐)
+    @location(12) transparent: f32,         // panel transparent (瀵归�?
     @location(13) texture_id: u32,          // panel texture_id
 
     // === Block 5 ===
@@ -79,12 +79,12 @@ struct SharedState {
 
     // Mouse button state mask
     mouse_state: u32,            // 4 bytes
-    _pad0: u32,                  // 4 bytes padding 对齐
+    _pad0: u32,                  // 4 bytes padding 瀵归�?
 
     // Hover panel ID
     hover_id: atomic<u32>,       // 4 bytes
     hover_blocked: atomic<u32>,  // 4 bytes
-    _pad1: vec2<u32>,            // 8 bytes padding 对齐 hover_pos
+    _pad1: vec2<u32>,            // 8 bytes padding 瀵归�?hover_pos
 
     // Hover position
     hover_pos: vec2<f32>,        // 8 bytes
@@ -93,7 +93,7 @@ struct SharedState {
     current_depth: u32,          // 4 bytes
     _pad2: u32,                  // 4 bytes padding
 
-    // Clicked panel ID (最后一次点击)
+    // Clicked panel ID (鏈€鍚庝竴娆＄偣�?
     click_id: u32,               // 4 bytes
     click_blocked: u32,          // 4 bytes
 
@@ -113,23 +113,23 @@ struct GpuUiTextureInfo {
     index: u32,
     parent_index: u32,
     _pad: vec2<u32>,
-    uv_min: vec4<f32>, // 前两位是真实值
-    uv_max: vec4<f32>, // 前两位是真实值
+    uv_min: vec4<f32>, // 鍓嶄袱浣嶆槸鐪熷疄鍊?
+    uv_max: vec4<f32>, // 鍓嶄袱浣嶆槸鐪熷疄鍊?
 };
 
 
 struct RenderOperation {
-    op_type: u32,           // 操作类型
-    source_type: u32,       // 数据源类型
-    buffer_offset: u32,     // 在V_buffer中的字节偏移量
-    component_count: u32,   // 分量数量
-    component_stride: u32,  // 分量步长  
-    data_format: u32,       // 数据格式
-    blend_factor: f32,      // 混合因子
-    custom_param: f32,      // 自定义参数
-    condition_source: u32,  // 条件数据源
-    then_source: u32,       // then分支数据源
-    else_source: u32,       // else分支数据源
+    op_type: u32,           // 鎿嶄綔绫诲�?
+    source_type: u32,       // 鏁版嵁婧愮被�?
+    buffer_offset: u32,     // 鍦╒_buffer涓殑瀛楄妭鍋忕Щ閲?
+    component_count: u32,   // 鍒嗛噺鏁伴噺
+    component_stride: u32,  // 鍒嗛噺姝ラ暱  
+    data_format: u32,       // 鏁版嵁鏍煎紡
+    blend_factor: f32,      // 娣峰悎鍥犲瓙
+    custom_param: f32,      // 鑷畾涔夊弬�?
+    condition_source: u32,  // 鏉′欢鏁版嵁婧?
+    then_source: u32,       // then鍒嗘敮鏁版嵁�?
+    else_source: u32,       // else鍒嗘敮鏁版嵁�?
 };
 
 
@@ -137,8 +137,23 @@ struct RenderBindingComponent {
     channel_type: u32,
     source_index: u32,
     component_index: u32,
-    reserved: u32,
+    source_component: u32,
+    factor_component: u32,
+    factor_inner_compute: u32,
+    factor_outer_compute: u32,
+    factor_unary: u32,
     payload: vec4<f32>,
+};
+
+struct RenderExprNode {
+    op: u32,
+    arg0: u32,
+    arg1: u32,
+    arg2: u32,
+    data0: f32,
+    data1: f32,
+    pad0: f32,
+    pad1: f32,
 };
 
 struct RenderBindingLayer {
@@ -177,40 +192,76 @@ var<storage, read> kennel_render_layers: array<RenderBindingLayer>;
 
 @group(2) @binding(1)
 var<storage, read> kennel_results_buffer: array<vec4<f32>>;
+@group(2) @binding(2)
+var<storage, read> render_expr_nodes: array<RenderExprNode>;
 
 
-// 操作类型常量
-const OP_DIRECT: u32 = 0u;      // 直接使用
-const OP_ADD: u32 = 1u;         // 加法
-const OP_MULTIPLY: u32 = 2u;    // 乘法  
-const OP_SUBTRACT: u32 = 4u;    // 减法
-const OP_DIVIDE: u32 = 5u;      // 除法
-const OP_CONDITIONAL: u32 = 20u; // 条件混合
+// 鎿嶄綔绫诲瀷甯搁噺
+const OP_DIRECT: u32 = 0u;      // 鐩存帴浣跨敤
+const OP_ADD: u32 = 1u;         // 鍔犳�?
+const OP_MULTIPLY: u32 = 2u;    // 涔樻�? 
+const OP_SUBTRACT: u32 = 4u;    // 鍑忔�?
+const OP_DIVIDE: u32 = 5u;      // 闄ゆ�?
+const OP_CONDITIONAL: u32 = 20u; // 鏉′欢娣峰�?
 
 const CHANNEL_CONSTANT: u32 = 0u;
 const CHANNEL_COMPUTE: u32 = 1u;
 const CHANNEL_RENDER_IMPORT: u32 = 2u;
+const CHANNEL_RENDER_COMPOSITE: u32 = 3u;
 
-// 数据源类型常量
-const SOURCE_COMPUTE_BUFFER: u32 = 0u;  // 计算缓冲区
-const SOURCE_RENDER_CALC: u32 = 1u;     // 渲染计算
-const SOURCE_RENDER_INPUT: u32 = 2u;    // 渲染输入(UV等)
+const CHANNEL_RENDER_EXPR: u32 = 4u;
+const FACTOR_UNARY_NONE: u32 = 0u;
+const FACTOR_UNARY_SIN: u32 = 1u;
+const FACTOR_UNARY_COS: u32 = 2u;
 
-// 数据格式常量
-const FORMAT_SCALAR: u32 = 0u;  // 标量
+const RENDER_EXPR_OP_CONSTANT: u32 = 0u;
+const RENDER_EXPR_OP_RENDER_IMPORT: u32 = 1u;
+const RENDER_EXPR_OP_COMPUTE_RESULT: u32 = 2u;
+const RENDER_EXPR_OP_UNARY_SIN: u32 = 3u;
+const RENDER_EXPR_OP_UNARY_COS: u32 = 4u;
+const RENDER_EXPR_OP_UNARY_TAN: u32 = 5u;
+const RENDER_EXPR_OP_UNARY_EXP: u32 = 6u;
+const RENDER_EXPR_OP_UNARY_LOG: u32 = 7u;
+const RENDER_EXPR_OP_UNARY_SQRT: u32 = 8u;
+const RENDER_EXPR_OP_UNARY_ABS: u32 = 9u;
+const RENDER_EXPR_OP_NEGATE: u32 = 10u;
+const RENDER_EXPR_OP_BINARY_ADD: u32 = 20u;
+const RENDER_EXPR_OP_BINARY_SUB: u32 = 21u;
+const RENDER_EXPR_OP_BINARY_MUL: u32 = 22u;
+const RENDER_EXPR_OP_BINARY_DIV: u32 = 23u;
+const RENDER_EXPR_OP_BINARY_MOD: u32 = 24u;
+const RENDER_EXPR_OP_BINARY_POW: u32 = 25u;
+const RENDER_EXPR_OP_BINARY_GT: u32 = 30u;
+const RENDER_EXPR_OP_BINARY_GE: u32 = 31u;
+const RENDER_EXPR_OP_BINARY_LT: u32 = 32u;
+const RENDER_EXPR_OP_BINARY_LE: u32 = 33u;
+const RENDER_EXPR_OP_BINARY_EQ: u32 = 34u;
+const RENDER_EXPR_OP_BINARY_NE: u32 = 35u;
+const RENDER_EXPR_OP_IF: u32 = 40u;
+const MAX_RENDER_EXPR_NODES: u32 = 64u;
+const RENDER_IMPORT_UV: u32 = 0x1u;
+const RENDER_IMPORT_COLOR: u32 = 0x2u;
+
+// 鏁版嵁婧愮被鍨嬪父閲?
+const SOURCE_COMPUTE_BUFFER: u32 = 0u;  // 璁＄畻缂撳啿�?
+const SOURCE_RENDER_CALC: u32 = 1u;     // 娓叉煋璁＄畻
+const SOURCE_RENDER_INPUT: u32 = 2u;    // 娓叉煋杈撳叆(UV�?
+
+// 鏁版嵁鏍煎紡甯搁�?
+const FORMAT_SCALAR: u32 = 0u;  // 鏍囬�?
 const FORMAT_VEC2: u32 = 1u;    // vec2
 const FORMAT_VEC3: u32 = 2u;    // vec3  
 const FORMAT_VEC4: u32 = 3u;    // vec4
 
 
 struct RenderPlanHeader {
-    plan_count: u32,      // 实际计划数量
-    dirty_flags: u32,     // 脏标记
-    frame_index: u32,     // 帧索引
-    _padding: u32,        // 填充
+    plan_count: u32,      // 瀹為檯璁″垝鏁伴�?
+    dirty_flags: u32,     // 鑴忔爣璁?
+    frame_index: u32,     // 甯х储�?
+    _padding: u32,        // 濉�?
 }
 
-// 绑定组
+// 缁戝畾缁?
 
 fn read_custom_frag(panel_id: u32, slot: u32) -> vec4<f32> {
     let frag_value = custom_wgsl[panel_id].frag[slot];
@@ -258,7 +309,7 @@ struct VertexOutput {
     @location(1) instance_size: vec2<f32>,
     @location(2) pass_through: u32,
     @location(3) z_index: u32,
-    @location(4) instance_id: u32, // 传给 fragment
+    @location(4) instance_id: u32, // 浼犵�?fragment
     @location(5) transparent:f32,
     @location(6) texture_id:u32,
     @location(7) uv: vec2<f32>,
@@ -284,13 +335,13 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     let screen_size_f = vec2<f32>(global_uniform.screen_size);
 
-    // 局部顶点 [-0.5,0.5] → 像素单位
-    let scaled_pos = input.pos * input.instance_size; // instance_size = 像素宽高
+    // 灞€閮ㄩ《鐐?[-0.5,0.5] �?鍍忕礌鍗曚綅
+    let scaled_pos = input.pos * input.instance_size; // instance_size = 鍍忕礌瀹介�?
 
-    // 顶点像素坐标 = 面板中心 + 局部偏移
+    // 椤剁偣鍍忕礌鍧愭�?= 闈㈡澘涓績 + 灞€閮ㄥ亸绉?
     let pixel_pos = input.instance_pos + scaled_pos;
 
-    // 转换到 NDC [-1,1]
+    // 杞崲鍒?NDC [-1,1]
     let ndc = vec2<f32>(
         (pixel_pos.x / screen_size_f.x) * 2.0 - 1.0,
         1.0 - (pixel_pos.y / screen_size_f.y) * 2.0
@@ -317,29 +368,147 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 //     let tex_index = input.texture_id;
 
 
-//     var color = vec4<f32>(0.0, 0.0, 0.0, input.transparent); // 默认白色 + alpha
+//     var color = vec4<f32>(0.0, 0.0, 0.0, input.transparent); // 榛樿鐧借壊 + alpha
 
-//     // 检查是否被 hover
+//     // 妫€鏌ユ槸鍚﹁ hover
 //     if (input.instance_id == sharedState.click_id) {
-//         color = vec4<f32>(0.0, 1.0,1.0,input.transparent); // hover → 红色 + alpha
+//         color = vec4<f32>(0.0, 1.0,1.0,input.transparent); // hover �?绾㈣�?+ alpha
 //     }
 
 //     return color;
 // }
-const WGSL_TIME: f32 = 9999999.0; // 与 Rust 的 MAX_TIME_SEC 对应
-const WGSL_SIN_TIME: f32 = 9999999.1; // 与 Rust 的 MAX_TIME_SEC 对应
+const WGSL_TIME: f32 = 9999999.0; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
+const WGSL_SIN_TIME: f32 = 9999999.1; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
 const U32_MAX: u32 = 4294967295u;
 
-fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>) -> f32 {
-    // 目前仅支持 UV 采样掩码 0x1，其余按需扩展
-    if (mask & 0x1u) != 0u {
+fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
+    if (mask & RENDER_IMPORT_UV) != 0u {
         let uv_ext = vec4<f32>(uv, 0.0, 1.0);
         return uv_ext[component_index];
+    }
+    if (mask & RENDER_IMPORT_COLOR) != 0u {
+        return base_color[component_index];
     }
     return 0.0;
 }
 
-fn evaluate_render_layer(layer_index: u32, input: VertexOutput) -> vec4<f32> {
+fn mode(a: f32, b: f32) -> f32 {
+    return a - b * floor(a / b);
+}
+
+fn apply_factor_unary(kind: u32, value: f32) -> f32 {
+    switch kind {
+        case FACTOR_UNARY_SIN: {
+            return sin(value);
+        }
+        case FACTOR_UNARY_COS: {
+            return cos(value);
+        }
+        default: {
+            return value;
+        }
+    }
+}
+fn eval_render_expression(start: u32, len: u32, lane: u32, input: VertexOutput, base_color: vec4<f32>) -> f32 {
+    if (len == 0u) {
+        return 0.0;
+    }
+
+    var values: array<f32, MAX_RENDER_EXPR_NODES>;
+    for (var idx: u32 = 0u; idx < len; idx = idx + 1u) {
+        let node = render_expr_nodes[start + idx];
+        switch node.op {
+            case RENDER_EXPR_OP_CONSTANT: {
+                values[idx] = node.data0;
+            }
+            case RENDER_EXPR_OP_RENDER_IMPORT: {
+                values[idx] = read_render_import(node.arg0, node.arg1, input.uv, base_color);
+            }
+            case RENDER_EXPR_OP_COMPUTE_RESULT: {
+                if (node.arg0 < arrayLength(&kennel_results_buffer)) {
+                    values[idx] = kennel_results_buffer[node.arg0][lane];
+                } else {
+                    values[idx] = 0.0;
+                }
+            }
+            case RENDER_EXPR_OP_UNARY_SIN: {
+                values[idx] = sin(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_COS: {
+                values[idx] = cos(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_TAN: {
+                values[idx] = tan(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_EXP: {
+                values[idx] = exp(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_LOG: {
+                values[idx] = log(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_SQRT: {
+                values[idx] = sqrt(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_ABS: {
+                values[idx] = abs(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_NEGATE: {
+                values[idx] = -values[node.arg0 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_ADD: {
+                values[idx] = values[node.arg0 - start] + values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_SUB: {
+                values[idx] = values[node.arg0 - start] - values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_MUL: {
+                values[idx] = values[node.arg0 - start] * values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_DIV: {
+                let right = values[node.arg1 - start];
+                values[idx] = select(0.0, values[node.arg0 - start] / right, abs(right) > 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_MOD: {
+                let right = values[node.arg1 - start];
+                values[idx] = select(0.0, mode(values[node.arg0 - start], right), abs(right) > 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_POW: {
+                values[idx] = pow(values[node.arg0 - start], values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_GT: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] > values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_GE: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] >= values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_LT: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] < values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_LE: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] <= values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_EQ: {
+                values[idx] = select(0.0, 1.0, abs(values[node.arg0 - start] - values[node.arg1 - start]) < 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_NE: {
+                values[idx] = select(1.0, 0.0, abs(values[node.arg0 - start] - values[node.arg1 - start]) < 1e-6);
+            }
+            case RENDER_EXPR_OP_IF: {
+                let cond = values[node.arg0 - start];
+                let then_val = values[node.arg1 - start];
+                let else_val = values[node.arg2 - start];
+                values[idx] = select(else_val, then_val, cond > 0.5);
+            }
+            default: {
+                values[idx] = 0.0;
+            }
+        }
+    }
+
+    return values[len - 1u];
+}
+
+fn evaluate_render_layer(layer_index: u32, input: VertexOutput, base_color: vec4<f32>) -> vec4<f32> {
     if (layer_index >= arrayLength(&kennel_render_layers)) {
         return vec4<f32>(0.0);
     }
@@ -347,10 +516,9 @@ fn evaluate_render_layer(layer_index: u32, input: VertexOutput) -> vec4<f32> {
     let layer = kennel_render_layers[layer_index];
     var composed = vec4<f32>(0.0);
 
-    // 逐个分量计算
     for (var i: u32 = 0u; i < 4u; i = i + 1u) {
         let comp = layer.components[i];
-        let lane = comp.component_index % 4u;
+        let lane = i;
         switch comp.channel_type {
             case CHANNEL_CONSTANT: {
                 composed[lane] = comp.payload.x;
@@ -362,7 +530,31 @@ fn evaluate_render_layer(layer_index: u32, input: VertexOutput) -> vec4<f32> {
                 }
             }
             case CHANNEL_RENDER_IMPORT: {
-                composed[lane] = read_render_import(comp.source_index, lane, input.uv);
+                let src_component = comp.source_component % 4u;
+                composed[lane] = read_render_import(comp.source_index, src_component, input.uv, base_color);
+            }
+            case CHANNEL_RENDER_COMPOSITE: {
+                let src_component = comp.source_component % 4u;
+                let base = read_render_import(comp.source_index, src_component, input.uv, base_color);
+                var inner = comp.payload.y;
+                if (comp.factor_component != U32_MAX) {
+                    let factor_base = read_render_import(comp.source_index, comp.factor_component, input.uv, base_color);
+                    inner = inner + factor_base * comp.payload.x;
+                }
+                if (comp.factor_inner_compute != U32_MAX && comp.factor_inner_compute < arrayLength(&kennel_results_buffer)) {
+                    let compute_val = kennel_results_buffer[comp.factor_inner_compute][lane];
+                    inner = inner + compute_val;
+                }
+                inner = apply_factor_unary(comp.factor_unary, inner);
+                var factor = inner * comp.payload.z;
+                if (comp.factor_outer_compute != U32_MAX && comp.factor_outer_compute < arrayLength(&kennel_results_buffer)) {
+                    let compute_val = kennel_results_buffer[comp.factor_outer_compute][lane];
+                    factor = factor * compute_val;
+                }
+                composed[lane] = base * factor + comp.payload.w;
+            }
+            case CHANNEL_RENDER_EXPR: {
+                composed[lane] = eval_render_expression(comp.source_index, comp.component_index, lane, input, base_color);
             }
             default: {
                 composed[lane] = 0.0;
@@ -375,7 +567,7 @@ fn evaluate_render_layer(layer_index: u32, input: VertexOutput) -> vec4<f32> {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // 使用 texture_id 索引数组进行采样
+    // 浣跨�?texture_id 绱㈠紩鏁扮粍杩涜閲囨牱
 
 
     let sub_image_struct = sub_image_struct_array[input.texture_id];
@@ -388,33 +580,28 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let samp = ui_sampler[parent_index];
 
 
-    let uv = input.uv; // [0,1] 面板局部 UV
+    let uv = input.uv; 
     let sub_uv = sub_image_uv_min + (sub_image_uv_max - sub_image_uv_min) * uv;
     let color = textureSample(tex, samp, sub_uv);
 
     
-    // 使用compute计算的结果
     let layer_index = input.kennel_des_id;
-    let compute_color = evaluate_render_layer(layer_index, input);
+    let compute_color = evaluate_render_layer(layer_index, input, color);
 
     var final_color = color;
     if any(compute_color != vec4<f32>(0.0)) {
-        // 若 compute 有输出，优先使用计算结果，同时沿用纹理透明度作为基础
-        final_color = vec4<f32>(
-            compute_color.xyz,
-            color.w * max(compute_color.w, 0.0),
-        );
+        final_color = compute_color;
     }
 
     return final_color;
-    // 保持原有透明度
+    // 淇濇寔鍘熸湁閫忔槑搴?
 }
 
 // @fragment
 // fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-//     // 简单把 UV 映射到颜色
+//     // 绠€鍗曟�?UV 鏄犲皠鍒伴�?
 //     let color = vec3<f32>(input.uv.x, input.uv.y, 0.0);
 
-//     // 输出颜色，保留透明度
+//     // 杈撳嚭棰滆壊锛屼繚鐣欓€忔槑�?
 //     return vec4<f32>(color, input.transparent);
 // }

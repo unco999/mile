@@ -93,6 +93,7 @@ impl App {
             let mut kennel = kennel.borrow_mut();
             kennel.compute(&ctx.device, &ctx.queue);
             kennel.debug_readback(&ctx.device, &ctx.queue);
+            kennel.process_global_events(&ctx.queue,&ctx.device);
             // kennel.read_call_back_cpu(&ctx.device,&ctx.queue);
             // kennel.process_ui_events(&ctx.device,&ctx.queue);
         }
@@ -281,7 +282,9 @@ impl ApplicationHandler<AppEvent> for App {
                 workgroup_size: (8,8,1),
             },
             readback_interval_secs: 2,
-        })));
+        },
+        global_hub.clone()
+    )));
 
 
         let mut gpu_ui = GpuUi::new(
@@ -452,16 +455,7 @@ impl ApplicationHandler<AppEvent> for App {
 
                             if let Some(kennel) = &self.kennel{
                                 let mut kennel = kennel.borrow_mut();
-                                let mut registry = ImportRegistry::new();
-        
-                                // 注册必要的导入
-                                registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
-                                
-                                let expr = wvec4(1.0, cv("time") * 0.1, 0.1, 1.0);
-                                if let Ok(output) = kennel.register_program(&expr,&registry){
-                                    println!("绑定号码 output {:?}",output);
-                                    kennel.rebuild_render_bindings(&ctx.device,&ctx.queue);
-                                };
+                
 
                             }
 

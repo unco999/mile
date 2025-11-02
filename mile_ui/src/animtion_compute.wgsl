@@ -21,21 +21,21 @@ struct Panel {
 };
 
 struct AnimtionFieldOffsetPtr {
-   field_id: u32,        // 字段标识
-   start_value: f32,     // 起始值
-   target_value: f32,    // 目标值
-   elapsed: f32,         // 已经过的时间
-   duration: f32,        // 动画持续时间
-   op: u32,              // 操作类型（SET/ADD/MUL/…）
-   hold: u32,            // hold 时间
-   delay: f32,           // 延迟时间
-   loop_count: u32,      // 循环次数
-   ping_pong: u32,       // 往返标记
-   on_complete: u32,     // 回调标识
+   field_id: u32,        // 瀛楁鏍囪瘑
+   start_value: f32,     // 璧峰鍊?
+   target_value: f32,    // 鐩爣鍊?
+   elapsed: f32,         // 宸茬粡杩囩殑鏃堕棿
+   duration: f32,        // 鍔ㄧ敾鎸佺画鏃堕棿
+   op: u32,              // 鎿嶄綔绫诲瀷锛圫ET/ADD/MUL/鈥︼級
+   hold: u32,            // hold 鏃堕棿
+   delay: f32,           // 寤惰繜鏃堕棿
+   loop_count: u32,      // 寰幆娆℃暟
+   ping_pong: u32,       // 寰€杩旀爣璁?
+   on_complete: u32,     // 鍥炶皟鏍囪瘑
    panel_id: u32,        // Panel ID
-   death: u32,           // 是否结束
-   easy_fn: u32,         // easing 函数标识
-   _pad: u32,       // 补齐16字节对齐
+   death: u32,           // 鏄惁缁撴潫
+   easy_fn: u32,         // easing 鍑芥暟鏍囪瘑
+   _pad: u32,       // 琛ラ綈16瀛楄妭瀵归綈
 };
 
 struct GpuUiCollection {
@@ -43,8 +43,8 @@ struct GpuUiCollection {
     items_offset: u32,
     items_len: u32,
     collection_layout_mask: u32,
-    param0: f32,       // X 间距
-    param1: f32,        // Y 间距
+    param0: f32,       // X 闂磋窛
+    param1: f32,        // Y 闂磋窛
     _p1:u32,
     _p2:u32
 }
@@ -152,19 +152,19 @@ struct GlobalUniform {
 };
 
  struct GpuAnimationDes {
-     animation_count: u32,       // 当前帧动画数量
-     frame_count: u32,           // 每个动画帧数
-     start_index: u32,           // 动画在全局 buffer 的起始索引
-     _pad0: u32,                 // padding 16字节对齐
+     animation_count: u32,       // 褰撳墠甯у姩鐢绘暟閲?
+     frame_count: u32,           // 姣忎釜鍔ㄧ敾甯ф暟
+     start_index: u32,           // 鍔ㄧ敾鍦ㄥ叏灞€ buffer 鐨勮捣濮嬬储寮?
+     _pad0: u32,                 // padding 16瀛楄妭瀵归綈
 
-     delta_time: f32,            // 单帧时间增量
-     total_time: f32,            // 动画总时长
-     _pad1: vec2<f32>,            // 补齐16字节对齐
+     delta_time: f32,            // 鍗曞抚鏃堕棿澧為噺
+     total_time: f32,            // 鍔ㄧ敾鎬绘椂闀?
+     _pad1: vec2<f32>,            // 琛ラ綈16瀛楄妭瀵归綈
 }
 
 struct GpuUiDebugReadCallBack {
-    floats: array<f32,32>, // 16 * 4 = 64 字节
-    uints: array<u32,32>,  // 16 * 4 = 64 字节
+    floats: array<f32,32>, // 16 * 4 = 64 瀛楄妭
+    uints: array<u32,32>,  // 16 * 4 = 64 瀛楄妭
 }
 
 fn ease_linear(t: f32) -> f32 {
@@ -219,19 +219,19 @@ fn apply_easing(easing: u32, t: f32) -> f32 {
 }
 fn apply_op(cur: f32, old: f32, target_value: f32, eased: f32, op: u32) -> f32 {
     if ((op & 0x01u) != 0u) {
-        // SET：从起始值插值到目标值
+        // SET锛氫粠璧峰鍊兼彃鍊煎埌鐩爣鍊?
         return mix(old, target_value, eased);
     }
     if ((op & 0x02u) != 0u) {
-        // ADD：逐渐在当前基础上叠加 (eased 表示比例)
+        // ADD锛氶€愭笎鍦ㄥ綋鍓嶅熀纭€涓婂彔鍔?(eased 琛ㄧず姣斾緥)
         return old + target_value * eased;
     }
     if ((op & 0x04u) != 0u) {
-        // MUL：逐渐缩放
+        // MUL锛氶€愭笎缂╂斁
         return old * mix(1.0, target_value / max(old, 0.0001), eased);
     }
     if ((op & 0x08u) != 0u) {
-        // LERP：和 SET 类似，只是从 old 出发（例如平滑跟随）
+        // LERP锛氬拰 SET 绫讳技锛屽彧鏄粠 old 鍑哄彂锛堜緥濡傚钩婊戣窡闅忥級
         return mix(old, target_value, eased);
     }
     return old;
@@ -241,11 +241,11 @@ struct GpuUiRelation {
     ui_relation_id: u32,       // 0
     sources: u32,              // 4
     targets: u32,              // 8
-    transform_mask: u32,       // 12 -> 16 字节边界对齐
+    transform_mask: u32,       // 12 -> 16 瀛楄妭杈圭晫瀵归綈
     weight: f32,               // 16
     delay: f32,                // 20
     collection_sampling: u32,  // 24
-    pad: u32                  // 28 -> 总大小 32 字节
+    pad: u32                  // 28 -> 鎬诲ぇ灏?32 瀛楄妭
 };
 
 @group(0) @binding(0) var<storage, read_write> panels: array<Panel>;
@@ -280,14 +280,14 @@ const REL_IMMEDIATELY_PARAMS3 = 8u;
 
 
 
-const COLLECTION_SIM_OFFSET:u32 = 16384u; // collection_flat 起始偏移
-// 读取 panel meta
-// 获取 panel meta
+const COLLECTION_SIM_OFFSET:u32 = 16384u; // collection_flat 璧峰鍋忕Щ
+// 璇诲彇 panel meta
+// 鑾峰彇 panel meta
 fn panel_meta(panel_id: u32, field_idx: u32) -> u32 {
     return raw_data[panel_id * PANEL_META_SIZE + field_idx];
 }
 
-// 获取 panel 在 collection 中 index
+// 鑾峰彇 panel 鍦?collection 涓?index
 fn panel_in_collection_index(panel_id: u32) -> u32 {
     return panel_meta(panel_id, IN_COLLECTION_INDEX_META_OFFSET);
 }
@@ -297,7 +297,7 @@ fn get_source_first_panel(collection_id:u32) -> u32{
     return raw_data[COLLECTION_SIM_OFFSET + collection_id * COLLECTION_CHILDREN_LEN];
 }
 
-// 获取 panel 对应 rel 范围
+// 鑾峰彇 panel 瀵瑰簲 rel 鑼冨洿
 fn get_panel_rel_range(panel_id: u32) -> vec2<u32> {
     return vec2<u32>(
         panel_meta(panel_id, REL_META_OFFSET),
@@ -305,24 +305,24 @@ fn get_panel_rel_range(panel_id: u32) -> vec2<u32> {
     );
 }
 
-// 获取 rel 字段
+// 鑾峰彇 rel 瀛楁
 fn get_rel_field(rel_idx: u32, field_offset: u32) -> u32 {
     return rels_flat[rel_idx * 4u + field_offset];
 }
 
-// 设置 rel source
+// 璁剧疆 rel source
 fn set_rel_source(rel_idx: u32, value: u32) {
     rels_flat[rel_idx * 4u + REL_SOURCE_FIELD] = value;
 }
 
-// 设置 rel target
+// 璁剧疆 rel target
 fn set_rel_target(rel_idx: u32, value: u32) {
     rels_flat[rel_idx * 4u + REL_TARGET_FIELD] = value;
 }
 
 
 fn calc_grid_position(index_in_collection: u32, spacing_x: f32, spacing_y: f32, items_len: u32) -> vec2<f32> {
-    // 简单按行排列，假设固定行数
+    // 绠€鍗曟寜琛屾帓鍒楋紝鍋囪鍥哄畾琛屾暟
     let cols: u32 = 4u;
     let row: u32 = index_in_collection / cols;
     let col: u32 = index_in_collection % cols;
@@ -336,13 +336,13 @@ fn calc_ring_position_with_center(
     items_len: u32,
     center: vec2<f32>
 ) -> vec2<f32> {
-    // 每个元素的角度步进
-    let angle = start_angle + 6.2831855 * f32(index_in_collection) / f32(items_len); // 2π
+    // 姣忎釜鍏冪礌鐨勮搴︽杩?
+    let angle = start_angle + 6.2831855 * f32(index_in_collection) / f32(items_len); // 2蟺
 
-    // 计算相对坐标（绕圆心旋转）
+    // 璁＄畻鐩稿鍧愭爣锛堢粫鍦嗗績鏃嬭浆锛?
     let pos = vec2(cos(angle), sin(angle)) * radius;
 
-    // 加上中心点偏移
+    // 鍔犱笂涓績鐐瑰亸绉?
     return center + pos;
 }
 
@@ -366,21 +366,21 @@ fn get_source_first_panel_id(me_panel_idx:u32)->u32{
 var<workgroup> center: vec2<f32>;
 var<workgroup> stop_mask: atomic<u32>;
 
-// -------------------- 尝试运行动画 --------------------
+// -------------------- 灏濊瘯杩愯鍔ㄧ敾 --------------------
 fn try_run_anim(anim_field: u32) -> bool {
-    // 原子读旧的 stop_mask
+    // 鍘熷瓙璇绘棫鐨?stop_mask
     let prev_mask = atomicOr(&stop_mask, anim_field);
 
-    // 如果之前已经有相同字段被占用，则不运行
+    // 濡傛灉涔嬪墠宸茬粡鏈夌浉鍚屽瓧娈佃鍗犵敤锛屽垯涓嶈繍琛?
     if ((prev_mask & anim_field) != 0u) {
-        return false; // 同字段动画已经运行
+        return false; // 鍚屽瓧娈靛姩鐢诲凡缁忚繍琛?
     }
 
-    // 否则，本线程可以运行该动画
+    // 鍚﹀垯锛屾湰绾跨▼鍙互杩愯璇ュ姩鐢?
     return true;
 }
 
-// ------------------- Panel 字段标记 -------------------
+// ------------------- Panel 瀛楁鏍囪 -------------------
 const POSITION_X       : u32 = 1u;       // 0b0000_0000_0001
 const POSITION_Y       : u32 = 2u;       // 0b0000_0000_0010
 const SIZE_X           : u32 = 4u;       // 0b0000_0000_0100
@@ -395,8 +395,8 @@ const PREPOSITION_X    : u32 = 1024u;    // 0b0100_0000_0000
 const PREPOSITION_Y    : u32 = 2048u;    // 0b1000_0000_0000
 const ALL_FIELDS       : u32 = 4095u;    // 0b1111_1111_1111
 const NONE_FIELDS      : u32 = 0u;       // 0b0000_0000_0000
-const PRE_POSITION_X: f32 = 9999988.0; // 与 Rust 的 MAX_TIME_SEC 对应
-const PRE_POSITION_Y: f32 = 9999989.0; // 与 Rust 的 MAX_TIME_SEC 对应
+const PRE_POSITION_X: f32 = 9999988.0; // 涓?Rust 鐨?MAX_TIME_SEC 瀵瑰簲
+const PRE_POSITION_Y: f32 = 9999989.0; // 涓?Rust 鐨?MAX_TIME_SEC 瀵瑰簲
 
 
 @compute
@@ -412,7 +412,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let anim = anim_des[idx]; // anim: AnimtionFieldOffsetPtr
 
 
-   // 跳过死亡动画
+   // 璺宠繃姝讳骸鍔ㄧ敾
     if (anim_des[idx].death == 1u) {
         return;
     }
@@ -452,7 +452,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let parent_size: vec2<f32> = panels[source_first_panel_id].size * 0.8;
             
             let cols: u32 = 5u;
-            let collection_size: u32 = 13u; // 你自己获取子面板数量
+            let collection_size: u32 = 13u; // 浣犺嚜宸辫幏鍙栧瓙闈㈡澘鏁伴噺
             let rows: u32 = (collection_size + cols - 1u) / cols;
             
             let cell_size: vec2<f32> = vec2<f32>(
@@ -467,7 +467,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 + vec2<f32>(cell_size.x * (f32(col) + 0.5),
                             cell_size.y * (f32(row) + 0.5));
             
-            let size: vec2<f32> = panels[source_first_panel_id].size / 2.0; // 或者用子面板自身大小
+            let size: vec2<f32> = panels[source_first_panel_id].size / 2.0; // 鎴栬€呯敤瀛愰潰鏉胯嚜韬ぇ灏?
             
             panels[anim.panel_id].position = target_pos - size;
             anim_des[idx].death = 1u;
@@ -476,11 +476,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // 获取当前动画字段
+    // 鑾峰彇褰撳墠鍔ㄧ敾瀛楁
 
 
 
-   // 初始值填充（只在 elapsed 为 0 时）
+   // 鍒濆鍊煎～鍏咃紙鍙湪 elapsed 涓?0 鏃讹級
     if (anim_des[idx].elapsed == 0.0 && anim_des[idx].hold == 1u) {
         if (anim.field_id == 0x1u) {
             anim_des[idx].start_value = panels[anim.panel_id].position.x;
@@ -503,14 +503,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
 
-    // 更新 elapsed
+    // 鏇存柊 elapsed
     let new_elapsed = min(anim.elapsed + global_uniform.dt, anim.duration);
 
     anim_des[idx].elapsed = new_elapsed;
 
 
 
-    // -------------------- 字段匹配 --------------------
+    // -------------------- 瀛楁鍖归厤 --------------------
     let t = clamp(anim.elapsed / max(anim.duration, 0.00001), 0.0, 1.0);
     let eased = apply_easing(anim.easy_fn, t);
     let start = anim_des[idx].start_value;
@@ -529,18 +529,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         case 0x100u:{ panels[anim.panel_id].transparent = apply_op(panels[anim.panel_id].transparent, start, target_value, eased, op); }
         default: {}
     }
-    // 动画完成
+    // 鍔ㄧ敾瀹屾垚
     if (new_elapsed >= anim.duration) {
         anim_des[idx].death = 1u;
     }
     
   if (anim.field_id == 512u && anim.op == 32u && panels[anim.panel_id].collection_state == 16u) {
-    // 立即跟随模式
+    // 绔嬪嵆璺熼殢妯″紡
             let rel_range = get_panel_rel_range(anim.panel_id);
             let rel_layout = get_rel_field(rel_range.x,REL_ANIMTION_FIELD);
 
 
-            // // 计算环形坐标
+            // // 璁＄畻鐜舰鍧愭爣
             // let pos: vec2<f32> = calc_ring_position_with_center(
             //     index_in_collection,
             //     collection.param0,
@@ -551,7 +551,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
             // // debug_buffer.floats[idx] = rel[collection.items_offset].relation_idx;
 
-            // // 写入 panel buffer
+            // // 鍐欏叆 panel buffer
             // panels[anim.panel_id].position = pos;
             // panels[anim.panel_id].state = 32u;
     }
@@ -585,11 +585,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // let source_collection_offset = rel[collection.items_offset].sources;
         // let source_ids_offset = ui_collections[source_collection_offset].items_offset;
         // let center = panels[ui_ids[source_ids_offset]].position;
-        // // 环形布局
+        // // 鐜舰甯冨眬
         if (rel_layout == 8u) {
             let index_in_collection = panel_in_collection_index(anim.panel_id);
             // debug_buffer.uints[anim.panel_id] = index_in_collection;
-            // 目标坐标
+            // 鐩爣鍧愭爣
             let target_pos: vec2<f32> = calc_ring_position_with_center(
                 index_in_collection,
                 100.0, // radius
@@ -601,46 +601,46 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let new_elapsed = min(anim.elapsed + global_uniform.dt, anim.duration);
             anim_des[idx].elapsed = new_elapsed;
 
-            // 动画完成标记
+            // 鍔ㄧ敾瀹屾垚鏍囪
             if (new_elapsed >= anim.duration) {
                 anim_des[idx].death = 1u;
                 panels[anim.panel_id].collection_state = 32u;
             }
 
-            // 动画进度
+            // 鍔ㄧ敾杩涘害
             let t = clamp(anim.elapsed / max(anim.duration, 0.00001), 0.0, 1.0);
             let eased = apply_easing(anim.easy_fn, t);
 
-            // 计算增量
+            // 璁＄畻澧為噺
             let delta: vec2<f32> = (target_pos - anim_des[idx].start_value) * eased;
 
-            // 应用到 panel
+            // 搴旂敤鍒?panel
             panels[anim.panel_id].position = anim_des[idx].start_value + delta;
             panel_anim_delta[anim.panel_id].delta_position = delta;
     }
     if (rel_layout == 4u) {
-    // 当前 panel 在集合中的索引（绝对顺序，不做相对计算）
+    // 褰撳墠 panel 鍦ㄩ泦鍚堜腑鐨勭储寮曪紙缁濆椤哄簭锛屼笉鍋氱浉瀵硅绠楋級
     let index_in_collection = panel_in_collection_index(anim.panel_id);
 
-    // 左上角起点 = source panel 的位置
+    // 宸︿笂瑙掕捣鐐?= source panel 鐨勪綅缃?
     let leftup: vec2<f32> = panels[source_first_panel_id].position;
 
-    // 网格参数
+    // 缃戞牸鍙傛暟
     let cols: u32 = 5u;              
-    let spacing: vec2<f32> = vec2<f32>(120.0, 120.0);  // 横纵间距
+    let spacing: vec2<f32> = vec2<f32>(120.0, 120.0);  // 妯旱闂磋窛
 
-    // 直接用 index_in_collection 排布
+    // 鐩存帴鐢?index_in_collection 鎺掑竷
     let row: u32 = index_in_collection / cols;
     let col: u32 = index_in_collection % cols;
 
-    // 目标坐标 = 左上角起点 + 行列偏移
+    // 鐩爣鍧愭爣 = 宸︿笂瑙掕捣鐐?+ 琛屽垪鍋忕Щ
     let target_pos: vec2<f32> = leftup + vec2<f32>(
         f32(col) * spacing.x,
         f32(row) * spacing.y
     );
 
 
-    // === 动画逻辑同环形版本 ===
+    // === 鍔ㄧ敾閫昏緫鍚岀幆褰㈢増鏈?===
     let new_elapsed = min(anim.elapsed + global_uniform.dt, anim.duration);
     anim_des[idx].elapsed = new_elapsed;
 
@@ -662,17 +662,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
 
 
-    // 计算动画进度
+    // 璁＄畻鍔ㄧ敾杩涘害
 
-    // 计算目标值
+    // 璁＄畻鐩爣鍊?
     
 
-  // 计算动画进度 (0~1)
+  // 璁＄畻鍔ㄧ敾杩涘害 (0~1)
 
-    // 计算目标差值
+    // 璁＄畻鐩爣宸€?
 
 
-    // // //可选：写入 panel_anim_delta 做增量累加
+    // // //鍙€夛細鍐欏叆 panel_anim_delta 鍋氬閲忕疮鍔?
     // if (anim.field_id == 0x1u) {
     //     panel_anim_delta[anim.panel_id].delta_position.x += delta;
     // } else if (anim.field_id == 0x2u) {

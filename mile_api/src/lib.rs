@@ -312,7 +312,7 @@ pub struct ModuleParmas<T>{
     pub _ty:u32
 }
 
-pub type PLAN_ID = u32;
+pub type LayerID = u32;
 
 pub struct GlobalEventHub<T:Debug + Clone> {
     pub sender: Sender<T>,

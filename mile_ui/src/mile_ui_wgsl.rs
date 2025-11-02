@@ -1135,7 +1135,21 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::De
             .pos(vec2(300.0, 300.0))
             .size(700.0, 700.0)
             .frag(|input,panel_id|{
-                wvec4(var("time") * 0.1,1.0,2.0,3.0)
+                let time = cv("time");
+                let base = rv("color");
+
+                let wave = sin(time * 2.0);            // 纯 compute
+                let uvx = rv("uv").x();
+
+                let factor = wave * 0.4 + 0.6 * uvx;         // 纯 compute
+                
+                wvec4(
+                    base.x() + factor.clone(),
+                    factor.clone(),
+                    1.0,
+                    1.0,
+                )
+
             })
              .on()
                  .call(Call::CLICK, move |input: &mut Data,panel_id: u32|{
