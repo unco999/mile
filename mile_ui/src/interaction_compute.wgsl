@@ -282,6 +282,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let pass_through = inst.pass_through;
     let z_index = inst.z_index;
 
+    debug_buffer.floats[0] = global_uniform.time;
 
     let half_size = inst.size / 2.0;
     let screen_size_f = vec2<f32>(global_uniform.screen_size); 
