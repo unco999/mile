@@ -12,8 +12,7 @@ use glam::{Vec2, vec2, vec4};
 use mile_api::{ModuleEventType, ModuleParmas};
 use mile_gpu_dsl::{
     core::{
-        Expr,
-        dsl::{eq, sin, var, wvec4},
+        Expr, dsl::{IF, sin, wvec4},
     },
     dsl::*,
 };
@@ -997,10 +996,13 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>, queue: &wgpu::Queue, device: &wgpu
                 .texture("caton (2).png")
                 .size_with_image()
                 .pos(vec2(x as f32 * 200.0 + 300.0, y as f32 * 200.0 + 300.0))
-                .frag(|data, panel_id| {
-                    let t = rv("color");
-                    let time = sin(cv("time"));
-                    wvec4(time, t.y(), t.z(), t.w())
+                .frag(|data, panel_id: u32| {
+                    let uv = rv("uv");
+                    let scan_line = sin(uv.y() * 15.0 + cv("time") * 2.0);
+                    let color = rv("color");
+                                
+                    wvec4(scan_line.clone() + color.x(), scan_line.clone() + color.y(), scan_line.clone() + color.z(), color.w())
+
                 })
                 .on()
                 .call(Call::CLICK, move |data, panelid| {

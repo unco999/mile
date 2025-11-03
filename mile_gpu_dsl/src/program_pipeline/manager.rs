@@ -5,14 +5,12 @@ use crate::{
     mat::{
         gpu_ast::{GpuAstNode, GpuAstState},
         gpu_ast_compute_pipeline::{ComputePipelineConfig, GpuComputePipeline},
-        gpu_program::{
-            ComputeStage, GpuProgramBuilder, ProgramBuildError, SerializableGpuProgram,
-        },
+        gpu_program::{ComputeStage, GpuProgramBuilder, ProgramBuildError, SerializableGpuProgram},
         op::ImportRegistry,
     },
 };
 
-use super::render_layer::{encode_render_expr_nodes, RenderExprNodeGpu, RenderLayerDescriptor};
+use super::render_layer::{RenderExprNodeGpu, RenderLayerDescriptor, encode_render_expr_nodes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProgramHandle(pub u32);
@@ -96,8 +94,7 @@ impl ProgramPipeline {
         config: ComputePipelineConfig,
         global_buffer: wgpu::Buffer,
     ) -> Self {
-        let compute_pipeline =
-            GpuComputePipeline::new(device, queue, config, global_buffer);
+        let compute_pipeline = GpuComputePipeline::new(device, queue, config, global_buffer);
 
         Self {
             compute_pipeline,
@@ -159,10 +156,7 @@ impl ProgramPipeline {
         Ok(handle)
     }
 
-    pub fn sync_gpu_buffers(
-        &mut self,
-        queue: &wgpu::Queue,
-    ) -> Result<(), ProgramPipelineError> {
+    pub fn sync_gpu_buffers(&mut self, queue: &wgpu::Queue) -> Result<(), ProgramPipelineError> {
         if !self.dirty {
             return Ok(());
         }
@@ -193,10 +187,7 @@ impl ProgramPipeline {
         self.programs.iter().map(|slot| &slot.render_layer)
     }
 
-    pub fn program_info(
-        &self,
-        handle: ProgramHandle,
-    ) -> Option<ProgramSlotInfo> {
+    pub fn program_info(&self, handle: ProgramHandle) -> Option<ProgramSlotInfo> {
         self.programs
             .iter()
             .find(|slot| slot.handle == handle)
@@ -238,10 +229,7 @@ struct StageInfo {
     per_frame_nodes: Vec<u32>,
 }
 
-fn collect_stage_info(
-    program: &SerializableGpuProgram,
-    node_offset: u32,
-) -> StageInfo {
+fn collect_stage_info(program: &SerializableGpuProgram, node_offset: u32) -> StageInfo {
     let mut stats = StageStats::default();
     let mut precompute_nodes = Vec::new();
     let mut per_frame_nodes = Vec::new();
@@ -265,10 +253,7 @@ fn collect_stage_info(
     }
 }
 
-fn convert_program_nodes(
-    program: &SerializableGpuProgram,
-    node_offset: u32,
-) -> Vec<GpuAstNode> {
+fn convert_program_nodes(program: &SerializableGpuProgram, node_offset: u32) -> Vec<GpuAstNode> {
     let mut nodes = program.to_gpu_nodes();
 
     for node in &mut nodes {

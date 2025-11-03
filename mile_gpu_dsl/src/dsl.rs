@@ -122,9 +122,6 @@ pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a:A,b:B,
     Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
 }
 
-pub fn if_expr<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, else_v: E) -> Expr {
-    Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
-}
 
 pub fn cv(v:&'static str)->Expr{
     Expr::ComputeImport(v)

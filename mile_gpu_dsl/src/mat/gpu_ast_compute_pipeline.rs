@@ -1,29 +1,27 @@
-﻿// 鍦?gpu_ast.rs 涓坊鍔犱互涓嬪唴瀹?
+// 鍦?gpu_ast.rs 涓坊鍔犱互涓嬪唴瀹?
 
 use wgpu::{
-    BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, CommandEncoder, ComputePass, ComputePipeline, Device, PipelineLayout, Queue, ShaderModule, util::DeviceExt
+    BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, CommandEncoder,
+    ComputePass, ComputePipeline, Device, PipelineLayout, Queue, ShaderModule, util::DeviceExt,
 };
 
-use crate::mat::{gpu_ast::{GpuAstGraph, GpuAstNode}, gpu_program::SerializableGpuProgram};
-
-
-
-
+use crate::mat::{
+    gpu_ast::{GpuAstGraph, GpuAstNode},
+    gpu_program::SerializableGpuProgram,
+};
 
 /// GPU 璁＄畻绠＄嚎绠＄悊鍣?
 pub struct GpuComputePipeline {
-
-    
     // 缂撳啿鍖?
     pub node_buffer: Buffer,
     pub result_buffer: Buffer,
     import_buffer: Buffer,
-    
+
     // 绠＄嚎璧勬簮
     bind_group: BindGroup,
     bind_group_layout: BindGroupLayout,
     compute_pipeline: ComputePipeline,
-    
+
     // 閰嶇疆
     max_nodes: u32,
     max_imports: u32,
@@ -58,25 +56,24 @@ pub struct GpuImportData {
 }
 
 impl GpuComputePipeline {
-    
     /// 鍒涘缓鏂扮殑 GPU 璁＄畻绠＄嚎
     pub fn new(
         device: &Device,
         queue: &Queue,
         config: ComputePipelineConfig,
-        global_buffer:wgpu::Buffer
-    ) -> Self{
+        global_buffer: wgpu::Buffer,
+    ) -> Self {
         let max_nodes = config.max_nodes;
         let max_imports = config.max_imports;
-        
+
         // 鍒涘缓缂撳啿鍖?
         let node_buffer = create_node_buffer(&device, max_nodes);
         let result_buffer = create_result_buffer(&device, max_nodes);
         let import_buffer = create_import_buffer(&device, max_imports);
-        
+
         // 鍒涘缓缁戝畾缁勫竷灞€
         let bind_group_layout = create_bind_group_layout(&device);
-        
+
         // 鍒涘缓缁戝畾缁?
         let bind_group = create_bind_group(
             &device,
@@ -84,12 +81,13 @@ impl GpuComputePipeline {
             &node_buffer,
             &result_buffer,
             &import_buffer,
-            &global_buffer
+            &global_buffer,
         );
-        
+
         // 鍒涘缓璁＄畻绠＄嚎
-        let compute_pipeline = create_compute_pipeline(&device, &bind_group_layout, config.workgroup_size);
-        
+        let compute_pipeline =
+            create_compute_pipeline(&device, &bind_group_layout, config.workgroup_size);
+
         Self {
             node_buffer,
             result_buffer,
@@ -101,46 +99,51 @@ impl GpuComputePipeline {
             max_imports,
         }
     }
-    
+
     /// 鏇存柊 AST 鑺傜偣鏁版嵁鍒?GPU 缂撳啿鍖?
-    pub fn update_nodes(&mut self, graph: &GpuAstGraph,        device: &wgpu::Device,
-        queue: &wgpu::Queue,) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_nodes(
+        &mut self,
+        graph: &GpuAstGraph,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if graph.nodes.len() > self.max_nodes as usize {
             return Err("测试".into());
         }
-        
+
         self.write_nodes(queue, &graph.nodes)
     }
-    
+
     /// 鏇存柊瀵煎叆鏁版嵁鍒?GPU 缂撳啿鍖?
-    pub fn update_imports(&mut self, 
-       import_data: &[GpuImportData],      
-       device: &wgpu::Device,
-        queue: &wgpu::Queue,) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_imports(
+        &mut self,
+        import_data: &[GpuImportData],
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if import_data.len() > self.max_imports as usize {
             return Err(".into()".into());
         }
-        
+
         let import_bytes = bytemuck::cast_slice(import_data);
         queue.write_buffer(&self.import_buffer, 0, import_bytes);
-        
+
         Ok(())
     }
-    
+
     /// 鎵ц璁＄畻绠＄嚎
     pub fn execute(
-        &mut self
-        , 
+        &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        graph: &GpuAstGraph
-    ) -> Result<(), Box<dyn std::error::Error>>{
+        graph: &GpuAstGraph,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // 鏇存柊鑺傜偣鏁版嵁
-        self.update_nodes(graph,device,queue)?;
+        self.update_nodes(graph, device, queue)?;
         self.dispatch(device, queue, graph.nodes.len() as u32);
         Ok(())
     }
-    
+
     /// 鍩轰簬搴忓垪鍖?GPU 绋嬪簭鎵ц璁＄畻
     pub fn execute_program(
         &mut self,
@@ -156,17 +159,15 @@ impl GpuComputePipeline {
         self.dispatch(device, queue, gpu_nodes.len() as u32);
         Ok(())
     }
-    
+
     /// 浠?GPU 璇诲彇璁＄畻缁撴灉
-    fn read_results(&self, graph: &GpuAstGraph){
-       
-    }
-    
+    fn read_results(&self, graph: &GpuAstGraph) {}
+
     /// 鑾峰彇鏈€澶ц妭鐐瑰閲?
     pub fn max_nodes(&self) -> u32 {
         self.max_nodes
     }
-    
+
     /// 鑾峰彇鏈€澶у鍏ュ閲?
     pub fn max_imports(&self) -> u32 {
         self.max_imports
@@ -237,7 +238,7 @@ impl GpuComputePipeline {
 // 杈呭姪鍑芥暟
 fn create_node_buffer(device: &Device, max_nodes: u32) -> Buffer {
     let size = (max_nodes as u64) * (GpuAstNode::SIZE as u64);
-    
+
     device.create_buffer(&BufferDescriptor {
         label: Some("Node Buffer"),
         size,
@@ -248,7 +249,7 @@ fn create_node_buffer(device: &Device, max_nodes: u32) -> Buffer {
 
 fn create_result_buffer(device: &Device, max_nodes: u32) -> Buffer {
     let size = (max_nodes as u64) * (std::mem::size_of::<[f32; 4]>() as u64);
-    
+
     device.create_buffer(&BufferDescriptor {
         label: Some("Result Buffer"),
         size,
@@ -259,7 +260,7 @@ fn create_result_buffer(device: &Device, max_nodes: u32) -> Buffer {
 
 fn create_import_buffer(device: &Device, max_imports: u32) -> Buffer {
     let size = (max_imports as u64) * (std::mem::size_of::<GpuImportData>() as u64);
-    
+
     device.create_buffer(&BufferDescriptor {
         label: Some("Import Buffer"),
         size,
@@ -315,11 +316,10 @@ fn create_bind_group(
     node_buffer: &Buffer,
     result_buffer: &Buffer,
     import_buffer: &Buffer,
-    cpu_global_buffer:&wgpu::Buffer
+    cpu_global_buffer: &wgpu::Buffer,
 ) -> BindGroup {
     // 鍒涘缓缁熶竴甯搁噺
 
-    
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Bind Group"),
         layout,
@@ -346,18 +346,18 @@ fn create_compute_pipeline(
     workgroup_size: (u32, u32, u32),
 ) -> ComputePipeline {
     let shader_source = create_compute_shader(workgroup_size);
-    
+
     let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Compute Shader"),
         source: wgpu::ShaderSource::Wgsl(shader_source.into()),
     });
-    
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Compute Pipeline Layout"),
         bind_group_layouts: &[bind_group_layout],
         push_constant_ranges: &[],
     });
-    
+
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("Compute Pipeline"),
         layout: Some(&pipeline_layout),
@@ -374,11 +374,10 @@ fn calculate_workgroup_count(node_count: u32) -> (u32, u32, u32) {
     (workgroups, 1, 1)
 }
 
-
-
 // 鍒涘缓璁＄畻鐫€鑹插櫒
 fn create_compute_shader(workgroup_size: (u32, u32, u32)) -> String {
-    format!(r#"
+    format!(
+        r#"
 struct GpuAstNode {{
     data: vec4<f32>,
     state: u32,
@@ -612,8 +611,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
 
     results[node_index] = clamp_to_type(result, node.data_type);
 }}
-"#, workgroup_size.0, workgroup_size.1, workgroup_size.2)
+"#,
+        workgroup_size.0, workgroup_size.1, workgroup_size.2
+    )
 }
-
-
-

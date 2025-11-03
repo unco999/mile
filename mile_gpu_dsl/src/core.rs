@@ -37,10 +37,38 @@ pub fn sqrt<E: Into<Expr>>(e: E) -> Expr {
     Expr::UnaryOp(UnaryFunc::Sqrt, Box::new(e.into()))
 }
 
+pub struct IF;
 // ---------- binary functions ----------
 
-pub fn eq<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-    Expr::BinaryOp(BinaryOp::Equal, Box::new(a.into()), Box::new(b.into()))
+impl IF{
+    pub fn eq<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+         Expr::BinaryOp(BinaryOp::Equal, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn ne<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::NotEqual, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn gt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::GreaterThan, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn lt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::LessThan, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn ge<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::GreaterThan, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn le<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::LessEqual, Box::new(a.into()), Box::new(b.into()))
+    }
+
+    pub fn of<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, else_v: E) -> Expr {
+        Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
+    }
+
 }
 
 pub fn modulo<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {

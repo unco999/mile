@@ -38,7 +38,11 @@ impl std::fmt::Display for ProgramBuildError {
                 write!(f, "expression requires render stage support: {}", ctx)
             }
             ProgramBuildError::UnsupportedExpression(ctx) => {
-                write!(f, "unsupported AST shape encountered while building program: {}", ctx)
+                write!(
+                    f,
+                    "unsupported AST shape encountered while building program: {}",
+                    ctx
+                )
             }
         }
     }
@@ -75,7 +79,11 @@ impl SerializableGpuProgram {
                     gpu_node.set_constant(*value);
                     gpu_node.add_state(GpuAstState::IS_LEAF);
                 }
-                ComputeNodeKind::Import { name: _, mask, source } => {
+                ComputeNodeKind::Import {
+                    name: _,
+                    mask,
+                    source,
+                } => {
                     match source {
                         ImportSource::Compute => gpu_node.set_import(1, *mask),
                         ImportSource::Render => gpu_node.set_import(0, *mask),
@@ -122,9 +130,17 @@ impl RenderPlan {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind")]
 pub enum RenderComponent {
-    Constant { value: f32 },
-    ComputeNode { node_id: u32 },
-    RenderImport { name: &'static str, mask: u32, component: u32 },
+    Constant {
+        value: f32,
+    },
+    ComputeNode {
+        node_id: u32,
+    },
+    RenderImport {
+        name: &'static str,
+        mask: u32,
+        component: u32,
+    },
     RenderComposite {
         name: &'static str,
         mask: u32,
@@ -231,7 +247,10 @@ impl<'a> GpuProgramBuilder<'a> {
         }
     }
 
-    pub fn build_program(mut self, expr: &Expr) -> Result<SerializableGpuProgram, ProgramBuildError> {
+    pub fn build_program(
+        mut self,
+        expr: &Expr,
+    ) -> Result<SerializableGpuProgram, ProgramBuildError> {
         let vector = match expr {
             Expr::Vec4(vec4) => vec4,
             _ => return Err(ProgramBuildError::RootExpressionMustBeVec4),
@@ -251,7 +270,11 @@ impl<'a> GpuProgramBuilder<'a> {
         })
     }
 
-    fn build_component(&mut self, expr: &Expr, lane: u32) -> Result<RenderComponent, ProgramBuildError> {
+    fn build_component(
+        &mut self,
+        expr: &Expr,
+        lane: u32,
+    ) -> Result<RenderComponent, ProgramBuildError> {
         if let Some(value) = evaluate_constant(expr) {
             return Ok(RenderComponent::Constant { value });
         }
@@ -322,11 +345,7 @@ impl<'a> GpuProgramBuilder<'a> {
                 ));
             }
             if let Some((name, component)) = self.detect_render_import(right) {
-                return Some((
-                    name,
-                    component.unwrap_or(default_lane),
-                    Some(left.as_ref()),
-                ));
+                return Some((name, component.unwrap_or(default_lane), Some(left.as_ref())));
             }
         }
 
@@ -340,9 +359,7 @@ impl<'a> GpuProgramBuilder<'a> {
     ) -> Result<Option<RenderComponent>, ProgramBuildError> {
         let (core_expr, offset) = strip_constant_offset(expr);
 
-        if let Some((name, component, factor_expr)) =
-            self.detect_render_factor(core_expr, lane)
-        {
+        if let Some((name, component, factor_expr)) = self.detect_render_factor(core_expr, lane) {
             let mut factor_render_component = None;
             let mut factor_render_scale = 0.0f32;
             let mut factor_inner_constant = 1.0f32;
@@ -598,8 +615,12 @@ impl<'a> GpuProgramBuilder<'a> {
                     BinaryOp::Divide => RenderExprOp::Binary(SerializableBinaryOp::Divide),
                     BinaryOp::Modulo => RenderExprOp::Binary(SerializableBinaryOp::Modulo),
                     BinaryOp::Pow => RenderExprOp::Binary(SerializableBinaryOp::Pow),
-                    BinaryOp::GreaterThan => RenderExprOp::Binary(SerializableBinaryOp::GreaterThan),
-                    BinaryOp::GreaterEqual => RenderExprOp::Binary(SerializableBinaryOp::GreaterEqual),
+                    BinaryOp::GreaterThan => {
+                        RenderExprOp::Binary(SerializableBinaryOp::GreaterThan)
+                    }
+                    BinaryOp::GreaterEqual => {
+                        RenderExprOp::Binary(SerializableBinaryOp::GreaterEqual)
+                    }
                     BinaryOp::LessThan => RenderExprOp::Binary(SerializableBinaryOp::LessThan),
                     BinaryOp::LessEqual => RenderExprOp::Binary(SerializableBinaryOp::LessEqual),
                     BinaryOp::Equal => RenderExprOp::Binary(SerializableBinaryOp::Equal),
@@ -644,7 +665,6 @@ impl<'a> GpuProgramBuilder<'a> {
         self.render_expr_nodes.push(node);
         index
     }
-
 
     fn extract_factor_terms(
         &self,
@@ -733,7 +753,7 @@ impl<'a> GpuProgramBuilder<'a> {
         }
         if contains_render_import(expr) {
             return Err(ProgramBuildError::RenderStageExpression(
-                "render expression is too complex for render pipeline"
+                "render expression is too complex for render pipeline",
             ));
         }
         let node = self.build_compute_expr(expr)?;
@@ -841,12 +861,14 @@ impl<'a> GpuProgramBuilder<'a> {
                 let id = self.push_unary(func, input_handle.id, stage);
                 Ok(NodeHandle { id, stage })
             }
-            Expr::Vec4(Vec4 { .. })
-            | Expr::Vec3(_)
-            | Expr::Vec2(_) => Err(ProgramBuildError::UnsupportedExpression(
-                "vector constructors cannot appear inside scalar compute expressions",
-            )),
-            Expr::RenderImport(name) => Err(ProgramBuildError::RenderImportInCompute { name: *name }),
+            Expr::Vec4(Vec4 { .. }) | Expr::Vec3(_) | Expr::Vec2(_) => {
+                Err(ProgramBuildError::UnsupportedExpression(
+                    "vector constructors cannot appear inside scalar compute expressions",
+                ))
+            }
+            Expr::RenderImport(name) => {
+                Err(ProgramBuildError::RenderImportInCompute { name: *name })
+            }
         }
     }
 
@@ -857,13 +879,13 @@ impl<'a> GpuProgramBuilder<'a> {
             stage: ComputeStage::Precompute,
             kind: ComputeNodeKind::Constant { value },
         });
-        NodeHandle { id, stage: ComputeStage::Precompute }
+        NodeHandle {
+            id,
+            stage: ComputeStage::Precompute,
+        }
     }
 
-    fn push_compute_import(
-        &mut self,
-        name: &'static str,
-    ) -> Result<NodeHandle, ProgramBuildError> {
+    fn push_compute_import(&mut self, name: &'static str) -> Result<NodeHandle, ProgramBuildError> {
         let (import_type, mask) = self
             .registry
             .get_import_info(name)
@@ -890,13 +912,7 @@ impl<'a> GpuProgramBuilder<'a> {
         }
     }
 
-    fn push_binary(
-        &mut self,
-        op: &BinaryOp,
-        left: u32,
-        right: u32,
-        stage: ComputeStage,
-    ) -> u32 {
+    fn push_binary(&mut self, op: &BinaryOp, left: u32, right: u32, stage: ComputeStage) -> u32 {
         let id = self.nodes.len() as u32;
         self.nodes.push(SerializableComputeNode {
             id,
@@ -930,12 +946,7 @@ impl<'a> GpuProgramBuilder<'a> {
         id
     }
 
-    fn push_unary(
-        &mut self,
-        func: &UnaryFunc,
-        input: u32,
-        stage: ComputeStage,
-    ) -> u32 {
+    fn push_unary(&mut self, func: &UnaryFunc, input: u32, stage: ComputeStage) -> u32 {
         let id = self.nodes.len() as u32;
         self.nodes.push(SerializableComputeNode {
             id,
@@ -959,11 +970,28 @@ pub struct SerializableComputeNode {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type")]
 pub enum ComputeNodeKind {
-    Constant { value: f32 },
-    Import { name: &'static str, mask: u8, source: ImportSource },
-    Unary { op: SerializableUnaryOp, input: u32 },
-    Binary { op: SerializableBinaryOp, left: u32, right: u32 },
-    Conditional { condition: u32, then_branch: u32, else_branch: u32 },
+    Constant {
+        value: f32,
+    },
+    Import {
+        name: &'static str,
+        mask: u8,
+        source: ImportSource,
+    },
+    Unary {
+        op: SerializableUnaryOp,
+        input: u32,
+    },
+    Binary {
+        op: SerializableBinaryOp,
+        left: u32,
+        right: u32,
+    },
+    Conditional {
+        condition: u32,
+        then_branch: u32,
+        else_branch: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1380,13 +1408,11 @@ fn extract_linear_render(
         }
         Expr::BinaryOp(BinaryOp::Multiply, left, right) => {
             if let Some(value) = evaluate_constant(left) {
-                let mut linear =
-                    extract_linear_render(right, expected_name, default_component)?;
+                let mut linear = extract_linear_render(right, expected_name, default_component)?;
                 scale_linear_expr(&mut linear, value);
                 Some(linear)
             } else if let Some(value) = evaluate_constant(right) {
-                let mut linear =
-                    extract_linear_render(left, expected_name, default_component)?;
+                let mut linear = extract_linear_render(left, expected_name, default_component)?;
                 scale_linear_expr(&mut linear, value);
                 Some(linear)
             } else {
@@ -1394,8 +1420,7 @@ fn extract_linear_render(
             }
         }
         Expr::BinaryOp(BinaryOp::Add, left, right) => {
-            if let Some(mut linear) =
-                extract_linear_render(left, expected_name, default_component)
+            if let Some(mut linear) = extract_linear_render(left, expected_name, default_component)
             {
                 if contains_render_import(right) {
                     return None;
@@ -1404,8 +1429,7 @@ fn extract_linear_render(
                 return Some(linear);
             }
 
-            if let Some(mut linear) =
-                extract_linear_render(right, expected_name, default_component)
+            if let Some(mut linear) = extract_linear_render(right, expected_name, default_component)
             {
                 if contains_render_import(left) {
                     return None;
@@ -1417,8 +1441,7 @@ fn extract_linear_render(
             None
         }
         Expr::BinaryOp(BinaryOp::Subtract, left, right) => {
-            if let Some(mut linear) =
-                extract_linear_render(left, expected_name, default_component)
+            if let Some(mut linear) = extract_linear_render(left, expected_name, default_component)
             {
                 if contains_render_import(right) {
                     return None;
@@ -1427,8 +1450,7 @@ fn extract_linear_render(
                 return Some(linear);
             }
 
-            if let Some(mut linear) =
-                extract_linear_render(right, expected_name, default_component)
+            if let Some(mut linear) = extract_linear_render(right, expected_name, default_component)
             {
                 if contains_render_import(left) {
                     return None;
