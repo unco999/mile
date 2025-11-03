@@ -997,12 +997,10 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>, queue: &wgpu::Queue, device: &wgpu
                 .size_with_image()
                 .pos(vec2(x as f32 * 200.0 + 300.0, y as f32 * 200.0 + 300.0))
                 .frag(|data, panel_id: u32| {
-                    let uv = rv("uv");
-                    let scan_line = sin(uv.y() * 15.0 + cv("time") * 2.0);
-                    let color = rv("color");
-                                
-                    wvec4(scan_line.clone() + color.x(), scan_line.clone() + color.y(), scan_line.clone() + color.z(), color.w())
-
+                        let uv = rv("uv");
+                        let scan_line = sin(uv.y() * 15.0 + cv("time") * 2.0);
+                        let color = rv("color");
+                        wvec4(scan_line.clone() + color.x(), scan_line.clone() + color.y(), scan_line.clone() + color.z(), color.w())
                 })
                 .on()
                 .call(Call::CLICK, move |data, panelid| {
