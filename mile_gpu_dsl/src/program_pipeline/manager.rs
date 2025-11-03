@@ -273,6 +273,7 @@ fn convert_program_nodes(
 
     for node in &mut nodes {
         let (left, right) = node.get_children();
+        let else_child = node.get_else_child();
         let adjusted_left = if left != u32::MAX {
             left + node_offset
         } else {
@@ -283,7 +284,13 @@ fn convert_program_nodes(
         } else {
             right
         };
+        let adjusted_else = if else_child != u32::MAX {
+            else_child + node_offset
+        } else {
+            else_child
+        };
         node.set_children(adjusted_left, adjusted_right);
+        node.set_else_child(adjusted_else);
 
         // 将预计算节点标记为已完成，方便渲染时直接读取
         if node.has_state(GpuAstState::PRE_COMPUTED) {

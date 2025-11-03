@@ -1,8 +1,20 @@
-use std::{cell::RefCell, collections::HashMap, default, fmt::Debug, hash::{DefaultHasher, Hash,Hasher}, rc::Rc, time::{Duration, Instant}};
+use bitflags::*;
 use bytemuck::{Pod, Zeroable};
 use flume::{Receiver, Sender};
-use wgpu::{util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}, wgc::device::queue, RenderPass};
-use bitflags::*;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    default,
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
+    rc::Rc,
+    time::{Duration, Instant},
+};
+use wgpu::{
+    RenderPass,
+    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
+    wgc::device::queue,
+};
 
 use lazy_static::lazy_static;
 
@@ -29,7 +41,6 @@ fn get_variable(hash: u32) -> Option<String> {
     globals.get(&hash).cloned()
 }
 
-
 bitflags! {
     /// Interaction Mask
     pub struct ModuleEventType: u32 {
@@ -40,7 +51,6 @@ bitflags! {
         const Frag = 1 << 5;
     }
 }
-
 
 pub trait Renderable {
     fn render<'a>(
@@ -56,7 +66,7 @@ pub trait Renderable {
 pub trait Computeable {
     fn compute(&self, pass: &mut wgpu::ComputePass<'_>);
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue);
-    fn is_upate(&self)->bool;
+    fn is_upate(&self) -> bool;
 }
 
 #[repr(C)]
@@ -66,19 +76,17 @@ pub struct GpuDebugReadCallBack {
     pub uints: [u32; 32],  // 16 * 4 = 64 字节
 }
 
-pub struct GpuDebug{
-    import_name:&'static str,
-    structs:GpuDebugReadCallBack,
-    pub buffer:Option<wgpu::Buffer>,
+pub struct GpuDebug {
+    import_name: &'static str,
+    structs: GpuDebugReadCallBack,
+    pub buffer: Option<wgpu::Buffer>,
     last_print: Instant,      // 上一次打印时间
     print_interval: Duration, // 最小间隔
 }
 
-
-
 pub struct Tick {
-    interval: Duration,  // 设定的间隔时间
-    last_tick: Instant,  // 上次 tick 的时间
+    interval: Duration, // 设定的间隔时间
+    last_tick: Instant, // 上次 tick 的时间
 }
 
 impl Tick {
@@ -100,9 +108,8 @@ impl Tick {
     }
 }
 
-
 impl GpuDebugReadCallBack {
-    pub fn print(name:&'static str,data: &GpuDebugReadCallBack) {
+    pub fn print(name: &'static str, data: &GpuDebugReadCallBack) {
         let mut has_nonzero = false;
 
         print!("GpuDebug:[{name}]: {{\n  floats: [");
@@ -116,7 +123,7 @@ impl GpuDebugReadCallBack {
 
         print!("  uints: [");
         for (i, &u) in data.uints.iter().enumerate() {
-            if u != 0{
+            if u != 0 {
                 has_nonzero = true;
                 print!("{}: {}, ", i, u);
             }
@@ -132,34 +139,29 @@ impl GpuDebugReadCallBack {
 }
 
 impl GpuDebug {
-
-    pub fn new(name:&'static str)->Self{
-        Self{
-            import_name:name,
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            import_name: name,
             buffer: None,
             last_print: Instant::now(),
             print_interval: Duration::from_millis(1333),
-            structs:GpuDebugReadCallBack::default(), // 每 200ms 打印一次
+            structs: GpuDebugReadCallBack::default(), // 每 200ms 打印一次
         }
     }
 
-    pub fn create_buffer(&mut self,device:&wgpu::Device){
+    pub fn create_buffer(&mut self, device: &wgpu::Device) {
         let out = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Shared State"),
-            usage: 
-                 wgpu::BufferUsages::STORAGE
+            usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST // CPU 写入
-                | wgpu::BufferUsages::COPY_SRC
-            ,
+                | wgpu::BufferUsages::COPY_SRC,
             contents: bytemuck::bytes_of(&self.structs),
         });
-        self.buffer = Some(
-            out
-        );
+        self.buffer = Some(out);
     }
 
-    pub fn debug(&mut self,device:&wgpu::Device,queue:&wgpu::Queue) {
-         if self.last_print.elapsed() < self.print_interval {
+    pub fn debug(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.last_print.elapsed() < self.print_interval {
             return; // 太快就跳过
         }
 
@@ -173,7 +175,7 @@ impl GpuDebug {
                     let bytes = downloadBuffer;
                     let data: &[GpuDebugReadCallBack] = bytemuck::cast_slice(&bytes);
                     for data in data {
-                        GpuDebugReadCallBack::print(name,data);
+                        GpuDebugReadCallBack::print(name, data);
                     }
                 }
             },
@@ -186,7 +188,7 @@ impl GpuDebug {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct GlobalUniform {
-   // === 16-byte block 1: atomic z/layouts ===
+    // === 16-byte block 1: atomic z/layouts ===
     pub click_layout_z: u32,
     pub click_layout_id: u32,
     pub hover_layout_id: u32,
@@ -196,53 +198,48 @@ pub struct GlobalUniform {
     pub drag_layout_id: u32,
     pub drag_layout_z: u32,
     pub pad_atomic1: u32,
-    pub pad_atomic2: u32,    // 16 bytes
+    pub pad_atomic2: u32, // 16 bytes
 
     // === 16-byte block 3: delta / dt ===
     pub dt: f32,
     pub pad1: f32,
     pub pad2: f32,
-    pub pad3: f32,           // 16 bytes
+    pub pad3: f32, // 16 bytes
 
     // === 16-byte block 4: mouse ===
     pub mouse_pos: [f32; 2],
     pub mouse_state: u32,
-    pub frame: u32,          // 16 bytes
+    pub frame: u32, // 16 bytes
 
     // === 16-byte block 5: screen info ===
     pub screen_size: [u32; 2],
     pub press_duration: f32,
-    pub time: f32,           // 16 bytes
+    pub time: f32, // 16 bytes
 
     // === 16-byte block 6: event points ===
     pub event_point: [f32; 2],
-    pub extra1: [f32; 2],    // 16 bytes
+    pub extra1: [f32; 2], // 16 bytes
 
     // === 16-byte block 7: extra data ===
     pub extra2: [f32; 2],
     pub pad_extra: [f32; 2], // 16 bytes
 }
 
-
-pub struct CpuGlobalUniform{
-    inner:Rc<RefCell<GlobalUniform>>,
-    buffer:wgpu::Buffer
+pub struct CpuGlobalUniform {
+    inner: Rc<RefCell<GlobalUniform>>,
+    buffer: wgpu::Buffer,
 }
 
-impl CpuGlobalUniform  {
-
-    pub fn get_struct(&self)->Rc<RefCell<GlobalUniform>>{
+impl CpuGlobalUniform {
+    pub fn get_struct(&self) -> Rc<RefCell<GlobalUniform>> {
         return self.inner.clone();
     }
 
-    pub fn get_buffer(&self)->wgpu::Buffer{
-        return self.buffer.clone()
+    pub fn get_buffer(&self) -> wgpu::Buffer {
+        return self.buffer.clone();
     }
 
-    pub fn new(        
-        device: &wgpu::Device,
-        window: &winit::window::Window,
-    )->Self{
+    pub fn new(device: &wgpu::Device, window: &winit::window::Window) -> Self {
         let size = window.inner_size(); // 返回 PhysicalSize<u32>
         let width = size.width;
         let height = size.height;
@@ -255,73 +252,71 @@ impl CpuGlobalUniform  {
         let global_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("GlobalUniformBuffer"),
             contents: bytemuck::bytes_of(&global_uniform),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
         });
-        Self { inner: Rc::new(RefCell::new(global_uniform)) ,buffer:global_buffer}
+        Self {
+            inner: Rc::new(RefCell::new(global_uniform)),
+            buffer: global_buffer,
+        }
     }
 }
-
 
 /**
- * 这里是一个模块使用的 des的集合情况 
+ * 这里是一个模块使用的 des的集合情况
  * 用于响应事件时 根据id或者其他索引来获取计算结果值所用的存储结构
  */
-#[derive(Debug,Clone,Default)]
-pub struct KennelReadDesPool<T:Hash + Clone + Eq>{
-    pool:HashMap<T,MileResultDes>
+#[derive(Debug, Clone, Default)]
+pub struct KennelReadDesPool<T: Hash + Clone + Eq> {
+    pool: HashMap<T, MileResultDes>,
 }
 
-impl<T:Hash + Clone + Eq> KennelReadDesPool<T> {
-    pub fn get_des(&mut self,key:T)->Option<[u32;4]>{
-        self.pool.get(&key)
-            .map(|e|{
-                e.row_start
-            })
+impl<T: Hash + Clone + Eq> KennelReadDesPool<T> {
+    pub fn get_des(&mut self, key: T) -> Option<[u32; 4]> {
+        self.pool.get(&key).map(|e| e.row_start)
     }
 
-    pub fn insert(&mut self,k:T,v:MileResultDes){
+    pub fn insert(&mut self, k: T, v: MileResultDes) {
         self.pool.insert(k, v);
     }
 }
 
-
 /**
  * instance_id 来获取MileSimpleGPU里面的计算结果 共给vertex 和 frag 使用
  */
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct MileResultDes {
-    pub row_start:[u32;4],
+    pub row_start: [u32; 4],
 }
 
+use std::sync::{Arc, Condvar, Mutex};
 
-use std::sync::{Arc, Mutex, Condvar};
-
-
-    // 假设 ModuleEvent 和 Expr 是你定义的类型
-#[derive(Clone,Debug)]
-pub enum ModuleEvent<T,T1> {
+// 假设 ModuleEvent 和 Expr 是你定义的类型
+#[derive(Clone, Debug)]
+pub enum ModuleEvent<T, T1> {
     KennelPush(ModuleParmas<T>), //向Kennel写入处理事件
-    KennelPushResultReadDes(ModuleParmas<T1>)
+    KennelPushResultReadDes(ModuleParmas<T1>),
 }
 
-#[derive(Clone,Debug)]
-pub struct ModuleParmas<T>{
-    pub module_name:&'static str,
-    pub idx:u32,
-    pub data:T,
-    pub _ty:u32
+#[derive(Clone, Debug)]
+pub struct ModuleParmas<T> {
+    pub module_name: &'static str,
+    pub idx: u32,
+    pub data: T,
+    pub _ty: u32,
 }
 
 pub type LayerID = u32;
 
-pub struct GlobalEventHub<T:Debug + Clone> {
+pub struct GlobalEventHub<T: Debug + Clone> {
     pub sender: Sender<T>,
     receiver: Receiver<T>,
     pre_hover_panel_id: Option<u32>,
     event_condvar: Arc<(Mutex<bool>, Condvar)>, // 用于通知有新事件
 }
 
-impl<T:Debug + Clone> GlobalEventHub<T> {
+impl<T: Debug + Clone> GlobalEventHub<T> {
     // 创建一个新的 GlobalEventHub 实例
     pub fn new() -> Self {
         let (sender, receiver) = flume::unbounded();
@@ -352,6 +347,4 @@ impl<T:Debug + Clone> GlobalEventHub<T> {
         }
         events
     }
-
-
 }

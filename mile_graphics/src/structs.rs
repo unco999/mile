@@ -5,8 +5,8 @@ use std::{borrow::Cow, sync::Arc};
 
 use mile_api::{Computeable, Renderable};
 use pollster::block_on;
-use wgpu::{BindGroup, Buffer, RenderPass, VertexStepMode::*};
 use wgpu::util::DeviceExt;
+use wgpu::{BindGroup, Buffer, RenderPass, VertexStepMode::*};
 use wgpu::{ShaderSource, Surface, util::BufferInitDescriptor};
 use winit::{
     event_loop::{self, EventLoop},
@@ -22,66 +22,71 @@ pub struct WGPUContext {
     pub config: Arc<wgpu::SurfaceConfiguration>,
     pub render_pipeline: wgpu::RenderPipeline,
     pub vertex_buffer: wgpu::Buffer,
-    pub app_state:AppState,
-    pub global_uniform_buffer:Buffer,
-    pub bindgroup:BindGroup,
-    pub global_state:Arc<Mutex<GlobalState>>
+    pub app_state: AppState,
+    pub global_uniform_buffer: Buffer,
+    pub bindgroup: BindGroup,
+    pub global_state: Arc<Mutex<GlobalState>>,
 }
 
 #[derive(Debug)]
 pub struct GlobalState {
     pub flags: HashMap<GlobalStateType, GlobalStateRecord>, // 标识 -> 累计帧数
 }
-#[derive(PartialEq, PartialOrd,Eq,Hash,Debug)]
-pub enum GlobalStateType{
+#[derive(PartialEq, PartialOrd, Eq, Hash, Debug)]
+pub enum GlobalStateType {
     ComputeTickDuration,
     RenderTickDuration,
 }
 
-#[derive(Clone,Debug)]
-pub enum GlobalStateRecord{
+#[derive(Clone, Debug)]
+pub enum GlobalStateRecord {
     TickFrame(u32),
-    TickDuration(f32)
+    TickDuration(f32),
 }
 
 impl GlobalState {
     pub fn new() -> Self {
-        Self { flags: HashMap::new() }
+        Self {
+            flags: HashMap::new(),
+        }
     }
 
     pub fn tick(&mut self) {
-    // 每帧累加计数并清理超过 60 的标识
-    println!("{:?}",self.flags);
+        // 每帧累加计数并清理超过 60 的标识
+        println!("{:?}", self.flags);
 
-    self.flags.retain(|_, record| {
-        let bool = match record{
-            GlobalStateRecord::TickFrame(frame) => {
-                if(*frame == 0){
-                    return true;
-                }else {
-                    *frame -= 1;
-                    return false;
+        self.flags.retain(|_, record| {
+            let bool = match record {
+                GlobalStateRecord::TickFrame(frame) => {
+                    if (*frame == 0) {
+                        return true;
+                    } else {
+                        *frame -= 1;
+                        return false;
+                    }
                 }
-
-            },
-            GlobalStateRecord::TickDuration(time) => {
-                *time -= 0.016;
-                if(*time == 0.0){
-                    return true;
-                }else {
-                    return false;
+                GlobalStateRecord::TickDuration(time) => {
+                    *time -= 0.016;
+                    if (*time == 0.0) {
+                        return true;
+                    } else {
+                        return false;
+                    }
                 }
-            },
-        };
-    });
-}
+            };
+        });
+    }
 
     /// 检查是否超过最大值，超过就插入新值
     pub fn check_and_insert(&mut self, key: GlobalStateType, record: GlobalStateRecord) {
         let need_insert = match self.flags.get(&key) {
             Some(existing) => match (existing, &record) {
-                (GlobalStateRecord::TickFrame(old), GlobalStateRecord::TickFrame(new)) => *old  > *new,
-                (GlobalStateRecord::TickDuration(old), GlobalStateRecord::TickDuration(new)) => *old > *new,
+                (GlobalStateRecord::TickFrame(old), GlobalStateRecord::TickFrame(new)) => {
+                    *old > *new
+                }
+                (GlobalStateRecord::TickDuration(old), GlobalStateRecord::TickDuration(new)) => {
+                    *old > *new
+                }
                 _ => false, // 类型不匹配就不插入
             },
             None => true, // 不存在就插入
@@ -92,7 +97,7 @@ impl GlobalState {
         }
     }
 
-    pub fn set_flag(&mut self, key:GlobalStateType,val:GlobalStateRecord) {
+    pub fn set_flag(&mut self, key: GlobalStateType, val: GlobalStateRecord) {
         self.flags.insert(key, val); // 新标识从 0 帧开始计数
     }
 }
@@ -108,9 +113,8 @@ pub struct Vertex {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BackGroundUnitform {
-    pub time:f32
+    pub time: f32,
 }
-
 
 #[derive(Clone)]
 
@@ -147,7 +151,7 @@ pub const VERTEX_LIST: &[Vertex] = &[
 ];
 
 impl WGPUContext {
-    pub fn new(window: Arc<Window>,global_state:Arc<Mutex<GlobalState>>) -> Self {
+    pub fn new(window: Arc<Window>, global_state: Arc<Mutex<GlobalState>>) -> Self {
         let instance = wgpu::Instance::default();
         let surface = Arc::new(instance.create_surface(Arc::clone(&window)).unwrap());
 
@@ -159,13 +163,17 @@ impl WGPUContext {
         }))
         .expect("Failed to find an appropriate adapter");
 
-        
         let limits = adapter.limits();
-        
-        println!("Max sampled textures per stage: {}", limits.max_sampled_textures_per_shader_stage);
 
-        let required_features = wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::VERTEX_WRITABLE_STORAGE | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
-        
+        println!(
+            "Max sampled textures per stage: {}",
+            limits.max_sampled_textures_per_shader_stage
+        );
+
+        let required_features = wgpu::Features::TEXTURE_BINDING_ARRAY
+            | wgpu::Features::VERTEX_WRITABLE_STORAGE
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features: required_features, // <--- 允许
@@ -182,11 +190,11 @@ impl WGPUContext {
             .get_default_config(&adapter, width, height)
             .expect("Failed to get default surface config");
 
-
         surface.configure(&device, &surface_config);
 
         // 如果有 pipeline 等初始化，也可以在这里同步创建
-        let (render_pipeline, bind_group_layout, bindgroup,buffer) = WGPUContext::create_pipeline(&device, surface_config.format);
+        let (render_pipeline, bind_group_layout, bindgroup, buffer) =
+            WGPUContext::create_pipeline(&device, surface_config.format);
 
         let bytes: &[u8] = bytemuck::cast_slice(&VERTEX_LIST);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -203,10 +211,12 @@ impl WGPUContext {
             config: Arc::new(surface_config),
             render_pipeline,
             vertex_buffer,
-            app_state:AppState{ start_time:Instant::now() },
-            global_uniform_buffer:buffer,
+            app_state: AppState {
+                start_time: Instant::now(),
+            },
+            global_uniform_buffer: buffer,
             bindgroup,
-            global_state
+            global_state,
         }
     }
 
@@ -218,7 +228,6 @@ impl WGPUContext {
         config.height = height;
         self.surface.configure(&self.device, &config);
     }
-
 
     pub fn compute(&self, computeables: &[&dyn Computeable]) {
         let mut encoder = self
@@ -241,9 +250,7 @@ impl WGPUContext {
         }
     }
 
-
-   
-    pub fn render(&self,renderables: &[&dyn Renderable])->&Self {
+    pub fn render(&self, renderables: &[&dyn Renderable]) -> &Self {
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(_) => return self,
@@ -290,7 +297,7 @@ impl WGPUContext {
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             rpass.draw(0..VERTEX_LIST.len() as u32, 0..1);
             for r in renderables {
-                r.render(&self.device,&self.queue,&view,&mut rpass);
+                r.render(&self.device, &self.queue, &view, &mut rpass);
                 r.readback(&self.device, &self.queue);
             }
         }
@@ -302,56 +309,65 @@ impl WGPUContext {
     fn create_pipeline(
         device: &wgpu::Device,
         swap_chain_format: wgpu::TextureFormat,
-    ) -> ((wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::BindGroup,wgpu::Buffer)) {
+    ) -> (
+        (
+            wgpu::RenderPipeline,
+            wgpu::BindGroupLayout,
+            wgpu::BindGroup,
+            wgpu::Buffer,
+        )
+    ) {
         // Load the shaders from disk
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
         });
 
-         // Uniform layout
-    let uniform_bind_group_layout =
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Uniform Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
+        // Uniform layout
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Uniform Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: Some(
+                            std::num::NonZeroU64::new(
+                                std::mem::size_of::<BackGroundUnitform>() as u64
+                            )
+                            .unwrap(),
+                        ),
+                    },
+                    count: None,
+                }],
+            });
+
+        // Uniform buffer
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Background Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[BackGroundUnitform { time: 0.0 }]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniform Bind Group"),
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: Some(std::num::NonZeroU64::new(
-                        std::mem::size_of::<BackGroundUnitform>() as u64,
-                    ).unwrap()),
-                },
-                count: None,
+                resource: uniform_buffer.as_entire_binding(),
             }],
         });
 
-    // Uniform buffer
-    let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Background Uniform Buffer"),
-        contents: bytemuck::cast_slice(&[BackGroundUnitform { time: 0.0 }]),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
+        // Pipeline layout
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Background Pipeline Layout"),
+            bind_group_layouts: &[&uniform_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
-    let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Uniform Bind Group"),
-        layout: &uniform_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
-    });
-
-    // Pipeline layout
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Background Pipeline Layout"),
-        bind_group_layouts: &[&uniform_bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-
-        let pipeline =device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: None,
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -379,7 +395,12 @@ impl WGPUContext {
             multiview: None,
             cache: None,
         });
-        (pipeline, uniform_bind_group_layout, uniform_bind_group,uniform_buffer)
+        (
+            pipeline,
+            uniform_bind_group_layout,
+            uniform_bind_group,
+            uniform_buffer,
+        )
     }
 
     fn create_vertex_buffer_layout() -> wgpu::VertexBufferLayout<'static> {

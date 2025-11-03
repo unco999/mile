@@ -1,6 +1,6 @@
-use ttf_parser::{Face, GlyphId, OutlineBuilder};
 use std::fs;
 use std::path::Path;
+use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use crate::structs::MileFont;
 
@@ -18,7 +18,10 @@ impl OutlineBuilder for PrintOutline {
         print!("Q({:.1},{:.1} -> {:.1},{:.1}) ", x1, y1, x, y);
     }
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        print!("C({:.1},{:.1} -> {:.1},{:.1} -> {:.1},{:.1}) ", x1, y1, x2, y2, x, y);
+        print!(
+            "C({:.1},{:.1} -> {:.1},{:.1} -> {:.1},{:.1}) ",
+            x1, y1, x2, y2, x, y
+        );
     }
     fn close(&mut self) {
         print!("Z ");
@@ -26,7 +29,4 @@ impl OutlineBuilder for PrintOutline {
 }
 
 #[test]
-fn main() {
-
-}
-
+fn main() {}

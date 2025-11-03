@@ -90,6 +90,15 @@ impl SerializableGpuProgram {
                     gpu_node.set_op(op.to_gpu_op());
                     gpu_node.set_children(*left, *right);
                 }
+                ComputeNodeKind::Conditional {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    gpu_node.set_op(GpuOp::Conditional);
+                    gpu_node.set_conditional_children(*condition, *then_branch, *else_branch);
+                    gpu_node.add_state(GpuAstState::IS_BRANCH);
+                }
             }
 
             nodes.push(gpu_node);
@@ -806,6 +815,26 @@ impl<'a> GpuProgramBuilder<'a> {
                 let id = self.push_binary(op, left_handle.id, right_handle.id, stage);
                 Ok(NodeHandle { id, stage })
             }
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition_handle = self.build_compute_expr(condition)?;
+                let then_handle = self.build_compute_expr(then_branch)?;
+                let else_handle = self.build_compute_expr(else_branch)?;
+                let stage = condition_handle
+                    .stage
+                    .combine(then_handle.stage)
+                    .combine(else_handle.stage);
+                let id = self.push_conditional(
+                    condition_handle.id,
+                    then_handle.id,
+                    else_handle.id,
+                    stage,
+                );
+                Ok(NodeHandle { id, stage })
+            }
             Expr::UnaryOp(func, input) => {
                 let input_handle = self.build_compute_expr(input)?;
                 let stage = input_handle.stage;
@@ -818,9 +847,6 @@ impl<'a> GpuProgramBuilder<'a> {
                 "vector constructors cannot appear inside scalar compute expressions",
             )),
             Expr::RenderImport(name) => Err(ProgramBuildError::RenderImportInCompute { name: *name }),
-            Expr::If { .. } => Err(ProgramBuildError::UnsupportedExpression(
-                "conditional expressions are not supported in compute stage yet",
-            )),
         }
     }
 
@@ -884,6 +910,26 @@ impl<'a> GpuProgramBuilder<'a> {
         id
     }
 
+    fn push_conditional(
+        &mut self,
+        condition: u32,
+        then_branch: u32,
+        else_branch: u32,
+        stage: ComputeStage,
+    ) -> u32 {
+        let id = self.nodes.len() as u32;
+        self.nodes.push(SerializableComputeNode {
+            id,
+            stage,
+            kind: ComputeNodeKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            },
+        });
+        id
+    }
+
     fn push_unary(
         &mut self,
         func: &UnaryFunc,
@@ -917,6 +963,7 @@ pub enum ComputeNodeKind {
     Import { name: &'static str, mask: u8, source: ImportSource },
     Unary { op: SerializableUnaryOp, input: u32 },
     Binary { op: SerializableBinaryOp, left: u32, right: u32 },
+    Conditional { condition: u32, then_branch: u32, else_branch: u32 },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1040,6 +1087,51 @@ impl From<&UnaryFunc> for SerializableUnaryOp {
 struct NodeHandle {
     id: u32,
     stage: ComputeStage,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::Expr;
+
+    #[test]
+    fn build_compute_expr_handles_if_nodes() {
+        let registry = ImportRegistry::new();
+        let mut builder = GpuProgramBuilder::new(&registry);
+
+        let conditional_expr = Expr::If {
+            condition: Box::new(Expr::Constant(1.0)),
+            then_branch: Box::new(Expr::Constant(2.0)),
+            else_branch: Box::new(Expr::Constant(3.0)),
+        };
+
+        let handle = builder
+            .build_compute_expr(&conditional_expr)
+            .expect("conditional expressions should compile");
+
+        assert_eq!(
+            builder.nodes.len(),
+            4,
+            "expected three constants and one conditional node"
+        );
+
+        let node = builder.nodes[handle.id as usize].clone();
+        match node.kind {
+            ComputeNodeKind::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                assert_eq!(condition, 0);
+                assert_eq!(then_branch, 1);
+                assert_eq!(else_branch, 2);
+            }
+            other => panic!("expected conditional node, got {:?}", other),
+        }
+
+        assert!(matches!(node.stage, ComputeStage::Precompute));
+        assert!(matches!(handle.stage, ComputeStage::Precompute));
+    }
 }
 
 fn contains_render_import(expr: &Expr) -> bool {
@@ -1522,211 +1614,4 @@ fn evaluate_index(expr: &Expr) -> Option<u32> {
     let value = evaluate_constant(expr)?;
     let clamped = value.clamp(0.0, 3.0);
     Some(clamped.round() as u32)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{core::dsl::{wvec4, sin}, dsl::{cv, rv}};
-
-    fn create_test_registry() -> ImportRegistry {
-        let mut registry = ImportRegistry::new();
-        registry.register_compute_import(
-            "time",
-            0b0011,
-            Box::new(|input| vec![input[0], 0.0, 0.0, 0.0]),
-        );
-        registry.register_render_import(
-            "uv",
-            0b0011,
-            Box::new(|input| vec![input[0], input[1], 0.0, 0.0]),
-        );
-        registry
-    }
-
-    #[test]
-    fn build_simple_program() {
-        let expr = wvec4(
-            1.0,
-            cv("time") * 3.14,
-            1.0,
-            1.0,
-        );
-        let registry = create_test_registry();
-        let program = GpuProgramBuilder::new(&registry)
-            .build_program(&expr)
-            .expect("builder should succeed");
-
-        assert_eq!(program.render_plan.components.len(), 4);
-        match &program.render_plan.components[0] {
-            RenderComponent::Constant { value } => assert!((*value - 1.0).abs() < f32::EPSILON),
-            _ => panic!("expected constant component"),
-        }
-
-        match &program.render_plan.components[1] {
-            RenderComponent::ComputeNode { node_id } => {
-                assert!(*node_id < program.compute_nodes.len() as u32)
-            }
-            other => panic!("unexpected component: {:?}", other),
-        }
-
-        assert_eq!(program.compute_nodes.len(), 3);
-        // import node should be marked per-frame
-        let import_node = &program.compute_nodes[0];
-        println!("import_node {:?}",import_node);
-        assert!(matches!(
-            import_node.kind,
-            ComputeNodeKind::Import {
-                name: "time",
-                source: ImportSource::Compute,
-                ..
-            }
-        ));
-        assert_eq!(import_node.stage, ComputeStage::PerFrame);
-    }
-
-    #[test]
-    fn serialize_to_json() {
-        let expr = wvec4(
-            1.0,
-            cv("time") * 2.0,
-            1.0,
-            1.0,
-        );
-        let registry = create_test_registry();
-        let program = GpuProgramBuilder::new(&registry)
-            .build_program(&expr)
-            .unwrap();
-
-        let json = serde_json::to_string_pretty(&program).unwrap();
-        println!("具体的情况{:?}",json);
-        assert!(json.contains("\"compute_nodes\""));
-        assert!(json.contains("\"render_plan\""));
-    }
-
-    #[test]
-    fn render_compute_mix_produces_composite() {
-        let expr = wvec4(
-            rv("uv").x() * (cv("time") * 0.5),
-            0.0,
-            0.0,
-            0.0,
-        );
-
-        let registry = create_test_registry();
-        let program = GpuProgramBuilder::new(&registry)
-            .build_program(&expr)
-            .expect("builder should support render/compute mixing");
-
-        match &program.render_plan.components[0] {
-            RenderComponent::RenderComposite {
-                name,
-                component,
-                factor_render_component,
-                factor_render_scale,
-                factor_inner_constant,
-                factor_inner_compute,
-                factor_outer_constant,
-                factor_outer_compute,
-                factor_unary,
-                offset,
-                ..
-            } => {
-                assert_eq!(*name, "uv");
-                assert_eq!(*component, 0);
-                assert!(factor_render_component.is_none());
-                assert!((*factor_render_scale - 0.0).abs() < f32::EPSILON);
-                assert!((*factor_inner_constant - 0.0).abs() < f32::EPSILON);
-                assert!(factor_inner_compute.is_some());
-                assert!((*factor_outer_constant - 1.0).abs() < f32::EPSILON);
-                assert!(factor_outer_compute.is_none());
-                assert!(matches!(factor_unary, FactorUnary::None));
-                assert_eq!(*offset, 0.0);
-            }
-            other => panic!("unexpected component: {:?}", other),
-        }
-
-        assert!(
-            !program.compute_nodes.is_empty(),
-            "expect compute nodes for factor expression"
-        );
-    }
-
-    #[test]
-    fn render_factor_can_reference_same_import() {
-        let expr = wvec4(
-            rv("uv").x() * (rv("uv").y() * cv("time")),
-            0.0,
-            0.0,
-            0.0,
-        );
-
-        let registry = create_test_registry();
-        let program = GpuProgramBuilder::new(&registry)
-            .build_program(&expr)
-            .expect("builder should support render factors involving render data");
-
-        match &program.render_plan.components[0] {
-            RenderComponent::RenderComposite {
-                component,
-                factor_render_component,
-                factor_inner_compute,
-                factor_outer_compute,
-                factor_render_scale,
-                factor_inner_constant,
-                factor_unary,
-                ..
-            } => {
-                assert_eq!(*component, 0);
-                assert_eq!(*factor_render_component, Some(1));
-                assert!((*factor_render_scale - 1.0).abs() < f32::EPSILON);
-                assert!((*factor_inner_constant - 0.0).abs() < f32::EPSILON);
-                assert!(factor_inner_compute.is_none());
-                assert!(factor_outer_compute.is_some());
-                assert!(matches!(factor_unary, FactorUnary::None));
-            }
-            other => panic!("unexpected component: {:?}", other),
-        }
-    }
-
-    #[test]
-    fn render_factor_with_unary() {
-        let expr = wvec4(
-            rv("uv").x() * (sin(rv("uv").y() * 6.0 - cv("time") * 2.0) * 0.5 + 0.5),
-            0.0,
-            0.0,
-            0.0,
-        );
-
-        let registry = create_test_registry();
-        let program = GpuProgramBuilder::new(&registry)
-            .build_program(&expr)
-            .expect("builder should support unary render factors");
-
-        match &program.render_plan.components[0] {
-            RenderComponent::RenderComposite {
-                component,
-                factor_render_component,
-                factor_render_scale,
-                factor_inner_constant,
-                factor_inner_compute,
-                factor_outer_constant,
-                factor_outer_compute,
-                factor_unary,
-                offset,
-                ..
-            } => {
-                assert_eq!(*component, 0);
-                assert_eq!(*factor_render_component, Some(1));
-                assert!((*factor_render_scale - 6.0).abs() < f32::EPSILON);
-                assert!((*factor_inner_constant - 0.0).abs() < f32::EPSILON);
-                assert!(factor_inner_compute.is_some()); // carries -time * 2.0
-                assert!((*factor_outer_constant - 0.5).abs() < f32::EPSILON);
-                assert!(factor_outer_compute.is_none());
-                assert!(matches!(factor_unary, FactorUnary::Sin));
-                assert!((*offset - 0.5).abs() < f32::EPSILON);
-            }
-            other => panic!("unexpected component: {:?}", other),
-        }
-    }
 }

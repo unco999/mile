@@ -1,30 +1,52 @@
-use bytemuck::{cast_slice, offset_of, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, cast_slice, offset_of};
 use flume::{Receiver, Sender};
 use glam::{Vec2, vec2};
-use image::{imageops::overlay, Frame, ImageReader, RgbaImage};
+use image::{Frame, ImageReader, RgbaImage, imageops::overlay};
 use itertools::Itertools;
-use mile_api::{CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, ModuleEvent, ModuleEventType, ModuleParmas, LayerID, Renderable};
-use mile_gpu_dsl::{core::Expr, mat::kennel::Kennel, program_pipeline::RenderBindingLayer};
-use mile_graphics::structs::{
-     GlobalState, GlobalStateRecord, GlobalStateType, 
+use mile_api::{
+    CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, LayerID,
+    ModuleEvent, ModuleEventType, ModuleParmas, Renderable,
 };
+use mile_gpu_dsl::{core::Expr, mat::kennel::Kennel, program_pipeline::RenderBindingLayer};
+use mile_graphics::structs::{GlobalState, GlobalStateRecord, GlobalStateType};
 use std::{
-    any::Any, cell::RefCell, collections::{self, HashMap}, default, fs, hash::Hash, num::{NonZeroU32, NonZeroU64}, path::Path, rc::Rc, sync::{Arc, Mutex}, u32
+    any::Any,
+    cell::RefCell,
+    collections::{self, HashMap},
+    default, fs,
+    hash::Hash,
+    num::{NonZeroU32, NonZeroU64},
+    path::Path,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    u32,
 };
 
 pub mod mile_ui_wgsl;
 pub mod ui_network;
 
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}, wgc::device::{self, queue}, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferUsages, Device, RenderPass, SamplerBindingType, ShaderStages, TextureSampleType, TextureView, TextureViewDimension, VertexFormat
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferUsages, Device, RenderPass,
+    SamplerBindingType, ShaderStages, TextureSampleType, TextureView, TextureViewDimension,
+    VertexFormat,
+    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
+    wgc::device::{self, queue},
 };
 use winit::window::Window;
 
 use crate::{
-    mile_ui_wgsl::{StateConfigDes, StateNetWorkConfig, StateNetWorkConfigDes, UiState, WgslResult},
+    mile_ui_wgsl::{
+        StateConfigDes, StateNetWorkConfig, StateNetWorkConfigDes, UiState, WgslResult,
+    },
     structs::{
-        AnimOp, CollectionId, EasingMask, GpuPanelAttach, GpuUiCollection, GpuUiInfluence, GpuUiTextureInfo, ImageRawInfo, MouseState, PanelAttachContext, PanelCollectionState, PanelEvent, PanelField, PanelInteraction, PanelInteractionHold, PanelState, TextureAtlas, TextureAtlasSet, UiCollection, UiInfluence, UiInfluenceType, UiRelation, UiRelationGpuBuffers, UiRelationNetwork, UiTextureInfo
-    }, ui_network::{NetworkStore, PanelId},
+        AnimOp, CollectionId, EasingMask, GpuPanelAttach, GpuUiCollection, GpuUiInfluence,
+        GpuUiTextureInfo, ImageRawInfo, MouseState, PanelAttachContext, PanelCollectionState,
+        PanelEvent, PanelField, PanelInteraction, PanelInteractionHold, PanelState, TextureAtlas,
+        TextureAtlasSet, UiCollection, UiInfluence, UiInfluenceType, UiRelation,
+        UiRelationGpuBuffers, UiRelationNetwork, UiTextureInfo,
+    },
+    ui_network::{NetworkStore, PanelId},
 };
 pub mod structs;
 
@@ -51,12 +73,10 @@ pub enum CpuPanelEvent {
     TotalUpdate(FRAME),
     SwapInteractionFrame(FRAME),
     WgslResult(WgslResult),
-    SpecielAnim((u32,TransformAnimFieldInfo)),
+    SpecielAnim((u32, TransformAnimFieldInfo)),
     Frag((FRAME, UiInteractionScope)),
     Vertex((FRAME, UiInteractionScope)),
 }
-
-
 
 #[derive(Debug, Clone)]
 pub struct StateTransition {
@@ -65,15 +85,12 @@ pub struct StateTransition {
     pub panel_id: u32,
 }
 
-
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct NetWorkTransition {
     pub state_config_des: StateNetWorkConfigDes,
     pub curr_state: UiState,
     pub panel_id: u32,
 }
-
-
 
 pub type FRAME = u32;
 
@@ -107,13 +124,17 @@ pub struct UiInteractionScope {
 pub struct UIEventHub {
     sender: Sender<CpuPanelEvent>,
     receiver: Receiver<CpuPanelEvent>,
-    pre_hover_panel_id:Option<u32>
+    pre_hover_panel_id: Option<u32>,
 }
 
 impl UIEventHub {
     pub fn new() -> Self {
         let (sender, receiver) = flume::unbounded();
-        Self { sender, receiver ,pre_hover_panel_id:None}
+        Self {
+            sender,
+            receiver,
+            pre_hover_panel_id: None,
+        }
     }
 
     pub fn push(&self, event: CpuPanelEvent) {
@@ -158,8 +179,6 @@ struct DrawIndexedIndirect {
     base_vertex: i32,
     first_instance: u32,
 }
-
-
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
@@ -215,24 +234,23 @@ pub struct Panel {
     pub uv_scale: [f32; 2],  // 8
 
     // === 16-byte 块 3 ===
-    pub z_index: u32,        // 4
-    pub pass_through: u32,   // 4
-    pub id: u32,             // 4
-    pub interaction: u32,    // 4
+    pub z_index: u32,      // 4
+    pub pass_through: u32, // 4
+    pub id: u32,           // 4
+    pub interaction: u32,  // 4
 
     // === 16-byte 块 4 ===
-    pub event_mask: u32,     // 4
-    pub state_mask: u32,     // 4
-    pub transparent: f32,    // 4
-    pub texture_id: u32,     // 4
+    pub event_mask: u32,  // 4
+    pub state_mask: u32,  // 4
+    pub transparent: f32, // 4
+    pub texture_id: u32,  // 4
 
     // === 16-byte 块 5 ===
-    pub state: u32,          // 4
-    pub collection_state:u32,
-    pub kennel_des_id: u32,       // 12, 补齐到 16
-    pub pad_1:u32,       // 12, 补齐到 16
+    pub state: u32, // 4
+    pub collection_state: u32,
+    pub kennel_des_id: u32, // 12, 补齐到 16
+    pub pad_1: u32,         // 12, 补齐到 16
 }
-
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
@@ -292,63 +310,62 @@ impl PanelAnimDelta {
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 /// 单字段动画描述
 pub struct TransformAnimFieldInfo {
-    pub field_id: u32,   // PanelField 位标记
+    pub field_id: u32,          // PanelField 位标记
     pub start_value: Vec<f32>,  // 起始值
     pub target_value: Vec<f32>, // 结束值
     pub duration: f32,          // 持续时间
     pub easing: EasingMask,     // 渐变函数
     pub op: AnimOp,             // 叠加方式
-    pub hold: u32,             // 动画结束后是否保持最后值
+    pub hold: u32,              // 动画结束后是否保持最后值
     pub delay: f32,             // 延迟时间
     pub loop_count: u32,        // 循环次数，0 = 无限
     pub ping_pong: u32,         // 往返动画
     pub on_complete: u32,       // 完成回调，参数 panel_id
 }
 
-
 impl TransformAnimFieldInfo {
     /// 拆分多位 field_id，生成 GPU 用偏移指针
     /// cache_start_offset: 动画缓存起始偏移
-           ///
-           /// 拆分多位 field_id，并生成 GPU buffer 原始 f32 数组
+    ///
+    /// 拆分多位 field_id，并生成 GPU buffer 原始 f32 数组
     pub fn split_write_field(&self, panel_id: u32) -> Vec<AnimtionFieldOffsetPtr> {
-           let mut result = Vec::new();
-           let mut mask = self.field_id;
-           let mut bit_index = 0;
-           let mut value_index = 0;
+        let mut result = Vec::new();
+        let mut mask = self.field_id;
+        let mut bit_index = 0;
+        let mut value_index = 0;
 
-           while mask != 0 {
-               if mask & 1 != 0 {
-                   result.push(AnimtionFieldOffsetPtr {
-                       field_id: 1 << bit_index,
-                       start_value: self.start_value[value_index],
-                       target_value: self.target_value[value_index],
-                       elapsed: 0.0,
-                       duration: self.duration,
-                       op: self.op.bits(),
-                       hold: self.hold,
-                       delay: self.delay,
-                       loop_count: self.loop_count,
-                       ping_pong: self.ping_pong,
-                       on_complete: self.on_complete,
-                       panel_id,
-                       death: 0,
-                       easy_fn: self.easing.bits(),
-                       _pad: [0],
-                   });
-               
-                   value_index += 1;
-               }
-           
-               mask >>= 1;
-               bit_index += 1;
-           }
-       
-           result
+        while mask != 0 {
+            if mask & 1 != 0 {
+                result.push(AnimtionFieldOffsetPtr {
+                    field_id: 1 << bit_index,
+                    start_value: self.start_value[value_index],
+                    target_value: self.target_value[value_index],
+                    elapsed: 0.0,
+                    duration: self.duration,
+                    op: self.op.bits(),
+                    hold: self.hold,
+                    delay: self.delay,
+                    loop_count: self.loop_count,
+                    ping_pong: self.ping_pong,
+                    on_complete: self.on_complete,
+                    panel_id,
+                    death: 0,
+                    easy_fn: self.easing.bits(),
+                    _pad: [0],
+                });
+
+                value_index += 1;
+            }
+
+            mask >>= 1;
+            bit_index += 1;
         }
+
+        result
+    }
 }
 
 //这里是每个实例 分配一个GPU线程
@@ -357,25 +374,24 @@ impl TransformAnimFieldInfo {
 //但是实际上分拆N个AnimtionFieldOffsetPtr
 //我们就可以方便的去调用buffer
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug,Default)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct AnimtionFieldOffsetPtr {
-    pub field_id: u32,        // 字段标识
-    pub start_value: f32,     // 起始值
-    pub target_value: f32,    // 目标值
-    pub elapsed: f32,         // 已经过的时间
-    pub duration: f32,        // 动画持续时间
-    pub op: u32,              // 操作类型（SET/ADD/MUL/…）
-    pub hold: u32,            // hold 时间
-    pub delay: f32,           // 延迟时间
-    pub loop_count: u32,      // 循环次数
-    pub ping_pong: u32,       // 往返标记
-    pub on_complete: u32,     // 回调标识
-    pub panel_id: u32,        // Panel ID
-    pub death: u32,           // 是否结束
-    pub easy_fn: u32,         // easing 函数标识
-    pub _pad: [u32; 1],       // 补齐16字节对齐
+    pub field_id: u32,     // 字段标识
+    pub start_value: f32,  // 起始值
+    pub target_value: f32, // 目标值
+    pub elapsed: f32,      // 已经过的时间
+    pub duration: f32,     // 动画持续时间
+    pub op: u32,           // 操作类型（SET/ADD/MUL/…）
+    pub hold: u32,         // hold 时间
+    pub delay: f32,        // 延迟时间
+    pub loop_count: u32,   // 循环次数
+    pub ping_pong: u32,    // 往返标记
+    pub on_complete: u32,  // 回调标识
+    pub panel_id: u32,     // Panel ID
+    pub death: u32,        // 是否结束
+    pub easy_fn: u32,      // easing 函数标识
+    pub _pad: [u32; 1],    // 补齐16字节对齐
 }
-
 
 // impl TransformAnimInfo{
 //     fn to_transform_anim(&self,start_offset:u32) -> TransformAnim{
@@ -471,7 +487,7 @@ pub struct AnimtionFieldOffsetPtr {
 //         );
 //     }
 // }
-pub struct GlobalLayout{
+pub struct GlobalLayout {
     pub global_unitform_struct: Rc<RefCell<GlobalUniform>>,
     pub global_unitform_buffer: Buffer,
     pub shared_structs: GlobalUiState,
@@ -479,7 +495,7 @@ pub struct GlobalLayout{
 }
 
 pub struct GpuUi {
-    pub kennel:Arc<RefCell<Kennel>>,
+    pub kennel: Arc<RefCell<Kennel>>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub instance_buffer: wgpu::Buffer,
@@ -504,13 +520,13 @@ pub struct GpuUi {
     pub animation_pipe_line_cahce: AnimationPipelineCache,
     pub interaction_pipeline_cache: InteractionPipelineCache,
     pub panel_interaction_trigger: PanelInteractionTrigger,
-    pub new_work_store:Option<NetworkStore>,
-    pub global_layout:Option<GlobalLayout>,
-    pub custom_wgsl:Box<[CustomWgsl;1024]>,
-    pub custom_wgsl_buffer:wgpu::Buffer,
-    pub ui_kennel_des:KennelReadDesPool<PANEL_ID>,
-    pub global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,LayerID>>>,
-    gpu_debug:RefCell<GpuDebug>,
+    pub new_work_store: Option<NetworkStore>,
+    pub global_layout: Option<GlobalLayout>,
+    pub custom_wgsl: Box<[CustomWgsl; 1024]>,
+    pub custom_wgsl_buffer: wgpu::Buffer,
+    pub ui_kennel_des: KennelReadDesPool<PANEL_ID>,
+    pub global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
+    gpu_debug: RefCell<GpuDebug>,
     indirects_len: u32,
 }
 
@@ -520,8 +536,6 @@ pub struct CustomWgsl {
     pub frag: [[f32; 4]; 16],
     pub vertex: [[f32; 4]; 16],
 }
-
-
 
 impl GpuNetWorkDes {
     /// 转成 GPU buffer
@@ -561,17 +575,17 @@ pub struct AnimationPipelineCache {
     //这个是纯排列的原始f32实际数值
     pub animtion_raw_buffer: Option<wgpu::Buffer>,
     pub animtion_raw_buffer_point: wgpu::BufferAddress,
-    pub net_work_layout:Option<wgpu::BindGroupLayout>,
-    pub net_work_bind_group:Option<wgpu::BindGroup>,
-    pub field_cahce:AnimtionFieldCache,
+    pub net_work_layout: Option<wgpu::BindGroupLayout>,
+    pub net_work_bind_group: Option<wgpu::BindGroup>,
+    pub field_cahce: AnimtionFieldCache,
 }
 
 type AnimtionIdx = u32;
 type PanelFieldBit = u32;
 type PanelIdx = u32;
 #[derive(Default)]
-struct AnimtionFieldCache{
-    pub hash:HashMap<(AnimtionIdx,PanelIdx),PanelFieldBit>
+struct AnimtionFieldCache {
+    pub hash: HashMap<(AnimtionIdx, PanelIdx), PanelFieldBit>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -775,9 +789,16 @@ impl GpuAnimationDes {
 }
 
 impl GpuUi {
-    
-   pub fn set_frag_slot(&mut self, panel_id: usize, slot: usize, value: [f32; 4], queue: &wgpu::Queue) {
-        if panel_id >= self.custom_wgsl.len() || slot >= 16 { return; }
+    pub fn set_frag_slot(
+        &mut self,
+        panel_id: usize,
+        slot: usize,
+        value: [f32; 4],
+        queue: &wgpu::Queue,
+    ) {
+        if panel_id >= self.custom_wgsl.len() || slot >= 16 {
+            return;
+        }
 
         // 更新 CPU 缓存
         self.custom_wgsl[panel_id].frag[slot] = value;
@@ -787,15 +808,19 @@ impl GpuUi {
         let frag_offset = panel_offset + (slot as wgpu::BufferAddress * 16);
 
         // 写入 GPU
-        queue.write_buffer(
-            &self.custom_wgsl_buffer,
-            frag_offset,
-            cast_slice(&[value]),
-        );
+        queue.write_buffer(&self.custom_wgsl_buffer, frag_offset, cast_slice(&[value]));
     }
 
-    pub fn set_vertex_slot(&mut self, panel_id: usize, slot: usize, value: [f32; 4], queue: &wgpu::Queue) {
-        if panel_id >= self.custom_wgsl.len() || slot >= 16 { return; }
+    pub fn set_vertex_slot(
+        &mut self,
+        panel_id: usize,
+        slot: usize,
+        value: [f32; 4],
+        queue: &wgpu::Queue,
+    ) {
+        if panel_id >= self.custom_wgsl.len() || slot >= 16 {
+            return;
+        }
 
         self.custom_wgsl[panel_id].vertex[slot] = value;
 
@@ -809,24 +834,26 @@ impl GpuUi {
         );
     }
 
-    
-
-    pub fn update_global_unifrom_time(&mut self,queue: &wgpu::Queue,dt:f32){
+    pub fn update_global_unifrom_time(&mut self, queue: &wgpu::Queue, dt: f32) {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
         unitfrom_struct.time += dt;
         let offset = offset_of!(GlobalUniform, time) as wgpu::BufferAddress;
-        queue.write_buffer(&global.global_unitform_buffer, offset, bytemuck::bytes_of(&unitfrom_struct.time));
+        queue.write_buffer(
+            &global.global_unitform_buffer,
+            offset,
+            bytemuck::bytes_of(&unitfrom_struct.time),
+        );
     }
 
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
         global_state: Arc<Mutex<GlobalState>>,
-        cpu_global_uniform:Rc<CpuGlobalUniform>,
+        cpu_global_uniform: Rc<CpuGlobalUniform>,
         window: &winit::window::Window,
-        global_hub:Arc<GlobalEventHub<ModuleEvent<Expr,LayerID>>>,
-        kennel:Arc<RefCell<Kennel>>
+        global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
+        kennel: Arc<RefCell<Kennel>>,
     ) -> Self {
         println!(
             "size = {}, align = {}",
@@ -886,7 +913,7 @@ impl GpuUi {
         });
 
         let max_layers = 32; // 或根据你的 UI 层数需求
-        
+
         let indirects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Indirect Draw Buffer"),
             size: (max_layers * std::mem::size_of::<DrawIndexedIndirect>()) as u64,
@@ -902,17 +929,16 @@ impl GpuUi {
 
         let max_animtion = 1024; // 或根据你的 UI 层数需求
 
-        let wgsl_structs = Box::new([CustomWgsl{
-                frag:[[1.0f32; 4]; 16],
-                vertex:Default::default(),
-            };1024]);
+        let wgsl_structs = Box::new(
+            [CustomWgsl {
+                frag: [[1.0f32; 4]; 16],
+                vertex: Default::default(),
+            }; 1024],
+        );
 
-        let wgsl_buffer =  device.create_buffer_init(&BufferInitDescriptor {
+        let wgsl_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Shared State"),
-            usage: 
-                 wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST // CPU 写入
-            ,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, // CPU 写入
             contents: bytemuck::cast_slice(&*wgsl_structs),
         });
 
@@ -922,17 +948,17 @@ impl GpuUi {
         Self {
             global_hub,
             kennel,
-            ui_kennel_des:KennelReadDesPool::default(),
-            gpu_debug:RefCell::new(gpu_debug),
-            custom_wgsl:wgsl_structs,
-            custom_wgsl_buffer:wgsl_buffer,
-            global_layout:Some(GlobalLayout { 
-                global_unitform_struct: cpu_global_uniform.get_struct(), 
-                global_unitform_buffer: cpu_global_uniform.get_buffer(), 
+            ui_kennel_des: KennelReadDesPool::default(),
+            gpu_debug: RefCell::new(gpu_debug),
+            custom_wgsl: wgsl_structs,
+            custom_wgsl_buffer: wgsl_buffer,
+            global_layout: Some(GlobalLayout {
+                global_unitform_struct: cpu_global_uniform.get_struct(),
+                global_unitform_buffer: cpu_global_uniform.get_buffer(),
                 shared_structs: global_shared_struct,
-                shared_buffer: shared_buffer 
+                shared_buffer: shared_buffer,
             }),
-            new_work_store:None,
+            new_work_store: None,
             ui_panel_extra_buffer: None,
             global_state,
             vertex_buffer,
@@ -968,7 +994,7 @@ impl GpuUi {
      */
     pub fn panel_extras_gpu_data(&mut self, device: &wgpu::Device) {}
 
-    pub fn update_dt(&mut self,dt:f32,queue: &wgpu::Queue){
+    pub fn update_dt(&mut self, dt: f32, queue: &wgpu::Queue) {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
@@ -980,16 +1006,16 @@ impl GpuUi {
             bytemuck::bytes_of(&dt),
         );
     }
-   
-    pub fn window_resized(&mut self, width: u32, height: u32,queue: &wgpu::Queue) {
+
+    pub fn window_resized(&mut self, width: u32, height: u32, queue: &wgpu::Queue) {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
         unitfrom_struct.screen_size = [width, height];
-        let state_offset = offset_of!(GlobalUniform,screen_size) as wgpu::BufferAddress;
+        let state_offset = offset_of!(GlobalUniform, screen_size) as wgpu::BufferAddress;
         queue.write_buffer(
             &global.global_unitform_buffer,
-             state_offset,
+            state_offset,
             bytemuck::bytes_of(&[width, height]),
         );
     }
@@ -1029,11 +1055,7 @@ impl GpuUi {
         }
     }
 
-
-    pub fn create_interaction_compute_pipeline(
-        &mut self,
-        device: &wgpu::Device,
-    ) {
+    pub fn create_interaction_compute_pipeline(&mut self, device: &wgpu::Device) {
         let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Interaction Compute Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("interaction_compute.wgsl").into()),
@@ -1118,7 +1140,6 @@ impl GpuUi {
                     },
                 ],
             });
-        
 
         let Interaction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Compute Bind Group"),
@@ -1130,7 +1151,12 @@ impl GpuUi {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.global_layout.as_ref().unwrap().global_unitform_buffer.as_entire_binding(),
+                    resource: self
+                        .global_layout
+                        .as_ref()
+                        .unwrap()
+                        .global_unitform_buffer
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1138,11 +1164,22 @@ impl GpuUi {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource:  self.gpu_debug.borrow().buffer.as_ref().unwrap().as_entire_binding(),
+                    resource: self
+                        .gpu_debug
+                        .borrow()
+                        .buffer
+                        .as_ref()
+                        .unwrap()
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: self.animation_pipe_line_cahce.panel_anim_delta_buffer.as_ref().unwrap().as_entire_binding(),
+                    resource: self
+                        .animation_pipe_line_cahce
+                        .panel_anim_delta_buffer
+                        .as_ref()
+                        .unwrap()
+                        .as_entire_binding(),
                 },
             ],
         });
@@ -1194,21 +1231,39 @@ impl GpuUi {
     }
 
     pub fn createa_animtion_compute_pipeline_two(&mut self, device: &wgpu::Device) {
-        let bind_layout = self.animation_pipe_line_cahce.net_work_layout.as_ref().unwrap();
+        let bind_layout = self
+            .animation_pipe_line_cahce
+            .net_work_layout
+            .as_ref()
+            .unwrap();
         let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Compute Bind Group"),
             layout: &bind_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.new_work_store.as_ref().unwrap().buffer_meta.as_ref().unwrap().as_entire_binding(),
+                    resource: self
+                        .new_work_store
+                        .as_ref()
+                        .unwrap()
+                        .buffer_meta
+                        .as_ref()
+                        .unwrap()
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource:  self.new_work_store.as_ref().unwrap().buffer_rels.as_ref().unwrap().as_entire_binding(),
+                    resource: self
+                        .new_work_store
+                        .as_ref()
+                        .unwrap()
+                        .buffer_rels
+                        .as_ref()
+                        .unwrap()
+                        .as_entire_binding(),
                 },
-                ]
-            });
+            ],
+        });
         self.animation_pipe_line_cahce.net_work_bind_group = Some(compute_bind_group)
     }
 
@@ -1308,35 +1363,35 @@ impl GpuUi {
             ],
         });
 
-
         // === Bind Group Layout ===
-        let net_work_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Compute Bind Group Layout"),
-            entries: &[
-                // 0️⃣ instance buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let net_work_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Compute Bind Group Layout"),
+                entries: &[
+                    // 0️⃣ instance buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // 1️⃣ shared buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // 1️⃣ shared buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
         // let net_work = self.ui_net_work.borrow();
         // let buffer_set = net_work.buffer_set.as_ref().unwrap();
 
@@ -1351,7 +1406,12 @@ impl GpuUi {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource:  self.global_layout.as_ref().unwrap().global_unitform_buffer.as_entire_binding(),
+                    resource: self
+                        .global_layout
+                        .as_ref()
+                        .unwrap()
+                        .global_unitform_buffer
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -1367,7 +1427,13 @@ impl GpuUi {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.gpu_debug.borrow().buffer.as_ref().unwrap().as_entire_binding(),
+                    resource: self
+                        .gpu_debug
+                        .borrow()
+                        .buffer
+                        .as_ref()
+                        .unwrap()
+                        .as_entire_binding(),
                 },
                 // wgpu::BindGroupEntry {
                 //     binding: 6,
@@ -1395,7 +1461,7 @@ impl GpuUi {
                 layout: Some(
                     &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("Compute Pipeline Layout"),
-                        bind_group_layouts: &[&bind_group_layout,&net_work_bind_group_layout],
+                        bind_group_layouts: &[&bind_group_layout, &net_work_bind_group_layout],
                         push_constant_ranges: &[],
                     }),
                 ),
@@ -1416,11 +1482,15 @@ impl GpuUi {
     }
 
     pub fn create_net_work_compute_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.new_work_store = Some(NetworkStore::new(device,
+        self.new_work_store = Some(NetworkStore::new(
+            device,
             &self.global_layout.as_ref().unwrap(),
-            self.animation_pipe_line_cahce.panel_anim_delta_buffer.as_ref().unwrap(),
-                        &self.instance_buffer,
-                                                self.gpu_debug.borrow().buffer.as_ref().unwrap()
+            self.animation_pipe_line_cahce
+                .panel_anim_delta_buffer
+                .as_ref()
+                .unwrap(),
+            &self.instance_buffer,
+            self.gpu_debug.borrow().buffer.as_ref().unwrap(),
         ));
     }
 
@@ -1445,7 +1515,6 @@ impl GpuUi {
         //         }
         //     );
         // }
-
 
         DownloadBuffer::read_buffer(
             device,
@@ -1488,7 +1557,7 @@ impl GpuUi {
                         )));
                     }
 
-                    if new_frame.hover_id != u32::MAX && old_frame.hover_id != new_frame.hover_id{
+                    if new_frame.hover_id != u32::MAX && old_frame.hover_id != new_frame.hover_id {
                         hub.push(CpuPanelEvent::Hover((
                             new_frame.frame,
                             UiInteractionScope {
@@ -1498,8 +1567,11 @@ impl GpuUi {
                         )));
                     }
 
-                    if(new_frame.hover_id != old_frame.hover_id ){
-                        println!("当前退出了out {:?} {:?}",old_frame.hover_id,old_frame.trigger_panel_state);
+                    if (new_frame.hover_id != old_frame.hover_id) {
+                        println!(
+                            "当前退出了out {:?} {:?}",
+                            old_frame.hover_id, old_frame.trigger_panel_state
+                        );
                         hub.push(CpuPanelEvent::OUT((
                             new_frame.frame,
                             UiInteractionScope {
@@ -1508,7 +1580,6 @@ impl GpuUi {
                             },
                         )));
                     }
-
 
                     // if new_frame.hover_id != u32::MAX {
                     //     hub.push(CpuPanelEvent::Hover((new_frame.frame, new_frame.hover_id)));
@@ -1553,7 +1624,15 @@ impl GpuUi {
             });
             // encoder.copy_buffer_to_buffer(&self.shared_buffer, 0, &self.shared_buffer_readback_buffer, 0, self.shared_buffer.size());
 
-            cpass.set_pipeline(&self.new_work_store.as_ref().unwrap().pipeline.as_ref().unwrap());
+            cpass.set_pipeline(
+                &self
+                    .new_work_store
+                    .as_ref()
+                    .unwrap()
+                    .pipeline
+                    .as_ref()
+                    .unwrap(),
+            );
             cpass.set_bind_group(0, &self.new_work_store.as_ref().unwrap().bind_group, &[]);
             let net_work_count = self.new_work_store.as_ref().unwrap().panels_ref.len() as u32;
             let workgroups = (net_work_count + 63) / 64;
@@ -1773,7 +1852,7 @@ impl GpuUi {
             label: Some("UI Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ui.wgsl").into()),
         });
-        
+
         let mut kennel_ref = self.kennel.borrow_mut();
         if kennel_ref.render_binding_resources().is_none() {
             kennel_ref.reserve_render_layers(device, 256);
@@ -1783,13 +1862,12 @@ impl GpuUi {
             .rebuild_render_bindings(device, queue)
             .expect("kennel render bindings");
 
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("UI Pipeline Layout"),
             bind_group_layouts: &[
                 &self.render_bind_group_layout.clone().unwrap(),
                 &self.texture_bind_group_layout.clone().unwrap(),
-                &kennel_bind.bind_group_layout
+                &kennel_bind.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -1820,97 +1898,93 @@ impl GpuUi {
                     wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Panel>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
-                      attributes: &[
-        // === Block 1 ===
-        wgpu::VertexAttribute {
-            offset: 0,
-            shader_location: 2,
-            format: wgpu::VertexFormat::Float32x2, // position
-        },
-        wgpu::VertexAttribute {
-            offset: 8,
-            shader_location: 3,
-            format: wgpu::VertexFormat::Float32x2, // size
-        },
-
-        // === Block 2 ===
-        wgpu::VertexAttribute {
-            offset: 16,
-            shader_location: 4,
-            format: wgpu::VertexFormat::Float32x2, // uv_offset
-        },
-        wgpu::VertexAttribute {
-            offset: 24,
-            shader_location: 5,
-            format: wgpu::VertexFormat::Float32x2, // uv_scale
-        },
-
-        // === Block 3 ===
-        wgpu::VertexAttribute {
-            offset: 32,
-            shader_location: 6,
-            format: wgpu::VertexFormat::Uint32, // z_index
-        },
-        wgpu::VertexAttribute {
-            offset: 36,
-            shader_location: 7,
-            format: wgpu::VertexFormat::Uint32, // pass_through
-        },
-        wgpu::VertexAttribute {
-            offset: 40,
-            shader_location: 8,
-            format: wgpu::VertexFormat::Uint32, // id
-        },
-        wgpu::VertexAttribute {
-            offset: 44,
-            shader_location: 9,
-            format: wgpu::VertexFormat::Uint32, // interaction
-        },
-
-        // === Block 4 ===
-        wgpu::VertexAttribute {
-            offset: 48,
-            shader_location: 10,
-            format: wgpu::VertexFormat::Uint32, // event_mask
-        },
-        wgpu::VertexAttribute {
-            offset: 52,
-            shader_location: 11,
-            format: wgpu::VertexFormat::Uint32, // state_mask
-        },
-        wgpu::VertexAttribute {
-            offset: 56,
-            shader_location: 12,
-            format: wgpu::VertexFormat::Float32, // transparent
-        },
-        wgpu::VertexAttribute {
-            offset: 60,
-            shader_location: 13,
-            format: wgpu::VertexFormat::Uint32, // texture_id
-        },
-
-        // === Block 5 ===
-        wgpu::VertexAttribute {
-            offset: 64,
-            shader_location: 14,
-            format: wgpu::VertexFormat::Uint32, // state
-        },
-        wgpu::VertexAttribute {
-            offset: 68,
-            shader_location: 15,
-            format: wgpu::VertexFormat::Uint32, // pad[0]
-        },
-        wgpu::VertexAttribute {
-            offset: 72,
-            shader_location: 16,
-            format: wgpu::VertexFormat::Uint32, // pad[1]
-        },
-        wgpu::VertexAttribute {
-            offset: 76,
-            shader_location: 17,
-            format: wgpu::VertexFormat::Uint32, // pad[2]
-        },
-    ],
+                        attributes: &[
+                            // === Block 1 ===
+                            wgpu::VertexAttribute {
+                                offset: 0,
+                                shader_location: 2,
+                                format: wgpu::VertexFormat::Float32x2, // position
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 8,
+                                shader_location: 3,
+                                format: wgpu::VertexFormat::Float32x2, // size
+                            },
+                            // === Block 2 ===
+                            wgpu::VertexAttribute {
+                                offset: 16,
+                                shader_location: 4,
+                                format: wgpu::VertexFormat::Float32x2, // uv_offset
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 24,
+                                shader_location: 5,
+                                format: wgpu::VertexFormat::Float32x2, // uv_scale
+                            },
+                            // === Block 3 ===
+                            wgpu::VertexAttribute {
+                                offset: 32,
+                                shader_location: 6,
+                                format: wgpu::VertexFormat::Uint32, // z_index
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 36,
+                                shader_location: 7,
+                                format: wgpu::VertexFormat::Uint32, // pass_through
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 40,
+                                shader_location: 8,
+                                format: wgpu::VertexFormat::Uint32, // id
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 44,
+                                shader_location: 9,
+                                format: wgpu::VertexFormat::Uint32, // interaction
+                            },
+                            // === Block 4 ===
+                            wgpu::VertexAttribute {
+                                offset: 48,
+                                shader_location: 10,
+                                format: wgpu::VertexFormat::Uint32, // event_mask
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 52,
+                                shader_location: 11,
+                                format: wgpu::VertexFormat::Uint32, // state_mask
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 56,
+                                shader_location: 12,
+                                format: wgpu::VertexFormat::Float32, // transparent
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 60,
+                                shader_location: 13,
+                                format: wgpu::VertexFormat::Uint32, // texture_id
+                            },
+                            // === Block 5 ===
+                            wgpu::VertexAttribute {
+                                offset: 64,
+                                shader_location: 14,
+                                format: wgpu::VertexFormat::Uint32, // state
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 68,
+                                shader_location: 15,
+                                format: wgpu::VertexFormat::Uint32, // pad[0]
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 72,
+                                shader_location: 16,
+                                format: wgpu::VertexFormat::Uint32, // pad[1]
+                            },
+                            wgpu::VertexAttribute {
+                                offset: 76,
+                                shader_location: 17,
+                                format: wgpu::VertexFormat::Uint32, // pad[2]
+                            },
+                        ],
                     },
                 ],
                 compilation_options: Default::default(),
@@ -1978,8 +2052,6 @@ impl GpuUi {
                     },
                     count: None,
                 },
-
-
             ],
         });
 
@@ -1989,21 +2061,35 @@ impl GpuUi {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource:  self.global_layout.as_ref().unwrap().shared_buffer.as_entire_binding(),
+                    resource: self
+                        .global_layout
+                        .as_ref()
+                        .unwrap()
+                        .shared_buffer
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource:  self.global_layout.as_ref().unwrap().global_unitform_buffer.as_entire_binding(),
+                    resource: self
+                        .global_layout
+                        .as_ref()
+                        .unwrap()
+                        .global_unitform_buffer
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource:  self.global_layout.as_ref().unwrap().shared_buffer.as_entire_binding(),
+                    resource: self
+                        .global_layout
+                        .as_ref()
+                        .unwrap()
+                        .shared_buffer
+                        .as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource:  self.custom_wgsl_buffer.as_entire_binding(),
+                    resource: self.custom_wgsl_buffer.as_entire_binding(),
                 },
-
             ],
         });
 
@@ -2013,121 +2099,128 @@ impl GpuUi {
         // 🧱 5️⃣ 保存结果到 GPU UI 结构中
     }
 
- pub fn create_texture_bind_layout(&mut self, device: &Device, queue: &wgpu::Queue) {
-    // 1️⃣ 上传所有 atlas 到 GPU（保持不变）
-    for (_, atlas) in self.ui_texture_map.data.iter_mut() {
-        atlas.upload_to_gpu(device, queue);
-    }
+    pub fn create_texture_bind_layout(&mut self, device: &Device, queue: &wgpu::Queue) {
+        // 1️⃣ 上传所有 atlas 到 GPU（保持不变）
+        for (_, atlas) in self.ui_texture_map.data.iter_mut() {
+            atlas.upload_to_gpu(device, queue);
+        }
 
-    // 2️⃣ 按稳定顺序收集 atlas keys
-    let mut atlas_keys: Vec<u32> = self.ui_texture_map.data.keys().cloned().collect();
-    atlas_keys.sort_unstable();
+        // 2️⃣ 按稳定顺序收集 atlas keys
+        let mut atlas_keys: Vec<u32> = self.ui_texture_map.data.keys().cloned().collect();
+        atlas_keys.sort_unstable();
 
-    // 3️⃣ 按相同顺序构建 texture_views & samplers，并记录 atlas -> slot 映射
-    let mut texture_views = Vec::new();
-    let mut samplers = Vec::new();
-    let mut atlas_slot_map: HashMap<u32, u32> = HashMap::new(); // atlas_id -> slot_index
+        // 3️⃣ 按相同顺序构建 texture_views & samplers，并记录 atlas -> slot 映射
+        let mut texture_views = Vec::new();
+        let mut samplers = Vec::new();
+        let mut atlas_slot_map: HashMap<u32, u32> = HashMap::new(); // atlas_id -> slot_index
 
-    for (slot, atlas_key) in atlas_keys.iter().enumerate() {
-        if let Some(atlas) = self.ui_texture_map.data.get(atlas_key) {
-            if let (Some(view), Some(sampler)) = (&atlas.texture_view, &atlas.sampler) {
-                atlas_slot_map.insert(*atlas_key, slot as u32);
-                texture_views.push(view.clone()); // clone the view handle
-                samplers.push(sampler.clone());
-            } else {
-                // atlas 未上传成功或没有视图/采样器，跳过（或处理错误）
-                eprintln!("atlas {} missing view/sampler, skipping", atlas_key);
+        for (slot, atlas_key) in atlas_keys.iter().enumerate() {
+            if let Some(atlas) = self.ui_texture_map.data.get(atlas_key) {
+                if let (Some(view), Some(sampler)) = (&atlas.texture_view, &atlas.sampler) {
+                    atlas_slot_map.insert(*atlas_key, slot as u32);
+                    texture_views.push(view.clone()); // clone the view handle
+                    samplers.push(sampler.clone());
+                } else {
+                    // atlas 未上传成功或没有视图/采样器，跳过（或处理错误）
+                    eprintln!("atlas {} missing view/sampler, skipping", atlas_key);
+                }
             }
         }
-    }
 
-    if texture_views.is_empty() || samplers.is_empty() {
-        eprintln!("没有找到纹理或采样器，BindGroup 将不会创建");
-        return;
-    }
-
-    // 4️⃣ 创建 BindGroupLayout（binding 0: texture array, 1: sampler array, 2: subimage storage）
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("UI Texture BindGroup Layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                },
-                count: Some(std::num::NonZeroU32::new(texture_views.len() as u32).unwrap()),
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: Some(std::num::NonZeroU32::new(samplers.len() as u32).unwrap()),
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    self.texture_bind_group_layout = Some(bind_group_layout);
-
-let mut gpu_sub_image_structs: Vec<GpuUiTextureInfo> =
-    vec![GpuUiTextureInfo::default(); self.ui_texture_map.curr_ui_texture_info_index as usize];
-
-for atlas_key in atlas_keys.iter() {
-    if let Some(atlas) = self.ui_texture_map.data.get(atlas_key) {
-        let slot = atlas_slot_map.get(atlas_key).cloned().unwrap_or(0u32);
-
-        for sub_image in atlas.map.values() {
-            let mut gpu_struct = sub_image.to_gpu_struct();
-            gpu_struct.parent_index = slot;
-
-            // 按 UiTextureInfo.index 放入正确位置
-            gpu_sub_image_structs[sub_image.index as usize] = gpu_struct;
+        if texture_views.is_empty() || samplers.is_empty() {
+            eprintln!("没有找到纹理或采样器，BindGroup 将不会创建");
+            return;
         }
+
+        // 4️⃣ 创建 BindGroupLayout（binding 0: texture array, 1: sampler array, 2: subimage storage）
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("UI Texture BindGroup Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: Some(std::num::NonZeroU32::new(texture_views.len() as u32).unwrap()),
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: Some(std::num::NonZeroU32::new(samplers.len() as u32).unwrap()),
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        self.texture_bind_group_layout = Some(bind_group_layout);
+
+        let mut gpu_sub_image_structs: Vec<GpuUiTextureInfo> = vec![
+            GpuUiTextureInfo::default();
+            self.ui_texture_map.curr_ui_texture_info_index
+                as usize
+        ];
+
+        for atlas_key in atlas_keys.iter() {
+            if let Some(atlas) = self.ui_texture_map.data.get(atlas_key) {
+                let slot = atlas_slot_map.get(atlas_key).cloned().unwrap_or(0u32);
+
+                for sub_image in atlas.map.values() {
+                    let mut gpu_struct = sub_image.to_gpu_struct();
+                    gpu_struct.parent_index = slot;
+
+                    // 按 UiTextureInfo.index 放入正确位置
+                    gpu_sub_image_structs[sub_image.index as usize] = gpu_struct;
+                }
+            }
+        }
+
+        // 6️⃣ 创建 GPU buffer（storage）
+        let gpu_sub_image_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("UI SubImage Structs"),
+            contents: bytemuck::cast_slice(&gpu_sub_image_structs),
+            usage: wgpu::BufferUsages::STORAGE, // 如需 CPU 更新，可加 COPY_DST
+        });
+        let texture_view_refs: Vec<&wgpu::TextureView> = texture_views.iter().collect();
+        let samplers_refs: Vec<&wgpu::Sampler> = samplers.iter().collect();
+        // 7️⃣ 创建 bind group，注意这里传入 texture_views/samplers 的 slice 要与 layout 的 count 一致
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("UI Texture Array BindGroup"),
+            layout: self.texture_bind_group_layout.as_ref().unwrap(),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::SamplerArray(&samplers_refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: gpu_sub_image_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        self.ui_texture_bind_group = Some(bind_group);
+        println!(
+            "成功创建 UI Texture BindGroup，atlas_count: {}, sub_images: {}",
+            texture_views.len(),
+            gpu_sub_image_structs.len()
+        );
     }
-}
-
-    // 6️⃣ 创建 GPU buffer（storage）
-    let gpu_sub_image_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("UI SubImage Structs"),
-        contents: bytemuck::cast_slice(&gpu_sub_image_structs),
-        usage: wgpu::BufferUsages::STORAGE, // 如需 CPU 更新，可加 COPY_DST
-    });
-    let texture_view_refs: Vec<&wgpu::TextureView> = texture_views.iter().collect();
-    let samplers_refs: Vec<&wgpu::Sampler> = samplers.iter().collect();
-    // 7️⃣ 创建 bind group，注意这里传入 texture_views/samplers 的 slice 要与 layout 的 count 一致
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("UI Texture Array BindGroup"),
-        layout: self.texture_bind_group_layout.as_ref().unwrap(),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureViewArray(&texture_view_refs),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::SamplerArray(&samplers_refs),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: gpu_sub_image_buffer.as_entire_binding(),
-            },
-        ],
-    });
-
-    self.ui_texture_bind_group = Some(bind_group);
-    println!("成功创建 UI Texture BindGroup，atlas_count: {}, sub_images: {}", texture_views.len(), gpu_sub_image_structs.len());
-}
 
     pub fn create_surface(device: &wgpu::Device, format: wgpu::TextureFormat) -> TextureView {
         let ui_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -2151,8 +2244,7 @@ for atlas_key in atlas_keys.iter() {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
-
-        unitfrom_struct.frame =  unitfrom_struct.frame.wrapping_add(1);
+        unitfrom_struct.frame = unitfrom_struct.frame.wrapping_add(1);
         self.interaction_pipeline_cache
             .gpu_interaction_struct
             .as_mut()
@@ -2165,7 +2257,7 @@ for atlas_key in atlas_keys.iter() {
                     .gpu_Interaction_buffer
                     .as_ref()
                     .unwrap(),
-                 unitfrom_struct.frame,
+                unitfrom_struct.frame,
             );
         // 计算 mouse_state 在结构体中的偏移量
 
@@ -2189,7 +2281,10 @@ for atlas_key in atlas_keys.iter() {
         let offset = (state.panel_id * panel_size as u32) as wgpu::BufferAddress;
         let state_offset = offset_of!(Panel, state) as wgpu::BufferAddress;
         let new_state_sign = state.new_state.0;
-        print!("当前状态转变为 {:?}  {:?} 偏移量位{:?}",state.panel_id,state.new_state,state_offset);
+        print!(
+            "当前状态转变为 {:?}  {:?} 偏移量位{:?}",
+            state.panel_id, state.new_state, state_offset
+        );
         queue.write_buffer(
             &self.instance_buffer,
             offset + state_offset,
@@ -2197,11 +2292,7 @@ for atlas_key in atlas_keys.iter() {
         );
     }
 
-    pub fn update_network_dirty_entries(
-        &mut self,
-        queue: &wgpu::Queue,
-        device: &Device,
-    ){
+    pub fn update_network_dirty_entries(&mut self, queue: &wgpu::Queue, device: &Device) {
         let store = self.new_work_store.as_mut().unwrap();
         store.upload_dirty_to_gpu_batch(queue);
     }
@@ -2210,8 +2301,8 @@ for atlas_key in atlas_keys.iter() {
         &mut self,
         queue: &wgpu::Queue,
         device: &Device,
-        state_mask:PanelCollectionState,
-        panel_id:u32
+        state_mask: PanelCollectionState,
+        panel_id: u32,
     ) {
         let panel_size = std::mem::size_of::<Panel>();
         let offset = (panel_id * panel_size as u32) as wgpu::BufferAddress;
@@ -2223,45 +2314,78 @@ for atlas_key in atlas_keys.iter() {
         );
     }
 
-    pub fn change_static_panel_interaction(&mut self, queue: &wgpu::Queue,panel_id:u32,state:PanelInteraction){
-        let offsets = (panel_id as wgpu::BufferAddress  * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
-        let field_offsets = offset_of!(Panel,interaction) as  wgpu::BufferAddress;
-        queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&state.bits()));
+    pub fn change_static_panel_interaction(
+        &mut self,
+        queue: &wgpu::Queue,
+        panel_id: u32,
+        state: PanelInteraction,
+    ) {
+        let offsets =
+            (panel_id as wgpu::BufferAddress * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
+        let field_offsets = offset_of!(Panel, interaction) as wgpu::BufferAddress;
+        queue.write_buffer(
+            &self.instance_buffer,
+            offsets + field_offsets,
+            bytemuck::bytes_of(&state.bits()),
+        );
     }
 
-    pub fn change_static_panel_texture(&mut self, queue: &wgpu::Queue,panel_id:u32,texture_id: u32){
-        let offsets = (panel_id as wgpu::BufferAddress  * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
-        let field_offsets = offset_of!(Panel,texture_id) as  wgpu::BufferAddress;
-        queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&texture_id));
+    pub fn change_static_panel_texture(
+        &mut self,
+        queue: &wgpu::Queue,
+        panel_id: u32,
+        texture_id: u32,
+    ) {
+        let offsets =
+            (panel_id as wgpu::BufferAddress * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
+        let field_offsets = offset_of!(Panel, texture_id) as wgpu::BufferAddress;
+        queue.write_buffer(
+            &self.instance_buffer,
+            offsets + field_offsets,
+            bytemuck::bytes_of(&texture_id),
+        );
     }
 
-    pub fn change_panel_kennel_des_idx(&mut self, queue: &wgpu::Queue,panel_id:u32,kennel_des_idx:u32){
-        let offsets = (panel_id as wgpu::BufferAddress  * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
-        let field_offsets = offset_of!(Panel,kennel_des_id) as  wgpu::BufferAddress;
-        println!("写入的kennel_des_idx panelid:{panel_id}=>{:?}",kennel_des_idx);
-        queue.write_buffer(&self.instance_buffer, offsets + field_offsets, bytemuck::bytes_of(&kennel_des_idx));
+    pub fn change_panel_kennel_des_idx(
+        &mut self,
+        queue: &wgpu::Queue,
+        panel_id: u32,
+        kennel_des_idx: u32,
+    ) {
+        let offsets =
+            (panel_id as wgpu::BufferAddress * std::mem::size_of::<Panel>() as wgpu::BufferAddress);
+        let field_offsets = offset_of!(Panel, kennel_des_id) as wgpu::BufferAddress;
+        println!(
+            "写入的kennel_des_idx panelid:{panel_id}=>{:?}",
+            kennel_des_idx
+        );
+        queue.write_buffer(
+            &self.instance_buffer,
+            offsets + field_offsets,
+            bytemuck::bytes_of(&kennel_des_idx),
+        );
     }
 
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
         for ev in self.global_hub.poll() {
             match ev {
-           mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {
-                let panel_id = parmas.idx;
-                println!("{:?}",parmas);
-                // 证明是一个顶点回读
-                if (parmas._ty & ModuleEventType::Vertex.bits()) != 0 {
-                    let link_plan_id = parmas.data;
-                    // // 计算偏移并写入缓冲区
-                    self.change_panel_kennel_des_idx(queue,panel_id,link_plan_id);
-                }
+                mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {
+                    let panel_id = parmas.idx;
+                    println!("{:?}", parmas);
+                    // 证明是一个顶点回读
+                    if (parmas._ty & ModuleEventType::Vertex.bits()) != 0 {
+                        let link_plan_id = parmas.data;
+                        // // 计算偏移并写入缓冲区
+                        self.change_panel_kennel_des_idx(queue, panel_id, link_plan_id);
+                    }
 
-                 if (parmas._ty & ModuleEventType::Frag.bits()) != 0 {
-                    let link_plan_id = parmas.data;
-                    // // 计算偏移并写入缓冲区
-                    self.change_panel_kennel_des_idx(queue,panel_id,link_plan_id);
+                    if (parmas._ty & ModuleEventType::Frag.bits()) != 0 {
+                        let link_plan_id = parmas.data;
+                        // // 计算偏移并写入缓冲区
+                        self.change_panel_kennel_des_idx(queue, panel_id, link_plan_id);
+                    }
                 }
-            }
-                _=>{}
+                _ => {}
             }
         }
     }
@@ -2270,8 +2394,8 @@ for atlas_key in atlas_keys.iter() {
     pub fn process_ui_events(&mut self, queue: &wgpu::Queue, device: &Device) {
         for ev in self.event_hub.poll() {
             match ev {
-                CpuPanelEvent::Frag((panel_id,frag_event)) =>{
-                    println!("收到自定义片段动画事件 {:?}",frag_event);
+                CpuPanelEvent::Frag((panel_id, frag_event)) => {
+                    println!("收到自定义片段动画事件 {:?}", frag_event);
                     for (callbacks) in self
                         .panel_interaction_trigger
                         .frag_callbacks
@@ -2279,11 +2403,11 @@ for atlas_key in atlas_keys.iter() {
                     {
                         for cb in callbacks.iter_mut() {
                             cb(panel_id);
-                        }   
+                        }
                     }
-                },
-                CpuPanelEvent::Vertex((panel_id,vertex)) =>{
-                    println!("收到自定义顶点动画事件 {:?}",vertex);
+                }
+                CpuPanelEvent::Vertex((panel_id, vertex)) => {
+                    println!("收到自定义顶点动画事件 {:?}", vertex);
                     for (callbacks) in self
                         .panel_interaction_trigger
                         .vertex_callbacks
@@ -2291,25 +2415,30 @@ for atlas_key in atlas_keys.iter() {
                     {
                         for cb in callbacks.iter_mut() {
                             cb(panel_id);
-                        }   
+                        }
                     }
-                },
+                }
                 CpuPanelEvent::StateTransition(state_event) => {
-    
                     let emit = self.event_hub.sender.clone();
 
-                    if state_event.state_config_des.is_open_frag{
-                        let _ = emit.send(CpuPanelEvent::Frag((state_event.panel_id,UiInteractionScope{
-                            panel_id: state_event.panel_id,
-                            state: state_event.new_state.0,
-                        })));
+                    if state_event.state_config_des.is_open_frag {
+                        let _ = emit.send(CpuPanelEvent::Frag((
+                            state_event.panel_id,
+                            UiInteractionScope {
+                                panel_id: state_event.panel_id,
+                                state: state_event.new_state.0,
+                            },
+                        )));
                     }
 
-                    if state_event.state_config_des.is_open_vertex{
-                        let _ = emit.send(CpuPanelEvent::Vertex((state_event.panel_id,UiInteractionScope{
-                            panel_id: state_event.panel_id,
-                            state: state_event.new_state.0,
-                        })));
+                    if state_event.state_config_des.is_open_vertex {
+                        let _ = emit.send(CpuPanelEvent::Vertex((
+                            state_event.panel_id,
+                            UiInteractionScope {
+                                panel_id: state_event.panel_id,
+                                state: state_event.new_state.0,
+                            },
+                        )));
                     }
 
                     println!("当前UI元素改变了状态 {:?}", state_event.new_state);
@@ -2320,23 +2449,30 @@ for atlas_key in atlas_keys.iter() {
                     for c in &state_config.open_api {
                         mask |= (*c).into(); // 将每个 Call 转成对应 bitflags 并合并
                     }
-    
-                    self.change_static_panel_interaction(queue,state_event.panel_id,mask);
 
-                    if let Some(texture_name) = state_config.texture_id{
-                        let raw_image_info = self.ui_texture_map.get_index_by_path(&texture_name).unwrap();
-                        self.change_static_panel_texture(queue,state_event.panel_id,raw_image_info.index)
-                    } 
+                    self.change_static_panel_interaction(queue, state_event.panel_id, mask);
 
-                    if let Some(pos) = state_config.pos{
+                    if let Some(texture_name) = state_config.texture_id {
+                        let raw_image_info = self
+                            .ui_texture_map
+                            .get_index_by_path(&texture_name)
+                            .unwrap();
+                        self.change_static_panel_texture(
+                            queue,
+                            state_event.panel_id,
+                            raw_image_info.index,
+                        )
+                    }
+
+                    if let Some(pos) = state_config.pos {
                         self.add_animation(
                             queue,
                             device,
                             state_event.panel_id,
                             TransformAnimFieldInfo {
                                 field_id: (PanelField::POSITION_X | PanelField::POSITION_Y).bits(),
-                                start_value: vec![0.0;2],
-                                target_value: vec![pos.x,pos.y],
+                                start_value: vec![0.0; 2],
+                                target_value: vec![pos.x, pos.y],
                                 duration: 1.0,
                                 easing: EasingMask::LINEAR,
                                 op: AnimOp::SET,
@@ -2344,20 +2480,20 @@ for atlas_key in atlas_keys.iter() {
                                 delay: 0.0,
                                 loop_count: 0,
                                 ping_pong: 0,
-                                on_complete:1,
+                                on_complete: 1,
                             },
                         );
                     }
 
-                    if let Some(size) = state_config.size{
+                    if let Some(size) = state_config.size {
                         self.add_animation(
                             queue,
                             device,
                             state_event.panel_id,
                             TransformAnimFieldInfo {
                                 field_id: (PanelField::SIZE_X | PanelField::SIZE_Y).bits(),
-                                start_value: vec![0.0;2],
-                                target_value: vec![size.x,size.y],
+                                start_value: vec![0.0; 2],
+                                target_value: vec![size.x, size.y],
                                 duration: 1.0,
                                 easing: EasingMask::LINEAR,
                                 op: AnimOp::SET,
@@ -2365,21 +2501,14 @@ for atlas_key in atlas_keys.iter() {
                                 delay: 0.0,
                                 loop_count: 0,
                                 ping_pong: 0,
-                                on_complete:1,
+                                on_complete: 1,
                             },
                         );
                     }
-
- 
                 }
 
-                CpuPanelEvent::SpecielAnim((panel_id,anim_info))=>{
-                        self.add_animation(
-                            queue,
-                            device,
-                            panel_id,
-                            anim_info
-                        );
+                CpuPanelEvent::SpecielAnim((panel_id, anim_info)) => {
+                    self.add_animation(queue, device, panel_id, anim_info);
                 }
                 CpuPanelEvent::Click((Frame, scope)) => {
                     println!("点击 panel {:?}", scope);
@@ -2403,7 +2532,6 @@ for atlas_key in atlas_keys.iter() {
                             cb(scope.panel_id);
                         }
                     }
-       
 
                     // let anim = TransformAnim {
                     //     field_id: (PanelField::SIZE_X | PanelField::SIZE_Y).bits(),
@@ -2441,7 +2569,7 @@ for atlas_key in atlas_keys.iter() {
 
                     // println!("当前给ui元素加了一个动画,元素为={}", id);
                 }
-                CpuPanelEvent::Drag((id,scope))=>{
+                CpuPanelEvent::Drag((id, scope)) => {
                     for (callbacks) in self
                         .panel_interaction_trigger
                         .drag_callbacks
@@ -2451,10 +2579,10 @@ for atlas_key in atlas_keys.iter() {
                             cb(scope.panel_id);
                         }
                     }
-                },
+                }
 
-                CpuPanelEvent::Hover((id,scope)) => {
-                    println!("当前hover {:?}",scope);
+                CpuPanelEvent::Hover((id, scope)) => {
+                    println!("当前hover {:?}", scope);
                     for (callbacks) in self
                         .panel_interaction_trigger
                         .hover_callbacks
@@ -2464,95 +2592,93 @@ for atlas_key in atlas_keys.iter() {
                             cb(scope.panel_id);
                         }
                     }
-                },
-                
-                CpuPanelEvent::OUT((id,scope)) => {
-                    for (callbacks) in self
-                        .panel_interaction_trigger
-                        .out_callbacks
-                        .get_mut(&scope)
+                }
+
+                CpuPanelEvent::OUT((id, scope)) => {
+                    for (callbacks) in self.panel_interaction_trigger.out_callbacks.get_mut(&scope)
                     {
                         for cb in callbacks.iter_mut() {
                             cb(scope.panel_id);
-                        }   
+                        }
                     }
                 }
-                CpuPanelEvent::NetWorkTransition(net_work_evnt)=>{
-                //     println!("当前有panel id 触发了关系网络事件 {:?}",net_work_evnt);
+                CpuPanelEvent::NetWorkTransition(net_work_evnt) => {
+                    //     println!("当前有panel id 触发了关系网络事件 {:?}",net_work_evnt);
 
-                    println!("网络事件 {:?}",net_work_evnt);
-                    let to_net_work_collection_id = net_work_evnt.state_config_des.insert_collection;
+                    println!("网络事件 {:?}", net_work_evnt);
+                    let to_net_work_collection_id =
+                        net_work_evnt.state_config_des.insert_collection;
 
-                    if let Some(exit_config) = net_work_evnt.state_config_des.exit_collection{
+                    if let Some(exit_config) = net_work_evnt.state_config_des.exit_collection {
                         match exit_config {
-                            mile_ui_wgsl::ExitCollectionOp::ExitAllOldCollection => {
-                            },
-                            mile_ui_wgsl::ExitCollectionOp::ExitRangeOldCollection(items) => {
-                    
-                            },
+                            mile_ui_wgsl::ExitCollectionOp::ExitAllOldCollection => {}
+                            mile_ui_wgsl::ExitCollectionOp::ExitRangeOldCollection(items) => {}
                         }
                     }
 
-
-                    if let Some(collection_id) = to_net_work_collection_id{
+                    if let Some(collection_id) = to_net_work_collection_id {
                         let store = self.new_work_store.as_mut().unwrap();
                         store.add_panel_to_collection(net_work_evnt.panel_id, collection_id);
-                        println!("有面板加入了集合{:?} {:?}",net_work_evnt.panel_id,collection_id);
+                        println!(
+                            "有面板加入了集合{:?} {:?}",
+                            net_work_evnt.panel_id, collection_id
+                        );
                     }
-                    
-                    if(to_net_work_collection_id.is_some()){
-                        self.gpu_change_ui_collection_state_raw(queue,device,PanelCollectionState::EntryCollection,net_work_evnt.panel_id);
-                        if net_work_evnt.state_config_des.immediately_anim && to_net_work_collection_id.is_some(){
 
-                           self.add_animation(
+                    if (to_net_work_collection_id.is_some()) {
+                        self.gpu_change_ui_collection_state_raw(
                             queue,
                             device,
+                            PanelCollectionState::EntryCollection,
                             net_work_evnt.panel_id,
-                            TransformAnimFieldInfo {
-                                field_id: (PanelField::AttchCollection).bits(),
-                                start_value: vec![to_net_work_collection_id.unwrap() as f32],
-                                target_value: vec![0.0],
-                                duration: 0.0,
-                                easing: EasingMask::LINEAR,
-                                op: AnimOp::Collectionimmediately,
-                                hold: 0,
-                                delay: 0.0,
-                                loop_count: 0,
-                                ping_pong: 0,
-                                on_complete:0,
-                            },
                         );
-                    }else {
-                          println!("前往的ID {:?}",to_net_work_collection_id);
+                        if net_work_evnt.state_config_des.immediately_anim
+                            && to_net_work_collection_id.is_some()
+                        {
+                            self.add_animation(
+                                queue,
+                                device,
+                                net_work_evnt.panel_id,
+                                TransformAnimFieldInfo {
+                                    field_id: (PanelField::AttchCollection).bits(),
+                                    start_value: vec![to_net_work_collection_id.unwrap() as f32],
+                                    target_value: vec![0.0],
+                                    duration: 0.0,
+                                    easing: EasingMask::LINEAR,
+                                    op: AnimOp::Collectionimmediately,
+                                    hold: 0,
+                                    delay: 0.0,
+                                    loop_count: 0,
+                                    ping_pong: 0,
+                                    on_complete: 0,
+                                },
+                            );
+                        } else {
+                            println!("前往的ID {:?}", to_net_work_collection_id);
 
                             self.add_animation(
-                            queue,
-                            device,
-                            net_work_evnt.panel_id,
-                            TransformAnimFieldInfo {
-                                field_id: (PanelField::AttchCollection).bits(),
-                                start_value: vec![to_net_work_collection_id.unwrap() as f32],
-                                target_value: vec![0.0],
-                                duration: 1.0,
-                                easing: EasingMask::LINEAR,
-                                op: AnimOp::CollectionTransfrom,
-                                hold: 1,
-                                delay: 0.0,
-                                loop_count: 0,
-                                ping_pong: 0,
-                                on_complete:1,
-                            }
-                        );
+                                queue,
+                                device,
+                                net_work_evnt.panel_id,
+                                TransformAnimFieldInfo {
+                                    field_id: (PanelField::AttchCollection).bits(),
+                                    start_value: vec![to_net_work_collection_id.unwrap() as f32],
+                                    target_value: vec![0.0],
+                                    duration: 1.0,
+                                    easing: EasingMask::LINEAR,
+                                    op: AnimOp::CollectionTransfrom,
+                                    hold: 1,
+                                    delay: 0.0,
+                                    loop_count: 0,
+                                    ping_pong: 0,
+                                    on_complete: 1,
+                                },
+                            );
+                        }
                     }
-                    }
 
-                   
-                     
-
-
-
-                //    let net_work = self.ui_net_work.borrow();
-                //    let ids_struct = net_work.net_work_panel_ids.borrow();
+                    //    let net_work = self.ui_net_work.borrow();
+                    //    let ids_struct = net_work.net_work_panel_ids.borrow();
                 }
                 _ => {}
             }
@@ -2563,67 +2689,96 @@ for atlas_key in atlas_keys.iter() {
         &mut self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
-        panel_id:u32,
-        anim_info:TransformAnimFieldInfo
+        panel_id: u32,
+        anim_info: TransformAnimFieldInfo,
     ) {
         let offset_des = anim_info.split_write_field(panel_id);
         let mut index = 0;
-        let mut to_remove: Vec<(AnimtionIdx,PanelIdx)> = Vec::new();
+        let mut to_remove: Vec<(AnimtionIdx, PanelIdx)> = Vec::new();
 
         for new_field in &offset_des {
-        let new_mask = new_field.field_id;
+            let new_mask = new_field.field_id;
 
-         // 遍历 hash，找到与新动画字段冲突的旧动画
-         for ((old_idx,panel_id_ref), &old_mask) in self.animation_pipe_line_cahce.field_cahce.hash.iter() {
-             if (old_mask & new_mask) != 0 && *panel_id_ref == panel_id {
-                 let offset = offset_of!(AnimtionFieldOffsetPtr,death);
-                 // 标记旧动画死亡
-                 // self.animation_des[old_idx].death = 1;
-                 println!("old_idx 老的动画立即停止了 {} {}",old_mask,panel_id);
-                 to_remove.push((*old_idx,panel_id));
-                 queue.write_buffer(
-                     self.animation_pipe_line_cahce.animtion_field_offset_buffer.as_ref().unwrap(), 
-                     *old_idx as u64 * std::mem::size_of::<AnimtionFieldOffsetPtr>() as u64 + offset as u64, bytemuck::bytes_of(&1));
-             }
-         }
+            // 遍历 hash，找到与新动画字段冲突的旧动画
+            for ((old_idx, panel_id_ref), &old_mask) in
+                self.animation_pipe_line_cahce.field_cahce.hash.iter()
+            {
+                if (old_mask & new_mask) != 0 && *panel_id_ref == panel_id {
+                    let offset = offset_of!(AnimtionFieldOffsetPtr, death);
+                    // 标记旧动画死亡
+                    // self.animation_des[old_idx].death = 1;
+                    println!("old_idx 老的动画立即停止了 {} {}", old_mask, panel_id);
+                    to_remove.push((*old_idx, panel_id));
+                    queue.write_buffer(
+                        self.animation_pipe_line_cahce
+                            .animtion_field_offset_buffer
+                            .as_ref()
+                            .unwrap(),
+                        *old_idx as u64 * std::mem::size_of::<AnimtionFieldOffsetPtr>() as u64
+                            + offset as u64,
+                        bytemuck::bytes_of(&1),
+                    );
+                }
+            }
 
-         // // 找到新动画写入位置
-         // let new_idx = self.animation_des.len();
-         // self.animation_des.push(*new_field);
-         let id = self.animation_pipe_line_cahce.gpu_animation_des.animation_count  + index;
-         self.animation_pipe_line_cahce.field_cahce.hash
-             .entry((id,panel_id))
-             .and_modify(|m| *m |= new_mask)
-             .or_insert(new_mask);
-         index += 1;
-         // 可选：立即写入 GPU buffer
-        // self.write_anim_to_gpu(queue, device, new_idx);
-    }
+            // // 找到新动画写入位置
+            // let new_idx = self.animation_des.len();
+            // self.animation_des.push(*new_field);
+            let id = self
+                .animation_pipe_line_cahce
+                .gpu_animation_des
+                .animation_count
+                + index;
+            self.animation_pipe_line_cahce
+                .field_cahce
+                .hash
+                .entry((id, panel_id))
+                .and_modify(|m| *m |= new_mask)
+                .or_insert(new_mask);
+            index += 1;
+            // 可选：立即写入 GPU buffer
+            // self.write_anim_to_gpu(queue, device, new_idx);
+        }
 
-    for idx in to_remove {
-        self.animation_pipe_line_cahce.field_cahce.hash.remove(&(idx));
-    }
-
+        for idx in to_remove {
+            self.animation_pipe_line_cahce
+                .field_cahce
+                .hash
+                .remove(&(idx));
+        }
 
         queue.write_buffer(
-            &self.animation_pipe_line_cahce.animtion_field_offset_buffer.as_ref().unwrap(), 
-            self.animation_pipe_line_cahce.animtion_field_offset_ptr_point, 
-            bytemuck::cast_slice(offset_des.as_slice())
+            &self
+                .animation_pipe_line_cahce
+                .animtion_field_offset_buffer
+                .as_ref()
+                .unwrap(),
+            self.animation_pipe_line_cahce
+                .animtion_field_offset_ptr_point,
+            bytemuck::cast_slice(offset_des.as_slice()),
         );
 
         // queue.write_buffer(
-        //     &self.animation_pipe_line_cahce.animtion_raw_buffer.as_ref().unwrap(), 
-        //     self.animation_pipe_line_cahce.animtion_raw_buffer_point, 
+        //     &self.animation_pipe_line_cahce.animtion_raw_buffer.as_ref().unwrap(),
+        //     self.animation_pipe_line_cahce.animtion_raw_buffer_point,
         //     bytemuck::cast_slice(raw_vec.as_slice())
         // );
 
-        self.animation_pipe_line_cahce.animtion_field_offset_ptr_point += (offset_des.len() * std::mem::size_of::<AnimtionFieldOffsetPtr>()) as u64;
-        self.animation_pipe_line_cahce.gpu_animation_des.animation_count += offset_des.len() as u32;
+        self.animation_pipe_line_cahce
+            .animtion_field_offset_ptr_point +=
+            (offset_des.len() * std::mem::size_of::<AnimtionFieldOffsetPtr>()) as u64;
+        self.animation_pipe_line_cahce
+            .gpu_animation_des
+            .animation_count += offset_des.len() as u32;
 
         queue.write_buffer(
-            &self.animation_pipe_line_cahce.gpu_animation_des_buffer.as_ref().unwrap(), 
-            0, 
-            bytemuck::bytes_of(&self.animation_pipe_line_cahce.gpu_animation_des)
+            &self
+                .animation_pipe_line_cahce
+                .gpu_animation_des_buffer
+                .as_ref()
+                .unwrap(),
+            0,
+            bytemuck::bytes_of(&self.animation_pipe_line_cahce.gpu_animation_des),
         );
     }
 
@@ -2641,9 +2796,8 @@ for atlas_key in atlas_keys.iter() {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
-
         unitfrom_struct.mouse_state = mouse_state.bits();
-        
+
         let offset = offset_of!(GlobalUniform, mouse_state) as wgpu::BufferAddress;
         queue.write_buffer(
             &global.global_unitform_buffer,
@@ -2652,38 +2806,37 @@ for atlas_key in atlas_keys.iter() {
         );
     }
 
-
     pub fn mouse_press_tick_post(&mut self, queue: &wgpu::Queue) {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
-        let pressed = ( unitfrom_struct.mouse_state 
-        & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits())) != 0;
+        let pressed = (unitfrom_struct.mouse_state
+            & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits()))
+            != 0;
         if !pressed {
             // 弹起，重置按下时间
-              unitfrom_struct.press_duration = 0.0;
+            unitfrom_struct.press_duration = 0.0;
         }
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;
         // 写入 GPU buffer
         queue.write_buffer(
-            & global.global_unitform_buffer,
+            &global.global_unitform_buffer,
             offset,
-            bytemuck::bytes_of(& unitfrom_struct.press_duration),
+            bytemuck::bytes_of(&unitfrom_struct.press_duration),
         );
     }
 
     pub fn global_unifrom_clear_tick(&mut self, queue: &wgpu::Queue) {
-        
         let offset_id = offset_of!(GlobalUniform, click_layout_id) as wgpu::BufferAddress;
         let offset_z = offset_of!(GlobalUniform, click_layout_z) as wgpu::BufferAddress;
         // 写入 GPU buffer
         queue.write_buffer(
-            & self.global_layout.as_ref().unwrap().global_unitform_buffer,
+            &self.global_layout.as_ref().unwrap().global_unitform_buffer,
             offset_id,
             bytemuck::bytes_of(&0),
         );
         queue.write_buffer(
-            & self.global_layout.as_ref().unwrap().global_unitform_buffer,
+            &self.global_layout.as_ref().unwrap().global_unitform_buffer,
             offset_z,
             bytemuck::bytes_of(&0),
         );
@@ -2693,18 +2846,19 @@ for atlas_key in atlas_keys.iter() {
         let global = self.global_layout.as_mut().unwrap();
         let mut unitfrom_struct = global.global_unitform_struct.borrow_mut();
 
-        let pressed = ( unitfrom_struct.mouse_state 
-                       & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits())) != 0;
+        let pressed = (unitfrom_struct.mouse_state
+            & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits()))
+            != 0;
 
         if pressed {
             // 持续按下累加时间
-             unitfrom_struct.press_duration += 0.033;
-        } 
+            unitfrom_struct.press_duration += 0.033;
+        }
 
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;
         // 写入 GPU buffer
         queue.write_buffer(
-            & global.global_unitform_buffer,
+            &global.global_unitform_buffer,
             offset,
             bytemuck::bytes_of(&unitfrom_struct.press_duration),
         );
@@ -2718,12 +2872,12 @@ for atlas_key in atlas_keys.iter() {
         let offset = offset_of!(GlobalUniform, mouse_pos) as wgpu::BufferAddress;
         // 写入 GPU buffer
         queue.write_buffer(
-            & global.global_unitform_buffer,
+            &global.global_unitform_buffer,
             offset,
-            bytemuck::bytes_of(& unitfrom_struct.mouse_pos),
+            bytemuck::bytes_of(&unitfrom_struct.mouse_pos),
         );
     }
- pub fn read_img(&mut self, path: &Path) -> Option<UiTextureInfo> {
+    pub fn read_img(&mut self, path: &Path) -> Option<UiTextureInfo> {
         // 1️⃣ 打开图片
         let img = ImageReader::open(path).ok()?.decode().ok()?.to_rgba8();
         let (orig_w, orig_h) = img.dimensions();
@@ -2734,34 +2888,38 @@ for atlas_key in atlas_keys.iter() {
         let img_height = orig_h + PADDING * 2;
 
         // 2️⃣ 选择可容纳图片的 atlas
-        let atlas_id = if let Some((&id, _)) = self.ui_texture_map.data.iter_mut().find(|(_, atlas)| {
-            let mut x = atlas.next_x;
-            let mut y = atlas.next_y;
-            let mut row_height = atlas.row_height;
+        let atlas_id = if let Some((&id, _)) =
+            self.ui_texture_map.data.iter_mut().find(|(_, atlas)| {
+                let mut x = atlas.next_x;
+                let mut y = atlas.next_y;
+                let mut row_height = atlas.row_height;
 
-            // 模拟多次换行，直到找到放得下的位置或确定放不下
-            loop {
-                if x + img_width > atlas.width {
-                    x = 0;
-                    y += row_height;
-                    row_height = 0;
-                }
+                // 模拟多次换行，直到找到放得下的位置或确定放不下
+                loop {
+                    if x + img_width > atlas.width {
+                        x = 0;
+                        y += row_height;
+                        row_height = 0;
+                    }
 
-                if y + img_height > atlas.height {
-                    return false; // 放不下
-                }
+                    if y + img_height > atlas.height {
+                        return false; // 放不下
+                    }
 
-                if x + img_width <= atlas.width {
-                    return true; // 找到可以放的位置
+                    if x + img_width <= atlas.width {
+                        return true; // 找到可以放的位置
+                    }
                 }
-            }
-        }) {
+            }) {
             id
         } else {
             // 没有合适的 atlas，新建一个
             let atlas_size = DEFAULT_ATLAS_SIZE;
             let new_id = self.ui_texture_map.data.len() as u32;
-            println!("🆕 创建新的 Atlas #{} 尺寸 {}x{}", new_id, atlas_size, atlas_size);
+            println!(
+                "🆕 创建新的 Atlas #{} 尺寸 {}x{}",
+                new_id, atlas_size, atlas_size
+            );
 
             let atlas = TextureAtlas {
                 width: atlas_size,
@@ -2785,26 +2943,26 @@ for atlas_key in atlas_keys.iter() {
         let atlas = self.ui_texture_map.data.get_mut(&atlas_id).unwrap();
 
         // 4️⃣ 计算插入坐标（支持自动换行）
-     let (mut x, mut y) = (atlas.next_x, atlas.next_y);
-if x + img_width > atlas.width {
-    x = 0;
-    y += atlas.row_height;
-    atlas.next_y = y;
-    atlas.row_height = 0;
-}
+        let (mut x, mut y) = (atlas.next_x, atlas.next_y);
+        if x + img_width > atlas.width {
+            x = 0;
+            y += atlas.row_height;
+            atlas.next_y = y;
+            atlas.row_height = 0;
+        }
 
-// 检查是否溢出
-if y + img_height > atlas.height {
-    println!("⚠️ Atlas #{} 已满，无法放入 {:?}", atlas.index, path);
-    return None;
-}
+        // 检查是否溢出
+        if y + img_height > atlas.height {
+            println!("⚠️ Atlas #{} 已满，无法放入 {:?}", atlas.index, path);
+            return None;
+        }
 
-// overlay
-image::imageops::overlay(&mut atlas.data, &img, x.into(), y.into());
+        // overlay
+        image::imageops::overlay(&mut atlas.data, &img, x.into(), y.into());
 
-// 更新游标
-atlas.next_x = x + img_width;
-atlas.row_height = atlas.row_height.max(img_height);
+        // 更新游标
+        atlas.next_x = x + img_width;
+        atlas.row_height = atlas.row_height.max(img_height);
 
         // 7️⃣ 计算UV（去除 padding）
         let uv_min = [
@@ -2839,11 +2997,14 @@ atlas.row_height = atlas.row_height.max(img_height);
         );
         // 9️⃣ 注册缓存
         atlas.map.insert(tex_name.clone(), ui_info.clone());
-        self.ui_texture_map.path_to_index.insert(tex_name.clone(), ImageRawInfo{
-            index:tex_index ,
-            width: img_width,
-            height: img_height,
-        });
+        self.ui_texture_map.path_to_index.insert(
+            tex_name.clone(),
+            ImageRawInfo {
+                index: tex_index,
+                width: img_width,
+                height: img_height,
+            },
+        );
 
         println!(
             "✅ 插入纹理 {:?} → index:{} Atlas:{} 坐标:({}, {})",
@@ -2932,36 +3093,35 @@ atlas.row_height = atlas.row_height.max(img_height);
         );
     }
 
- pub fn add_instance(
-    &mut self,
-    _device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    mut instance: Panel,
-) -> u32 {
-    // 分配唯一 ID
-    instance.id = self.instance_pool_index;
-    let curr_id = instance.id;
+    pub fn add_instance(
+        &mut self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mut instance: Panel,
+    ) -> u32 {
+        // 分配唯一 ID
+        instance.id = self.instance_pool_index;
+        let curr_id = instance.id;
 
-    // 添加到 CPU 端实例池
-    self.instances.push(instance);
-    self.num_instances = self.instances.len() as u32;
+        // 添加到 CPU 端实例池
+        self.instances.push(instance);
+        self.num_instances = self.instances.len() as u32;
 
-    // --- 写入 GPU ---
-    let panel_size = std::mem::size_of::<Panel>() as wgpu::BufferAddress;
-    let index = (self.instances.len() - 1) as wgpu::BufferAddress;
-    let offset = index * panel_size;
+        // --- 写入 GPU ---
+        let panel_size = std::mem::size_of::<Panel>() as wgpu::BufferAddress;
+        let index = (self.instances.len() - 1) as wgpu::BufferAddress;
+        let offset = index * panel_size;
 
+        // 写入新增实例
+        queue.write_buffer(
+            &self.instance_buffer,
+            offset,
+            bytemuck::bytes_of(&self.instances[self.instances.len() - 1]),
+        );
 
-    // 写入新增实例
-    queue.write_buffer(
-        &self.instance_buffer,
-        offset,
-        bytemuck::bytes_of(&self.instances[self.instances.len() - 1]),
-    );
-
-    self.instance_pool_index += 1;
-    curr_id
-}
+        self.instance_pool_index += 1;
+        curr_id
+    }
 
     pub fn clear_curr_frame(
         queue: &wgpu::Queue,
@@ -3047,8 +3207,13 @@ atlas.row_height = atlas.row_height.max(img_height);
 // }
 
 impl Renderable for GpuUi {
-    fn render<'a>(&self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView,pass:&mut RenderPass<'a>) {
-
+    fn render<'a>(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        pass: &mut RenderPass<'a>,
+    ) {
         {
             pass.set_pipeline(&self.pipeline.as_ref().unwrap());
             let indirects_count = self.indirects_len; // 你需要记录 update_indirect_buffer 生成了多少 draw
@@ -3058,7 +3223,17 @@ impl Renderable for GpuUi {
             }
             pass.set_bind_group(0, &self.render_bind_group, &[]);
             pass.set_bind_group(1, &self.ui_texture_bind_group, &[]);
-            pass.set_bind_group(2, &self.kennel.borrow().render_binding_resources().as_ref().unwrap().bind_group, &[]);
+            pass.set_bind_group(
+                2,
+                &self
+                    .kennel
+                    .borrow()
+                    .render_binding_resources()
+                    .as_ref()
+                    .unwrap()
+                    .bind_group,
+                &[],
+            );
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -3066,7 +3241,7 @@ impl Renderable for GpuUi {
         }
         // queue.submit(Some(encoder.finish()));
     }
-    
+
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.gpu_debug.borrow_mut().debug(device, queue);
     }

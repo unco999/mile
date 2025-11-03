@@ -1,4 +1,4 @@
-// 在 gpu_ast.rs 中添加以下内容
+﻿// 鍦?gpu_ast.rs 涓坊鍔犱互涓嬪唴瀹?
 
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, CommandEncoder, ComputePass, ComputePipeline, Device, PipelineLayout, Queue, ShaderModule, util::DeviceExt
@@ -10,26 +10,26 @@ use crate::mat::{gpu_ast::{GpuAstGraph, GpuAstNode}, gpu_program::SerializableGp
 
 
 
-/// GPU 计算管线管理器
+/// GPU 璁＄畻绠＄嚎绠＄悊鍣?
 pub struct GpuComputePipeline {
 
     
-    // 缓冲区
+    // 缂撳啿鍖?
     pub node_buffer: Buffer,
     pub result_buffer: Buffer,
     import_buffer: Buffer,
     
-    // 管线资源
+    // 绠＄嚎璧勬簮
     bind_group: BindGroup,
     bind_group_layout: BindGroupLayout,
     compute_pipeline: ComputePipeline,
     
-    // 配置
+    // 閰嶇疆
     max_nodes: u32,
     max_imports: u32,
 }
 
-/// 计算管线配置
+/// 璁＄畻绠＄嚎閰嶇疆
 pub struct ComputePipelineConfig {
     pub max_nodes: u32,
     pub max_imports: u32,
@@ -46,7 +46,7 @@ impl Default for ComputePipelineConfig {
     }
 }
 
-/// 导入数据统一格式
+/// 瀵煎叆鏁版嵁缁熶竴鏍煎紡
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuImportData {
@@ -59,7 +59,7 @@ pub struct GpuImportData {
 
 impl GpuComputePipeline {
     
-    /// 创建新的 GPU 计算管线
+    /// 鍒涘缓鏂扮殑 GPU 璁＄畻绠＄嚎
     pub fn new(
         device: &Device,
         queue: &Queue,
@@ -69,15 +69,15 @@ impl GpuComputePipeline {
         let max_nodes = config.max_nodes;
         let max_imports = config.max_imports;
         
-        // 创建缓冲区
+        // 鍒涘缓缂撳啿鍖?
         let node_buffer = create_node_buffer(&device, max_nodes);
         let result_buffer = create_result_buffer(&device, max_nodes);
         let import_buffer = create_import_buffer(&device, max_imports);
         
-        // 创建绑定组布局
+        // 鍒涘缓缁戝畾缁勫竷灞€
         let bind_group_layout = create_bind_group_layout(&device);
         
-        // 创建绑定组
+        // 鍒涘缓缁戝畾缁?
         let bind_group = create_bind_group(
             &device,
             &bind_group_layout,
@@ -87,7 +87,7 @@ impl GpuComputePipeline {
             &global_buffer
         );
         
-        // 创建计算管线
+        // 鍒涘缓璁＄畻绠＄嚎
         let compute_pipeline = create_compute_pipeline(&device, &bind_group_layout, config.workgroup_size);
         
         Self {
@@ -102,23 +102,23 @@ impl GpuComputePipeline {
         }
     }
     
-    /// 更新 AST 节点数据到 GPU 缓冲区
+    /// 鏇存柊 AST 鑺傜偣鏁版嵁鍒?GPU 缂撳啿鍖?
     pub fn update_nodes(&mut self, graph: &GpuAstGraph,        device: &wgpu::Device,
         queue: &wgpu::Queue,) -> Result<(), Box<dyn std::error::Error>> {
         if graph.nodes.len() > self.max_nodes as usize {
-            return Err("节点数量超过最大限制".into());
+            return Err("测试".into());
         }
         
         self.write_nodes(queue, &graph.nodes)
     }
     
-    /// 更新导入数据到 GPU 缓冲区
+    /// 鏇存柊瀵煎叆鏁版嵁鍒?GPU 缂撳啿鍖?
     pub fn update_imports(&mut self, 
        import_data: &[GpuImportData],      
        device: &wgpu::Device,
         queue: &wgpu::Queue,) -> Result<(), Box<dyn std::error::Error>> {
         if import_data.len() > self.max_imports as usize {
-            return Err("导入数据数量超过最大限制".into());
+            return Err(".into()".into());
         }
         
         let import_bytes = bytemuck::cast_slice(import_data);
@@ -127,7 +127,7 @@ impl GpuComputePipeline {
         Ok(())
     }
     
-    /// 执行计算管线
+    /// 鎵ц璁＄畻绠＄嚎
     pub fn execute(
         &mut self
         , 
@@ -135,13 +135,13 @@ impl GpuComputePipeline {
         queue: &wgpu::Queue,
         graph: &GpuAstGraph
     ) -> Result<(), Box<dyn std::error::Error>>{
-        // 更新节点数据
+        // 鏇存柊鑺傜偣鏁版嵁
         self.update_nodes(graph,device,queue)?;
         self.dispatch(device, queue, graph.nodes.len() as u32);
         Ok(())
     }
     
-    /// 基于序列化 GPU 程序执行计算
+    /// 鍩轰簬搴忓垪鍖?GPU 绋嬪簭鎵ц璁＄畻
     pub fn execute_program(
         &mut self,
         device: &wgpu::Device,
@@ -150,41 +150,39 @@ impl GpuComputePipeline {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let gpu_nodes = program.to_gpu_nodes();
         if gpu_nodes.len() > self.max_nodes as usize {
-            return Err("节点数量超过最大限制".into());
+            return Err(".into()".into());
         }
         self.write_nodes(queue, &gpu_nodes)?;
         self.dispatch(device, queue, gpu_nodes.len() as u32);
         Ok(())
     }
     
-    /// 从 GPU 读取计算结果
+    /// 浠?GPU 璇诲彇璁＄畻缁撴灉
     fn read_results(&self, graph: &GpuAstGraph){
        
     }
     
-    /// 获取最大节点容量
+    /// 鑾峰彇鏈€澶ц妭鐐瑰閲?
     pub fn max_nodes(&self) -> u32 {
         self.max_nodes
     }
     
-    /// 获取最大导入容量
+    /// 鑾峰彇鏈€澶у鍏ュ閲?
     pub fn max_imports(&self) -> u32 {
         self.max_imports
     }
 
-    /// 直接上传任意节点数据到 GPU 缓冲
     pub fn upload_raw_nodes(
         &mut self,
         queue: &wgpu::Queue,
         nodes: &[GpuAstNode],
     ) -> Result<(), Box<dyn std::error::Error>> {
         if nodes.len() > self.max_nodes as usize {
-            return Err("节点数量超过最大限制".into());
+            return Err("严重错误".into());
         }
         self.write_nodes(queue, nodes)
     }
 
-    /// 按节点数量分派计算
     pub fn dispatch_node_count(
         &mut self,
         device: &wgpu::Device,
@@ -236,7 +234,7 @@ impl GpuComputePipeline {
     }
 }
 
-// 辅助函数
+// 杈呭姪鍑芥暟
 fn create_node_buffer(device: &Device, max_nodes: u32) -> Buffer {
     let size = (max_nodes as u64) * (GpuAstNode::SIZE as u64);
     
@@ -274,7 +272,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("Bind Group Layout"),
         entries: &[
-            // 节点缓冲区绑定
+            // 鑺傜偣缂撳啿鍖虹粦瀹?
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -285,7 +283,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // 结果缓冲区绑定
+            // 缁撴灉缂撳啿鍖虹粦瀹?
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -296,7 +294,7 @@ fn create_bind_group_layout(device: &Device) -> BindGroupLayout {
                 },
                 count: None,
             },
-            // 导入数据缓冲区绑定
+            // 瀵煎叆鏁版嵁缂撳啿鍖虹粦瀹?
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -319,7 +317,7 @@ fn create_bind_group(
     import_buffer: &Buffer,
     cpu_global_buffer:&wgpu::Buffer
 ) -> BindGroup {
-    // 创建统一常量
+    // 鍒涘缓缁熶竴甯搁噺
 
     
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -371,14 +369,14 @@ fn create_compute_pipeline(
 }
 
 fn calculate_workgroup_count(node_count: u32) -> (u32, u32, u32) {
-    let workgroup_size = 64; // 与着色器中的 workgroup_size 匹配
+    let workgroup_size = 64; // 涓庣潃鑹插櫒涓殑 workgroup_size 鍖归厤
     let workgroups = (node_count + workgroup_size - 1) / workgroup_size;
     (workgroups, 1, 1)
 }
 
 
 
-// 创建计算着色器
+// 鍒涘缓璁＄畻鐫€鑹插櫒
 fn create_compute_shader(workgroup_size: (u32, u32, u32)) -> String {
     format!(r#"
 struct GpuAstNode {{
@@ -390,7 +388,7 @@ struct GpuAstNode {{
     right_child: u32,
     import_info: u32,
     constant_value: f32,
-    pad: u32,
+    else_child: u32,
 }};
 
 
@@ -441,7 +439,6 @@ var<storage, read_write> results: array<vec4<f32>>;
 @group(0) @binding(2) 
 var<storage, read> global_uniform: GlobalUniform;
 
-// 操作符枚举
 const OP_ADD: u32 = 0x1u;
 const OP_SUBTRACT: u32 = 0x2u;
 const OP_MULTIPLY: u32 = 0x4u;
@@ -462,14 +459,13 @@ const OP_EXP: u32 = 0x10000u;
 const OP_LOG: u32 = 0x20000u;
 const OP_SQRT: u32 = 0x40000u;
 const OP_ABS: u32 = 0x80000u;
+const OP_CONDITIONAL: u32 = 0x100000u;
 
-// 数据类型枚举
 const TYPE_SCALAR: u32 = 0u;
 const TYPE_VEC2: u32 = 1u;
 const TYPE_VEC3: u32 = 2u;
 const TYPE_VEC4: u32 = 3u;
 
-// 状态标志
 const IS_COMPUTE: u32 = 0x1u;
 const IS_RENDER: u32 = 0x2u;
 const IS_LEAF: u32 = 0x10u;
@@ -592,10 +588,16 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
 
     let left_value = select(vec4<f32>(0.0), results[node.left_child], is_valid_index(node.left_child));
     let right_value = select(vec4<f32>(0.0), results[node.right_child], is_valid_index(node.right_child));
+    let else_value = select(vec4<f32>(0.0), results[node.else_child], is_valid_index(node.else_child));
 
     var result = vec4<f32>(0.0);
 
-    if (node.op <= OP_NOT_EQUAL) {{
+    if (node.op == OP_CONDITIONAL) {{
+        for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {{
+            let cond = abs(left_value[lane]) > 1e-6;
+            result[lane] = select(else_value[lane], right_value[lane], cond);
+        }}
+    }} else if (node.op <= OP_NOT_EQUAL) {{
         for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {{
             result[lane] = apply_binary_op(node.op, left_value[lane], right_value[lane]);
         }}
@@ -612,3 +614,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
 }}
 "#, workgroup_size.0, workgroup_size.1, workgroup_size.2)
 }
+
+
+

@@ -2,9 +2,9 @@ use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
 use image::{DynamicImage, GenericImage, GenericImageView, ImageReader, RgbaImage};
 use std::{collections::HashMap, path::Path};
-use wgpu::{util::DeviceExt, BufferAddress, TextureFormat};
+use wgpu::{BufferAddress, TextureFormat, util::DeviceExt};
 
-use crate::{mile_ui_wgsl::Call, Panel};
+use crate::{Panel, mile_ui_wgsl::Call};
 pub trait GpuPanelAttach: Pod + Zeroable + Send + Sync + 'static {
     /// 生成该 Panel 的扩展数据
     fn generate_for_panel(&self, idx: u32, panel: &Panel) -> Self;
@@ -16,7 +16,6 @@ pub struct PanelAttachContext<E: GpuPanelAttach> {
 }
 
 impl<E: GpuPanelAttach> PanelAttachContext<E> {
-
     pub fn create_merged_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
         let mut merged_data = Vec::with_capacity(self.panels.len());
 
@@ -55,9 +54,6 @@ bitflags! {
         const Tick  = 0b00001000;
     }
 }
-
-
-
 
 bitflags! {
     /// Interaction Mask
@@ -101,7 +97,6 @@ bitflags! {
     }
 }
 
-
 bitflags! {
     /// Panel State Mask
     pub struct PanelCollectionState: u32 {
@@ -110,7 +105,6 @@ bitflags! {
         const ExitCollection = 0b01000000;
     }
 }
-
 
 bitflags::bitflags! {
     /// Mouse Button State Mask
@@ -250,9 +244,6 @@ pub struct GpuUiCollection {
     pub reserved: u32,
 }
 
-
-
-
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
 pub struct GpuUiInfluence {
@@ -262,7 +253,7 @@ pub struct GpuUiInfluence {
     pub reserved: u32,
 }
 
-#[repr(C,align(16))]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
 pub struct GpuUiIdInfo {
     panel_id: u32,     // panel 的唯一 id
@@ -270,8 +261,6 @@ pub struct GpuUiIdInfo {
     relation_idx: u32, // 对应的 relation buffer 索引，如果不是 source 可填 0xFFFFFFFF
     padding: u32,      // 对齐到 16 字节
 }
-
-
 
 #[derive(Clone, Default)]
 pub struct UiRelationNetwork {
@@ -303,8 +292,8 @@ pub struct UiRelationGpuBuffers {
 //             device.create_buffer(&wgpu::BufferDescriptor {
 //                 label: Some(label),
 //                 size,
-//                 usage: wgpu::BufferUsages::STORAGE 
-//                      | wgpu::BufferUsages::COPY_DST 
+//                 usage: wgpu::BufferUsages::STORAGE
+//                      | wgpu::BufferUsages::COPY_DST
 //                      | wgpu::BufferUsages::COPY_SRC,
 //                 mapped_at_creation: false,
 //             })
@@ -318,9 +307,8 @@ pub struct UiRelationGpuBuffers {
 //     }
 
 //     // pub fn write_collection_buf(&self, device: &wgpu::Device,offset:BufferAddress){
-        
-//     // }
 
+//     // }
 
 //     pub fn create_gpu_buffers(&self, device: &wgpu::Device) -> UiRelationGpuBuffers {
 //         // 辅助闭包：创建 buffer
@@ -364,55 +352,55 @@ pub struct UiRelationGpuBuffers {
 //         }
 //     }
 
-    // pub fn add_relation(&mut self, relation: &UiRelation) {
-    //     let influence_start = self.influence_offset;
-    //     let influence_count = relation.relation_mask.len() as u32;
+// pub fn add_relation(&mut self, relation: &UiRelation) {
+//     let influence_start = self.influence_offset;
+//     let influence_count = relation.relation_mask.len() as u32;
 
-    //     for inf in &relation.relation_mask {
-    //         self.influences.push(GpuUiInfluence {
-    //             field: inf.field,
-    //             weight: inf.weight,
-    //             influence_type: inf.influence_type,
-    //             reserved: 0,
-    //         });
-    //     }
+//     for inf in &relation.relation_mask {
+//         self.influences.push(GpuUiInfluence {
+//             field: inf.field,
+//             weight: inf.weight,
+//             influence_type: inf.influence_type,
+//             reserved: 0,
+//         });
+//     }
 
-    //     self.influence_offset += influence_count;
+//     self.influence_offset += influence_count;
 
-    //     let id_start = self.id_offset;
-    //     self.ids.extend_from_slice(&relation.ids);
-    //     let id_count = relation.ids.len() as u32;
-    //     self.id_offset += id_count;
+//     let id_start = self.id_offset;
+//     self.ids.extend_from_slice(&relation.ids);
+//     let id_count = relation.ids.len() as u32;
+//     self.id_offset += id_count;
 
-    //     self.relations.push(GpuUiRelation {
-    //         source_collection_id: relation.source_collection_id,
-    //         target_collection_id: relation.target_collection_id,
-    //         influence_start,
-    //         influence_count,
-    //         id_start,
-    //         id_count,
-    //         reserved: 0,
-    //         padding: 0,
-    //     });
-    // }
+//     self.relations.push(GpuUiRelation {
+//         source_collection_id: relation.source_collection_id,
+//         target_collection_id: relation.target_collection_id,
+//         influence_start,
+//         influence_count,
+//         id_start,
+//         id_count,
+//         reserved: 0,
+//         padding: 0,
+//     });
+// }
 
-    // pub fn add_collection(&mut self, ui_collection: &UiCollection) -> u32 {
-    //     let collection_id = self.next_collection_id;
-    //     self.next_collection_id += 1;
+// pub fn add_collection(&mut self, ui_collection: &UiCollection) -> u32 {
+//     let collection_id = self.next_collection_id;
+//     self.next_collection_id += 1;
 
-    //     let start_index = self.id_offset;
-    //     self.ids.extend_from_slice(&ui_collection.ids);
-    //     self.id_offset += ui_collection.ids.len() as u32;
+//     let start_index = self.id_offset;
+//     self.ids.extend_from_slice(&ui_collection.ids);
+//     self.id_offset += ui_collection.ids.len() as u32;
 
-    //     self.collections.push(GpuUiCollection {
-    //         start_index,
-    //         len: ui_collection.ids.len() as u32,
-    //         sampling: ui_collection.sampling,
-    //         reserved: 0,
-    //     });
+//     self.collections.push(GpuUiCollection {
+//         start_index,
+//         len: ui_collection.ids.len() as u32,
+//         sampling: ui_collection.sampling,
+//         reserved: 0,
+//     });
 
-    //     collection_id
-    // }
+//     collection_id
+// }
 // pub fn from_ui_data(
 //     &mut self,
 //     collections: &[UiCollection],
@@ -459,7 +447,6 @@ pub struct UiRelationGpuBuffers {
 //             });
 //         }
 
-        
 //         let source_col = &gpu_collections[rel.source_collection_id as usize];
 //         let id_start = source_col.start_index;
 //         let id_count = source_col.len;
@@ -476,7 +463,6 @@ pub struct UiRelationGpuBuffers {
 //             reserved: 0,
 //             padding: 0,
 //         });
-
 
 //         let source_col = &collections[rel.source_collection_id as usize];
 //         println!("当前的源头集合 {:?}",source_col);
@@ -552,8 +538,8 @@ impl UiTextureInfo {
     pub fn to_gpu_struct(&self) -> GpuUiTextureInfo {
         GpuUiTextureInfo {
             index: self.index,
-            uv_min: [self.uv_min[0],self.uv_min[1],0.0,0.0],
-            uv_max: [self.uv_max[0],self.uv_max[1],0.0,0.0],
+            uv_min: [self.uv_min[0], self.uv_min[1], 0.0, 0.0],
+            uv_max: [self.uv_max[0], self.uv_max[1], 0.0, 0.0],
             parent_index: self.parent_index,
             _pad: [0u32; 2],
         }
@@ -568,13 +554,13 @@ pub struct Relation {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug,Default)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct GpuUiTextureInfo {
-    pub index: u32,           // 4
-    pub parent_index: u32,    // 4
-    pub _pad: [u32; 2],       // 8
-    pub uv_min: [f32; 4],     // 16 (vec2 + padding)
-    pub uv_max: [f32; 4],     // 16 (vec2 + padding)
+    pub index: u32,        // 4
+    pub parent_index: u32, // 4
+    pub _pad: [u32; 2],    // 8
+    pub uv_min: [f32; 4],  // 16 (vec2 + padding)
+    pub uv_max: [f32; 4],  // 16 (vec2 + padding)
 }
 
 #[derive(Clone)]
@@ -584,10 +570,10 @@ pub struct TextureAtlasSet {
     pub path_to_index: HashMap<String, ImageRawInfo>,
 }
 #[derive(Clone)]
-pub struct ImageRawInfo{
-    pub index:u32,
-    pub width:u32,
-    pub height:u32
+pub struct ImageRawInfo {
+    pub index: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Clone)]
@@ -617,9 +603,13 @@ impl TextureAtlasSet {
     }
 
     pub fn get_path_by_index(&self, index: u32) -> Option<String> {
-        self.path_to_index
-            .iter()
-            .find_map(|(k, v)| if v.index == index { Some(k.clone()) } else { None })
+        self.path_to_index.iter().find_map(|(k, v)| {
+            if v.index == index {
+                Some(k.clone())
+            } else {
+                None
+            }
+        })
     }
 
     /// 根据路径获取索引（若不存在则返回 None）
@@ -669,8 +659,6 @@ impl TextureAtlas {
         img: &RgbaImage,
         index: u32,
     ) -> Option<UiTextureInfo> {
-
-        
         let img_width = img.width();
         let img_height = img.height();
 

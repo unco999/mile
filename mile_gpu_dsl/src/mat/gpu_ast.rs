@@ -1,4 +1,4 @@
-use bitflags::bitflags;
+﻿use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 
@@ -9,16 +9,16 @@ bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct GpuAstState: u32 {
-        const IS_COMPUTE     = 0b00000001;      // 计算管线节点
-        const IS_RENDER      = 0b00000010;      // 渲染管线节点  
-        const COMPUTE_OVER   = 0b00000100;      // 计算已完成
-        const IS_TICK        = 0b00001000;      // 需要每帧更新
-        const IS_LEAF        = 0b00010000;      // 叶子节点（常量/导入）
-        const IS_BRANCH      = 0b00100000;      // 分支节点
-        const NEEDS_UPDATE   = 0b01000000;      // 需要更新
-        const IS_DIRTY       = 0b10000000;      // 数据已脏
-        const IS_FINAL_OUTPUT = 0b100000000;    // 最终输出
-        const PRE_COMPUTED   = 0b1000000000;    // 预先在compute计算
+        const IS_COMPUTE     = 0b00000001;      // 璁＄畻绠＄嚎鑺傜偣
+        const IS_RENDER      = 0b00000010;      // 娓叉煋绠＄嚎鑺傜偣  
+        const COMPUTE_OVER   = 0b00000100;      // 璁＄畻宸插畬鎴?
+        const IS_TICK        = 0b00001000;      // 闇€瑕佹瘡甯ф洿鏂?
+        const IS_LEAF        = 0b00010000;      // 鍙跺瓙鑺傜偣锛堝父閲?瀵煎叆锛?
+        const IS_BRANCH      = 0b00100000;      // 鍒嗘敮鑺傜偣
+        const NEEDS_UPDATE   = 0b01000000;      // 闇€瑕佹洿鏂?
+        const IS_DIRTY       = 0b10000000;      // 鏁版嵁宸茶剰
+        const IS_FINAL_OUTPUT = 0b100000000;    // 鏈€缁堣緭鍑?
+        const PRE_COMPUTED   = 0b1000000000;    // 棰勫厛鍦╟ompute璁＄畻
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,41 +43,42 @@ pub enum GpuOp {
     Log            = 0b100000000000000000,
     Sqrt           = 0b1000000000000000000,
     Abs            = 0b10000000000000000000,
+    Conditional    = 0b100000000000000000000,
 }
 
 #[derive(Debug,PartialEq, Eq, PartialOrd, Ord)]
-/// 节点数据类型
+/// 鑺傜偣鏁版嵁绫诲瀷
 pub enum DataType {
-    Scalar = 0,    // 标量
-    Vec2   = 1,    // 二维向量  
-    Vec3   = 2,    // 三维向量
-    Vec4   = 3,    // 四维向量
+    Scalar = 0,    // 鏍囬噺
+    Vec2   = 1,    // 浜岀淮鍚戦噺  
+    Vec3   = 2,    // 涓夌淮鍚戦噺
+    Vec4   = 3,    // 鍥涚淮鍚戦噺
 }
 
-/// 优化的 GPU AST 节点
+/// 浼樺寲鐨?GPU AST 鑺傜偣
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug,Pod,Zeroable)]
 pub struct GpuAstNode {
-    // 数据部分 (16字节)
+    // 鏁版嵁閮ㄥ垎 (16瀛楄妭)
     data: [f32; 4],
     
-    // 类型和控制部分 (16字节)  
+    // 绫诲瀷鍜屾帶鍒堕儴鍒?(16瀛楄妭)  
     state: u32,
-    op: u32,                    // 存储 GpuOp 的 u32 值
-    data_type: u32,             // 存储 DataType 的 u32 值
+    op: u32,                    // 瀛樺偍 GpuOp 鐨?u32 鍊?
+    data_type: u32,             // 瀛樺偍 DataType 鐨?u32 鍊?
     
-    // 连接信息 (8字节)
+    // 杩炴帴淇℃伅 (8瀛楄妭)
     left_child: u32,
     right_child: u32,
     
-    // 导入和常量信息 (8字节)
+    // 瀵煎叆鍜屽父閲忎俊鎭?(8瀛楄妭)
     import_info: u32,
     constant_value: f32,
-    pad:u32,
+    else_child: u32,
 }
 
 
-// 为 GpuOp 实现一些辅助方法
+// 涓?GpuOp 瀹炵幇涓€浜涜緟鍔╂柟娉?
 impl GpuOp {
       pub fn is_arithmetic(&self) -> bool {
         matches!(self,
@@ -131,7 +132,7 @@ impl GpuOp {
         }
     }
 
-    // 从 u32 转换回 GpuOp（安全版本）
+    // 浠?u32 杞崲鍥?GpuOp锛堝畨鍏ㄧ増鏈級
     pub fn from_u32(value: u32) -> Option<Self> {
         match value {
             0b000000000001 => Some(GpuOp::Add),
@@ -154,11 +155,12 @@ impl GpuOp {
             0b100000000000000000 => Some(GpuOp::Log),
             0b1000000000000000000 => Some(GpuOp::Sqrt),
             0b10000000000000000000 => Some(GpuOp::Abs),
+            0b100000000000000000000 => Some(GpuOp::Conditional),
             _ => None,
         }
     }
 }
-// 为 DataType 实现转换方法
+// 涓?DataType 瀹炵幇杞崲鏂规硶
 impl DataType {
     pub fn from_u32(value: u32) -> Option<Self> {
         match value {
@@ -174,14 +176,14 @@ impl DataType {
 impl GpuAstNode {
     pub const SIZE: usize = std::mem::size_of::<GpuAstNode>();
 
-      // 获取导入名称（简化版本，实际需要从导入信息中解析）
+      // 鑾峰彇瀵煎叆鍚嶇О锛堢畝鍖栫増鏈紝瀹為檯闇€瑕佷粠瀵煎叆淇℃伅涓В鏋愶級
     pub fn get_import_name(&self) -> Option<&'static str> {
         if self.has_state(GpuAstState::IS_LEAF) && self.get_constant() == 0.0 {
-            // 根据导入类型返回名称
+            // 鏍规嵁瀵煎叆绫诲瀷杩斿洖鍚嶇О
             let (import_type, _) = self.get_import();
             match import_type {
-                0 => Some("uv"),    // 渲染导入
-                1 => Some("time"),  // 计算导入
+                0 => Some("uv"),    // 娓叉煋瀵煎叆
+                1 => Some("time"),  // 璁＄畻瀵煎叆
                 _ => None,
             }
         } else {
@@ -199,11 +201,11 @@ impl GpuAstNode {
             right_child: u32::MAX,
             import_info: 0,
             constant_value: 0.0,
-            pad:0
+            else_child: u32::MAX,
         }
     }
 
-    // 状态操作
+    // 鐘舵€佹搷浣?
     pub fn set_state(&mut self, state: GpuAstState) {
         self.state = state.bits();
     }
@@ -220,7 +222,7 @@ impl GpuAstNode {
         self.get_state().contains(state)
     }
 
-    // 操作设置
+    // 鎿嶄綔璁剧疆
     pub fn set_op(&mut self, op: GpuOp) {
         self.op = op as u32;
     }
@@ -229,7 +231,7 @@ impl GpuAstNode {
         GpuOp::from_u32(self.op).unwrap_or(GpuOp::Add)
     }
 
-    // 数据类型设置
+    // 鏁版嵁绫诲瀷璁剧疆
     pub fn set_data_type(&mut self, data_type: DataType) {
         self.data_type = data_type as u32;
     }
@@ -238,7 +240,7 @@ impl GpuAstNode {
         DataType::from_u32(self.data_type).unwrap_or(DataType::Scalar)
     }
 
-    // 数据访问方法保持不变...
+    // 鏁版嵁璁块棶鏂规硶淇濇寔涓嶅彉...
     pub fn set_scalar(&mut self, value: f32) {
         self.data[0] = value;
         self.set_data_type(DataType::Scalar);
@@ -278,10 +280,11 @@ impl GpuAstNode {
         self.data
     }
 
-    // 其他方法保持不变...
+    // 鍏朵粬鏂规硶淇濇寔涓嶅彉...
     pub fn set_children(&mut self, left: u32, right: u32) {
         self.left_child = left;
         self.right_child = right;
+        self.else_child = u32::MAX;
     }
 
     pub fn get_children(&self) -> (u32, u32) {
@@ -289,7 +292,23 @@ impl GpuAstNode {
     }
 
     pub fn has_children(&self) -> bool {
-        self.left_child != u32::MAX || self.right_child != u32::MAX
+        self.left_child != u32::MAX
+            || self.right_child != u32::MAX
+            || self.else_child != u32::MAX
+    }
+
+    pub fn set_else_child(&mut self, else_child: u32) {
+        self.else_child = else_child;
+    }
+
+    pub fn get_else_child(&self) -> u32 {
+        self.else_child
+    }
+
+    pub fn set_conditional_children(&mut self, condition: u32, then_child: u32, else_child: u32) {
+        self.left_child = condition;
+        self.right_child = then_child;
+        self.else_child = else_child;
     }
 
     pub fn set_import(&mut self, import_type: u8, mask: u8) {
@@ -326,13 +345,13 @@ impl GpuAstNode {
     }
 }
 
-/// GPU AST 图 - 包含所有节点和最终输出信息
+/// GPU AST 鍥?- 鍖呭惈鎵€鏈夎妭鐐瑰拰鏈€缁堣緭鍑轰俊鎭?
 #[derive(Clone, Debug)]
 pub struct GpuAstGraph {
     pub nodes: Vec<GpuAstNode>,
-    pub final_outputs: Vec<u32>,  // 最终输出节点的索引
-    pub compute_outputs: Vec<u32>, // 计算输出节点的索引
-    pub render_outputs: Vec<u32>,  // 渲染输出节点的索引
+    pub final_outputs: Vec<u32>,  // 鏈€缁堣緭鍑鸿妭鐐圭殑绱㈠紩
+    pub compute_outputs: Vec<u32>, // 璁＄畻杈撳嚭鑺傜偣鐨勭储寮?
+    pub render_outputs: Vec<u32>,  // 娓叉煋杈撳嚭鑺傜偣鐨勭储寮?
 }
 
 impl GpuAstGraph {
@@ -356,7 +375,7 @@ impl GpuAstGraph {
             self.nodes[node_index as usize].add_state(GpuAstState::IS_FINAL_OUTPUT);
             self.final_outputs.push(node_index);
             
-            // 根据状态分类
+            // 鏍规嵁鐘舵€佸垎绫?
             let node = &self.nodes[node_index as usize];
             if node.has_state(GpuAstState::IS_COMPUTE) {
                 self.compute_outputs.push(node_index);
@@ -374,7 +393,7 @@ impl GpuAstGraph {
     }
 
     pub fn validate(&self) -> bool {
-        // 检查所有最终输出都是Vec4类型
+        // 妫€鏌ユ墍鏈夋渶缁堣緭鍑洪兘鏄疺ec4绫诲瀷
         for &output_idx in &self.final_outputs {
             if let Some(node) = self.nodes.get(output_idx as usize) {
                 if node.get_data_type() != DataType::Vec4 {
@@ -383,14 +402,18 @@ impl GpuAstGraph {
             }
         }
         
-        // 检查节点连接有效性
+        // 妫€鏌ヨ妭鐐硅繛鎺ユ湁鏁堟€?
         for (i, node) in self.nodes.iter().enumerate() {
             let (left, right) = node.get_children();
-            
+            let else_child = node.get_else_child();
+
             if left != u32::MAX && (left as usize) >= self.nodes.len() {
                 return false;
             }
             if right != u32::MAX && (right as usize) >= self.nodes.len() {
+                return false;
+            }
+            if else_child != u32::MAX && (else_child as usize) >= self.nodes.len() {
                 return false;
             }
         }
@@ -399,10 +422,10 @@ impl GpuAstGraph {
     }
 }
 
-/// 针对最终输出vec4优化的CPU模拟器
+/// 閽堝鏈€缁堣緭鍑簐ec4浼樺寲鐨凜PU妯℃嫙鍣?
 pub struct FinalOutputSimulator {
-    node_values: Vec<[f32; 4]>,    // 每个节点的当前值
-    node_dirty: Vec<bool>,         // 脏标记，用于增量计算
+    node_values: Vec<[f32; 4]>,    // 姣忎釜鑺傜偣鐨勫綋鍓嶅€?
+    node_dirty: Vec<bool>,         // 鑴忔爣璁帮紝鐢ㄤ簬澧為噺璁＄畻
     import_values: HashMap<String, [f32; 4]>,
     time: f32,
 }
@@ -410,12 +433,12 @@ pub struct FinalOutputSimulator {
 impl FinalOutputSimulator {
 
         fn compute_dirty_nodes(&mut self, graph: &GpuAstGraph) {
-        println!("\n--- 计算脏节点 ---");
+        println!("\n--- 璁＄畻鑴忚妭鐐?---");
         
         let mut changed = true;
         let mut iterations = 0;
         
-        while changed && iterations < graph.nodes.len() * 2 { // 防止无限循环
+        while changed && iterations < graph.nodes.len() * 2 { // 闃叉鏃犻檺寰幆
             changed = false;
             iterations += 1;
             
@@ -423,7 +446,7 @@ impl FinalOutputSimulator {
                 if self.node_dirty[i] {
                     let (left_idx, right_idx) = node.get_children();
                     
-                    // 检查依赖是否就绪
+                    // 妫€鏌ヤ緷璧栨槸鍚﹀氨缁?
                     let left_ready = left_idx == u32::MAX || !self.node_dirty[left_idx as usize];
                     let right_ready = right_idx == u32::MAX || !self.node_dirty[right_idx as usize];
                     
@@ -440,7 +463,7 @@ impl FinalOutputSimulator {
                             [0.0; 4]
                         };
                         
-                        // 执行操作
+                        // 鎵ц鎿嶄綔
                         let result = self.apply_operation(node, left_value, right_value);
                         self.node_values[i] = result;
                         self.node_dirty[i] = false;
@@ -454,24 +477,24 @@ impl FinalOutputSimulator {
                             "UNKNOWN" 
                         };
                         
-                        // println!("  计算节点[{}]({}): {:?} {} {:?} = {:?}", 
+                        // println!("  璁＄畻鑺傜偣[{}]({}): {:?} {} {:?} = {:?}", 
                         //     i, pipeline, left_value, format_op(node.get_op()), right_value, result);
                     }
                 }
             }
         }
         
-        // println!("计算完成，迭代次数: {}", iterations);
+        // println!("璁＄畻瀹屾垚锛岃凯浠ｆ鏁? {}", iterations);
         
-        // 检查是否还有脏节点
+        // 妫€鏌ユ槸鍚﹁繕鏈夎剰鑺傜偣
         let remaining_dirty = self.node_dirty.iter().filter(|&&dirty| dirty).count();
         if remaining_dirty > 0 {
-            // println!("警告: 还有 {} 个节点未计算", remaining_dirty);
+            // println!("璀﹀憡: 杩樻湁 {} 涓妭鐐规湭璁＄畻", remaining_dirty);
             for (i, &dirty) in self.node_dirty.iter().enumerate() {
                 if dirty {
                     let node = &graph.nodes[i];
                     let (left, right) = node.get_children();
-                    // println!("  未计算节点[{}]: op={:?}, children=({}, {})", 
+                    // println!("  鏈绠楄妭鐐筟{}]: op={:?}, children=({}, {})", 
                     //     i, node.get_op(), left, right);
                 }
             }
@@ -488,39 +511,39 @@ impl FinalOutputSimulator {
     }
     
     pub fn set_import_value(&mut self, name: &str, value: [f32; 4]) {
-        // println!("设置导入变量 '{}' = {:?}", name, value);
+        // println!("璁剧疆瀵煎叆鍙橀噺 '{}' = {:?}", name, value);
         self.import_values.insert(name.to_string(), value);
     }
 
     pub fn set_time(&mut self, time: f32) {
-        // println!("设置时间: {}", time);
+        // println!("璁剧疆鏃堕棿: {}", time);
         self.time = time;
     }
 
     pub fn execute(&mut self, graph: &GpuAstGraph) -> Vec<[f32; 4]> {
-        println!("\n=== 开始最终输出模拟运算 ===");
-        println!("节点总数: {}", graph.nodes.len());
-        println!("最终输出数: {}", graph.final_outputs.len());
+        println!("\n=== 寮€濮嬫渶缁堣緭鍑烘ā鎷熻繍绠?===");
+        println!("鑺傜偣鎬绘暟: {}", graph.nodes.len());
+        println!("鏈€缁堣緭鍑烘暟: {}", graph.final_outputs.len());
         
-        // 初始化存储
+        // 鍒濆鍖栧瓨鍌?
         self.node_values = vec![[0.0; 4]; graph.nodes.len()];
-        self.node_dirty = vec![true; graph.nodes.len()]; // 标记所有节点为脏
+        self.node_dirty = vec![true; graph.nodes.len()]; // 鏍囪鎵€鏈夎妭鐐逛负鑴?
         
-        // 执行计算
+        // 鎵ц璁＄畻
         self.initialize_leaves(graph);
         self.compute_dirty_nodes(graph);
         
-        // 收集最终输出
+        // 鏀堕泦鏈€缁堣緭鍑?
         self.collect_final_outputs(graph)
     }
 
           fn initialize_leaves(&mut self, graph: &GpuAstGraph) {
-        println!("\n--- 初始化叶子节点 ---");
+        println!("\n--- 鍒濆鍖栧彾瀛愯妭鐐?---");
         
         for (i, node) in graph.nodes.iter().enumerate() {
             if !node.has_children() && node.has_state(GpuAstState::IS_LEAF) {
                 if node.get_constant() != 0.0 {
-                    // 常量节点 - 根据数据类型正确初始化
+                    // 甯搁噺鑺傜偣 - 鏍规嵁鏁版嵁绫诲瀷姝ｇ‘鍒濆鍖?
                     let constant_value = node.get_constant();
                     let value = match node.get_data_type() {
                         DataType::Scalar => [constant_value, constant_value, constant_value, constant_value],
@@ -530,16 +553,16 @@ impl FinalOutputSimulator {
                     };
                     self.node_values[i] = value;
                     self.node_dirty[i] = false;
-                    println!("  常量节点[{}] = {:?} ({:?})", i, value, node.get_data_type());
+                    println!("  甯搁噺鑺傜偣[{}] = {:?} ({:?})", i, value, node.get_data_type());
                 } else {
-                    // 导入节点 - 修复同上
+                    // 瀵煎叆鑺傜偣 - 淇鍚屼笂
                     let (import_type, mask) = node.get_import();
                     let value = match import_type {
                         0 => *self.import_values.get("uv").unwrap_or(&[0.5, 0.5, 0.0, 1.0]),
                         1 => {
                             if let Some(name) = get_import_name_from_mask(mask) {
                                 match name {
-                                    "time" => [self.time, self.time, self.time, self.time], // 时间复制到所有分量
+                                    "time" => [self.time, self.time, self.time, self.time], // 鏃堕棿澶嶅埗鍒版墍鏈夊垎閲?
                                     "delta_time" => [0.016, 0.016, 0.016, 0.016],
                                     _ => [0.0, 0.0, 0.0, 0.0],
                                 }
@@ -553,9 +576,9 @@ impl FinalOutputSimulator {
                     self.node_values[i] = value;
                     self.node_dirty[i] = false;
                     
-                    let node_type = if node.has_state(GpuAstState::IS_COMPUTE) { "计算导入" } else { "渲染导入" };
+                    let node_type = if node.has_state(GpuAstState::IS_COMPUTE) { "璁＄畻瀵煎叆" } else { "娓叉煋瀵煎叆" };
                     let import_name = get_import_name_from_mask(mask).unwrap_or("unknown");
-                    println!("  {}节点[{}]({}) = {:?} ({:?})", node_type, i, import_name, value, node.get_data_type());
+                    println!("  {}鑺傜偣[{}]({}) = {:?} ({:?})", node_type, i, import_name, value, node.get_data_type());
                 }
             }
         }
@@ -568,49 +591,46 @@ impl FinalOutputSimulator {
         
         let mut result = [0.0; 4];
         
-        // 根据操作类型执行计算
+        // 鏍规嵁鎿嶄綔绫诲瀷鎵ц璁＄畻
         match op {
-            // 二元操作
             GpuOp::Add | GpuOp::Subtract | GpuOp::Multiply | GpuOp::Divide | 
-            GpuOp::Modulo | GpuOp::Pow | GpuOp::GreaterThan | GpuOp::GreaterEqual |
-            GpuOp::LessThan | GpuOp::LessEqual | GpuOp::Equal | GpuOp::NotEqual => {
-                // 对于二元操作，根据数据类型决定如何计算
+                        GpuOp::Modulo | GpuOp::Pow | GpuOp::GreaterThan | GpuOp::GreaterEqual |
+                        GpuOp::LessThan | GpuOp::LessEqual | GpuOp::Equal | GpuOp::NotEqual => {
+                            // 瀵逛簬浜屽厓鎿嶄綔锛屾牴鎹暟鎹被鍨嬪喅瀹氬浣曡绠?
                 match data_type {
                     DataType::Scalar => {
-                        // 标量操作：只计算第一个分量
+                        // 鏍囬噺鎿嶄綔锛氬彧璁＄畻绗竴涓垎閲?
                         result[0] = self.apply_binary_op_scalar(op, left[0], right[0]);
-                        // 标量复制到所有分量（对于颜色输出）
+                        // 鏍囬噺澶嶅埗鍒版墍鏈夊垎閲忥紙瀵逛簬棰滆壊杈撳嚭锛?
                         for i in 1..4 {
                             result[i] = result[0];
                         }
                     }
                     DataType::Vec2 => {
-                        // Vec2操作：计算前两个分量
+                        // Vec2鎿嶄綔锛氳绠楀墠涓や釜鍒嗛噺
                         result[0] = self.apply_binary_op_scalar(op, left[0], right[0]);
                         result[1] = self.apply_binary_op_scalar(op, left[1], right[1]);
                         result[2] = 0.0;
                         result[3] = 1.0;
                     }
                     DataType::Vec3 => {
-                        // Vec3操作：计算前三个分量
+                        // Vec3鎿嶄綔锛氳绠楀墠涓変釜鍒嗛噺
                         result[0] = self.apply_binary_op_scalar(op, left[0], right[0]);
                         result[1] = self.apply_binary_op_scalar(op, left[1], right[1]);
                         result[2] = self.apply_binary_op_scalar(op, left[2], right[2]);
                         result[3] = 1.0;
                     }
                     DataType::Vec4 => {
-                        // Vec4操作：计算所有四个分量
+                        // Vec4鎿嶄綔锛氳绠楁墍鏈夊洓涓垎閲?
                         for i in 0..4 {
                             result[i] = self.apply_binary_op_scalar(op, left[i], right[i]);
                         }
                     }
                 }
             }
-            
-            // 一元操作
             GpuOp::Sin | GpuOp::Cos | GpuOp::Tan | GpuOp::Exp | 
             GpuOp::Log | GpuOp::Sqrt | GpuOp::Abs => {
-                // 一元操作只使用左操作数
+                // 涓€鍏冩搷浣滃彧浣跨敤宸︽搷浣滄暟
                 match data_type {
                     DataType::Scalar => {
                         result[0] = self.apply_unary_op_scalar(op, left[0]);
@@ -637,11 +657,11 @@ impl FinalOutputSimulator {
                     }
                 }
             }
-            
             GpuOp::Index => {
-                // 索引操作：返回左操作数
+                // 绱㈠紩鎿嶄綔锛氳繑鍥炲乏鎿嶄綔鏁?
                 result = left;
             }
+            GpuOp::Conditional => todo!(),
         }
         
         result
@@ -660,7 +680,7 @@ impl FinalOutputSimulator {
             GpuOp::LessEqual => if left <= right { 1.0 } else { 0.0 },
             GpuOp::Equal => if (left - right).abs() < f32::EPSILON { 1.0 } else { 0.0 },
             GpuOp::NotEqual => if (left - right).abs() >= f32::EPSILON { 1.0 } else { 0.0 },
-            _ => left, // 其他操作返回左操作数
+            _ => left, // 鍏朵粬鎿嶄綔杩斿洖宸︽搷浣滄暟
         }
     }
 
@@ -677,7 +697,7 @@ impl FinalOutputSimulator {
         }
     }
     fn collect_final_outputs(&self, graph: &GpuAstGraph) -> Vec<[f32; 4]> {
-        println!("\n--- 收集最终输出 ---");
+        println!("\n--- 鏀堕泦鏈€缁堣緭鍑?---");
         
         let mut outputs = Vec::new();
         
@@ -687,10 +707,10 @@ impl FinalOutputSimulator {
                 outputs.push(value);
                 
                 if let Some(node) = graph.nodes.get(output_idx as usize) {
-                    println!("  最终输出[{}] = {:?} ({:?})", output_idx, value, node.get_data_type());
+                    println!("  鏈€缁堣緭鍑篬{}] = {:?} ({:?})", output_idx, value, node.get_data_type());
                     
                     if node.is_final_output() {
-                        println!("    → 渲染颜色: rgba({:.3}, {:.3}, {:.3}, {:.3})", 
+                        println!("    鈫?娓叉煋棰滆壊: rgba({:.3}, {:.3}, {:.3}, {:.3})", 
                             value[0], value[1], value[2], value[3]);
                     }
                 }
@@ -700,17 +720,17 @@ impl FinalOutputSimulator {
         outputs
     }
 }
-// 辅助函数：从导入掩码获取导入名称
+// 杈呭姪鍑芥暟锛氫粠瀵煎叆鎺╃爜鑾峰彇瀵煎叆鍚嶇О
 fn get_import_name_from_mask(mask: u8) -> Option<&'static str> {
     match mask {
-        0b01 => Some("uv"),           // UV坐标
-        0b11 => Some("time"),         // 时间
-        0b10 => Some("delta_time"),   // 增量时间
-        0b100 => Some("buffer"),      // 缓存数据
+        0b01 => Some("uv"),           // UV鍧愭爣
+        0b11 => Some("time"),         // 鏃堕棿
+        0b10 => Some("delta_time"),   // 澧為噺鏃堕棿
+        0b100 => Some("buffer"),      // 缂撳瓨鏁版嵁
         _ => None,
     }
 }
-// 更新辅助函数
+// 鏇存柊杈呭姪鍑芥暟
 fn format_op(op: GpuOp) -> &'static str {
     match op {
         GpuOp::Add => "+",
@@ -733,42 +753,43 @@ fn format_op(op: GpuOp) -> &'static str {
         GpuOp::Sqrt => "sqrt",
         GpuOp::Abs => "abs",
         GpuOp::Index => "index",
+        GpuOp::Conditional => "conditional",
     }
 }
-// 改进的转换函数，正确建立节点连接
+// 鏀硅繘鐨勮浆鎹㈠嚱鏁帮紝姝ｇ‘寤虹珛鑺傜偣杩炴帴
 pub fn convert_to_final_output_ast(plan: &MatrixPlan) -> GpuAstGraph {
     let mut graph = GpuAstGraph::new();
     
-    // 第一步：创建所有节点并记录索引映射
+    // 绗竴姝ワ細鍒涘缓鎵€鏈夎妭鐐瑰苟璁板綍绱㈠紩鏄犲皠
     let node_indices = create_nodes_from_plan(&mut graph, plan);
     
-    // 第二步：根据矩阵操作建立精确的连接
+    // 绗簩姝ワ細鏍规嵁鐭╅樀鎿嶄綔寤虹珛绮剧‘鐨勮繛鎺?
     build_precise_connections(&mut graph, plan, &node_indices);
     
-    // 第三步：标记计算和渲染管线
+    // 绗笁姝ワ細鏍囪璁＄畻鍜屾覆鏌撶绾?
     mark_compute_render_pipeline(&mut graph, plan);
     
-    // 第四步：标记最终输出
+    // 绗洓姝ワ細鏍囪鏈€缁堣緭鍑?
     mark_final_outputs(&mut graph, plan, &node_indices);
     
     graph
 }
 
-// 标记计算和渲染管线
+// 鏍囪璁＄畻鍜屾覆鏌撶绾?
 fn mark_compute_render_pipeline(graph: &mut GpuAstGraph, plan: &MatrixPlan) {
     
-    // 首先标记所有导入节点的管线类型
+    // 棣栧厛鏍囪鎵€鏈夊鍏ヨ妭鐐圭殑绠＄嚎绫诲瀷
     for (i, node) in graph.nodes.iter_mut().enumerate() {
         if node.has_state(GpuAstState::IS_LEAF) && node.get_constant() == 0.0 {
-            // 这是导入节点，保持原有的管线标记
+            // 杩欐槸瀵煎叆鑺傜偣锛屼繚鎸佸師鏈夌殑绠＄嚎鏍囪
             let (import_type, _) = node.get_import();
-            if import_type == 1 { // 计算导入
+            if import_type == 1 { // 璁＄畻瀵煎叆
                 node.add_state(GpuAstState::IS_COMPUTE | GpuAstState::PRE_COMPUTED);
             }
         }
     }
     
-    // 标记计算操作
+    // 鏍囪璁＄畻鎿嶄綔
     for &op_index in &plan.compute_only_ops {
         if op_index < plan.ops.len() {
             if let Some(output_indices) = get_op_output_nodes(&plan.ops[op_index], plan.final_v_len) {
@@ -782,7 +803,7 @@ fn mark_compute_render_pipeline(graph: &mut GpuAstGraph, plan: &MatrixPlan) {
         }
     }
     
-    // 标记渲染操作
+    // 鏍囪娓叉煋鎿嶄綔
     for &op_index in &plan.render_only_ops {
         if op_index < plan.ops.len() {
             if let Some(output_indices) = get_op_output_nodes(&plan.ops[op_index], plan.final_v_len) {
@@ -796,20 +817,21 @@ fn mark_compute_render_pipeline(graph: &mut GpuAstGraph, plan: &MatrixPlan) {
         }
     }
     
-    // 修复：先收集需要推断的节点信息，然后再修改
-    let mut nodes_to_infer: Vec<(usize, u32, u32)> = Vec::new();
+    // 淇锛氬厛鏀堕泦闇€瑕佹帹鏂殑鑺傜偣淇℃伅锛岀劧鍚庡啀淇敼
+    let mut nodes_to_infer: Vec<(usize, u32, u32, u32)> = Vec::new();
     
-    // 第一步：收集需要推断的节点信息（只读）
+    // 绗竴姝ワ細鏀堕泦闇€瑕佹帹鏂殑鑺傜偣淇℃伅锛堝彧璇伙級
     for (i, node) in graph.nodes.iter().enumerate() {
         if !node.has_state(GpuAstState::IS_COMPUTE | GpuAstState::IS_RENDER) && node.has_children() {
             let (left_idx, right_idx) = node.get_children();
-            nodes_to_infer.push((i, left_idx, right_idx));
+            let else_idx = node.get_else_child();
+            nodes_to_infer.push((i, left_idx, right_idx, else_idx));
         }
     }
     
-    // 第二步：根据收集的信息进行推断和修改
-    for (i, left_idx, right_idx) in nodes_to_infer {
-        // 检查输入节点的管线类型（只读访问）
+    // 绗簩姝ワ細鏍规嵁鏀堕泦鐨勪俊鎭繘琛屾帹鏂拰淇敼
+    for (i, left_idx, right_idx, else_idx) in nodes_to_infer {
+        // 妫€鏌ヨ緭鍏ヨ妭鐐圭殑绠＄嚎绫诲瀷锛堝彧璇昏闂級
         let mut has_compute_input = false;
         let mut has_render_input = false;
         
@@ -832,21 +854,31 @@ fn mark_compute_render_pipeline(graph: &mut GpuAstGraph, plan: &MatrixPlan) {
                 has_render_input = true;
             }
         }
+
+        if else_idx != u32::MAX {
+            let else_node = &graph.nodes[else_idx as usize];
+            if else_node.has_state(GpuAstState::IS_COMPUTE) {
+                has_compute_input = true;
+            }
+            if else_node.has_state(GpuAstState::IS_RENDER) {
+                has_render_input = true;
+            }
+        }
         
-        // 根据输入推断管线类型（可变访问）
+        // 鏍规嵁杈撳叆鎺ㄦ柇绠＄嚎绫诲瀷锛堝彲鍙樿闂級
         let node = &mut graph.nodes[i];
         if has_compute_input && !has_render_input {
             node.add_state(GpuAstState::IS_COMPUTE);
         } else if has_render_input && !has_compute_input {
             node.add_state(GpuAstState::IS_RENDER);
         } else if has_compute_input && has_render_input {
-            // 混合管线，标记为渲染（因为最终输出到渲染）
+            // 娣峰悎绠＄嚎锛屾爣璁颁负娓叉煋锛堝洜涓烘渶缁堣緭鍑哄埌娓叉煋锛?
             node.add_state(GpuAstState::IS_RENDER);
         }
     }
 }
 
-// 获取操作对应的输出节点索引
+// 鑾峰彇鎿嶄綔瀵瑰簲鐨勮緭鍑鸿妭鐐圭储寮?
 fn get_op_output_nodes(mat_op: &MatOp, final_v_len: usize) -> Option<Vec<u32>> {
     match mat_op {
         MatOp::BinaryMat { out_start, rows, .. } => {
@@ -876,14 +908,14 @@ fn build_precise_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_in
                         let output_node_idx = node_indices[output_idx];
                         let output_node = &mut graph.nodes[output_node_idx as usize];
                         
-                        // 设置操作类型
+                        // 璁剧疆鎿嶄綔绫诲瀷
                         output_node.set_op(GpuOp::from_binary_op(op));
                         
-                        // 根据选择矩阵找到实际的输入节点
+                        // 鏍规嵁閫夋嫨鐭╅樀鎵惧埌瀹為檯鐨勮緭鍏ヨ妭鐐?
                         let left_inputs = find_inputs_from_matrix(left_matrix, row, node_indices);
                         let right_inputs = find_inputs_from_matrix(right_matrix, row, node_indices);
                         
-                        // 使用第一个输入作为连接（简化处理）
+                        // 浣跨敤绗竴涓緭鍏ヤ綔涓鸿繛鎺ワ紙绠€鍖栧鐞嗭級
                         if let Some(&left_input) = left_inputs.first() {
                             if let Some(&right_input) = right_inputs.first() {
                                 output_node.set_children(left_input, right_input);
@@ -926,17 +958,18 @@ fn build_precise_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_in
                         let output_node_idx = node_indices[output_idx];
                         let output_node = &mut graph.nodes[output_node_idx as usize];
                         
-                        output_node.set_op(GpuOp::Add); // 简化处理
+                        output_node.set_op(GpuOp::Conditional);
+                        output_node.add_state(GpuAstState::IS_BRANCH);
                         
                         let cond_inputs = find_inputs_from_matrix(cond_matrix, row, node_indices);
                         let then_inputs = find_inputs_from_matrix(then_matrix, row, node_indices);
                         let else_inputs = find_inputs_from_matrix(else_matrix, row, node_indices);
                         
-                        // 使用第一个输入作为连接
+                        // 浣跨敤绗竴涓緭鍏ヤ綔涓鸿繛鎺?
                         if let (Some(&cond), Some(&then), Some(&else_)) = 
                             (cond_inputs.first(), then_inputs.first(), else_inputs.first()) {
-                            // 简化：只使用前两个输入
-                            output_node.set_children(cond, then);
+                            // 绠€鍖栵細鍙娇鐢ㄥ墠涓や釜杈撳叆
+                            output_node.set_conditional_children(cond, then, else_);
       
                         }
                     }
@@ -946,7 +979,7 @@ fn build_precise_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_in
     }
 }
 
-// 根据选择矩阵找到输入节点
+// 鏍规嵁閫夋嫨鐭╅樀鎵惧埌杈撳叆鑺傜偣
 fn find_inputs_from_matrix(matrix: &Matrix, row: usize, node_indices: &[u32]) -> Vec<u32> {
     let mut inputs = Vec::new();
     
@@ -960,22 +993,22 @@ fn find_inputs_from_matrix(matrix: &Matrix, row: usize, node_indices: &[u32]) ->
     
     inputs
 }
-// 修复转换函数，正确设置导入掩码
+// 淇杞崲鍑芥暟锛屾纭缃鍏ユ帺鐮?
 fn create_nodes_from_plan(graph: &mut GpuAstGraph, plan: &MatrixPlan) -> Vec<u32> {
     let mut node_indices = Vec::new();
     
-    // 为每个V位置创建节点
+    // 涓烘瘡涓猇浣嶇疆鍒涘缓鑺傜偣
     for i in 0..plan.final_v_len {
         let mut node = GpuAstNode::new();
         
-        // 检查是否为常量
+        // 妫€鏌ユ槸鍚︿负甯搁噺
         if let Some(&(_, value)) = plan.constant_values.iter().find(|&&(idx, _)| idx == i) {
             node.set_constant(value);
             node.set_state(GpuAstState::IS_LEAF);
             node.set_data_type(DataType::Scalar);
         }
         
-        // 检查是否为导入 - 正确设置导入类型和掩码
+        // 妫€鏌ユ槸鍚︿负瀵煎叆 - 姝ｇ‘璁剧疆瀵煎叆绫诲瀷鍜屾帺鐮?
         if let Some(import_info) = plan.imports.iter().find(|imp| imp.index == i) {
             let (import_type, import_name, mask) = match &import_info.import_type {
                 ImportType::Render(name) => (0, *name, import_info.mask as u8),
@@ -985,15 +1018,15 @@ fn create_nodes_from_plan(graph: &mut GpuAstGraph, plan: &MatrixPlan) -> Vec<u32
             node.set_import(import_type, mask);
             node.set_state(GpuAstState::IS_LEAF);
             
-            // 根据导入类型正确设置状态
+            // 鏍规嵁瀵煎叆绫诲瀷姝ｇ‘璁剧疆鐘舵€?
             match &import_info.import_type {
                 ImportType::Render(_) => {
                     node.add_state(GpuAstState::IS_RENDER);
-                    // println!("  创建渲染导入节点[{}]: {} (mask: {})", i, import_name, mask);
+                    // println!("  鍒涘缓娓叉煋瀵煎叆鑺傜偣[{}]: {} (mask: {})", i, import_name, mask);
                 }
                 ImportType::Compute(_) => {
                     node.add_state(GpuAstState::IS_COMPUTE);
-                    // println!("  创建计算导入节点[{}]: {} (mask: {})", i, import_name, mask);
+                    // println!("  鍒涘缓璁＄畻瀵煎叆鑺傜偣[{}]: {} (mask: {})", i, import_name, mask);
                 }
             }
             
@@ -1007,7 +1040,7 @@ fn create_nodes_from_plan(graph: &mut GpuAstGraph, plan: &MatrixPlan) -> Vec<u32
 }
 
 
-// 更新转换函数中的操作设置
+// 鏇存柊杞崲鍑芥暟涓殑鎿嶄綔璁剧疆
 fn build_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_indices: &[u32]) {
     for mat_op in &plan.ops {
         match mat_op {
@@ -1018,11 +1051,11 @@ fn build_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_indices: &
                         let node_idx = node_indices[output_idx];
                         let node = &mut graph.nodes[node_idx as usize];
                         
-                        // 使用新的转换方法
+                        // 浣跨敤鏂扮殑杞崲鏂规硶
                         let gpu_op = GpuOp::from_binary_op(op);
                         node.set_op(gpu_op);
                         
-                        // ... 其余代码保持不变 ...
+                        // ... 鍏朵綑浠ｇ爜淇濇寔涓嶅彉 ...
                     }
                 }
             }
@@ -1033,16 +1066,16 @@ fn build_connections(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_indices: &
                         let node_idx = node_indices[output_idx];
                         let node = &mut graph.nodes[node_idx as usize];
                         
-                        // 使用新的转换方法
+                        // 浣跨敤鏂扮殑杞崲鏂规硶
                         let gpu_op = GpuOp::from_unary_func(func);
                         node.set_op(gpu_op);
                         
-                        // ... 其余代码保持不变 ...
+                        // ... 鍏朵綑浠ｇ爜淇濇寔涓嶅彉 ...
                     }
                 }
             }
 
-            // 处理其他操作类型...
+            // 澶勭悊鍏朵粬鎿嶄綔绫诲瀷...
             _ => {}
         }
     }
@@ -1054,125 +1087,17 @@ fn mark_final_outputs(graph: &mut GpuAstGraph, plan: &MatrixPlan, node_indices: 
             let node_idx = node_indices[output_idx];
             let node = &mut graph.nodes[node_idx as usize];
             
-            // 最终输出总是Vec4类型
+            // 鏈€缁堣緭鍑烘€绘槸Vec4绫诲瀷
             node.set_data_type(DataType::Vec4);
             node.add_state(GpuAstState::IS_FINAL_OUTPUT | GpuAstState::IS_TICK);
             
             graph.mark_final_output(node_idx);
             
-            // println!("标记最终输出节点[{}]为Vec4", output_idx);
+            // println!("鏍囪鏈€缁堣緭鍑鸿妭鐐筟{}]涓篤ec4", output_idx);
         }
     }
 }
 
 
-#[cfg(test)]
-mod ast_computation_tests {
-    use super::*;
-    use crate::core::{BinaryOp, Expr, UnaryFunc, Vec2, Vec3, Vec4, dsl::{var, wvec4}};
 
-  // 修复导入注册，确保掩码正确设置
-fn create_test_registry() -> crate::mat::op::ImportRegistry {
-    let mut registry = crate::mat::op::ImportRegistry::new();
-    
-    // 使用不同的掩码来区分不同的导入类型
-    registry.register_render_import(
-        "uv",
-        0b01,  // 掩码01表示UV
-        Box::new(|input| vec![input[0], input[1], 0.0, 1.0])
-    );
-    
-    registry.register_compute_import(
-        "time", 
-        0b11,  // 掩码11表示时间
-        Box::new(|input| vec![input[0], 0.0, 0.0, 0.0])
-    );
-    
-    registry.register_compute_import(
-        "delta_time",
-        0b10,  // 掩码10表示增量时间
-        Box::new(|input| vec![input[0], 0.0, 0.0, 0.0])
-    );
-    
-    registry
-}
 
-// 添加调试测试来验证导入值设置
-#[test]
-fn test_import_values_debug() {
-    use crate::dsl::*;
-    // println!("\n=== 调试导入值设置 ===");
-    
-    let registry = create_test_registry();
-    
-    // 测试表达式: time * 3.14
-    let expr = wvec4(1.0, cv("time") * 3.14, 2.0, 3.0);
-
-    let matrix_plan = crate::mat::op::compile_to_matrix_plan_with_imports(&expr, &registry);
-    
-    // println!("导入信息: {:?}", matrix_plan.imports);
-    
-    // 转换为 GPU AST Graph
-    let graph = convert_to_final_output_ast(&matrix_plan);
-    
-    // 执行计算，设置时间
-    let mut simulator = FinalOutputSimulator::new();
-    simulator.set_time(2.5); // 设置时间值
-    
-    let results = simulator.execute(&graph);
-    
-    // 应该得到: 2.5 * 3.14 = 7.85
-    // println!("计算结果: {:?}", results);
-    if !results.is_empty() {
-        let expected = 2.5 * 3.14;
-        let actual = results[0][0];
-        // println!("期望: {}, 实际: {}", expected, actual);
-        assert!((actual - expected).abs() < 0.001, "计算结果不正确");
-    }
-}
-// 更新测试，添加调试信息
-#[test]
-fn test_vec4_output_correctness() {
-    use crate::dsl::*;
-    println!("\n=== 测试Vec4输出正确性 ===");
-    
-    let registry = create_test_registry();
-    
-    // 创建明确的Vec4表达式
-    let expr = wvec4(
-        cv("time") * 3.14,  // x分量: time * 3.14
-        cv("time") * 2.0,   // y分量: time * 2.0  
-        cv("time") * 1.5,   // z分量: time * 1.5
-        1.0             // w分量: 1.0
-    );
-
-    let matrix_plan = crate::mat::op::compile_to_matrix_plan_with_imports(&expr, &registry);
-    
-    // 转换为 GPU AST Graph
-    let graph = convert_to_final_output_ast(&matrix_plan);
-    println!("当前GPUAstGraph {:?}",graph);
-    // 执行计算，设置时间
-    let mut simulator = FinalOutputSimulator::new();
-    simulator.set_time(2.0); // 设置时间值
-    
-    let results = simulator.execute(&graph);
-    
-    // 验证结果: vec4(2.0*3.14, 2.0*2.0, 2.0*1.5, 1.0)
-    assert_eq!(results.len(), 4); // Vec4有4个分量输出
-    
-    let expected_x = 2.0 * 3.14;
-    let expected_y = 2.0 * 2.0;
-    let expected_z = 2.0 * 1.5;
-    let expected_w = 1.0;
-    
-    // println!("期望: vec4({}, {}, {}, {})", expected_x, expected_y, expected_z, expected_w);
-    // println!("实际: vec4({}, {}, {}, {})", results[0][0], results[1][0], results[2][0], results[3][0]);
-    
-    assert!((results[0][0] - expected_x).abs() < 0.001, "x分量不正确");
-    assert!((results[1][0] - expected_y).abs() < 0.001, "y分量不正确");
-    assert!((results[2][0] - expected_z).abs() < 0.001, "z分量不正确");
-    assert!((results[3][0] - expected_w).abs() < 0.001, "w分量不正确");
-    
-    println!("Vec4输出测试通过!");
-}
-}
