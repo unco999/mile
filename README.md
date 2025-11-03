@@ -1,5 +1,5 @@
 # Mile Engine 🌍
-[[使用过程]([https://www.bilibili.com/video/视频ID](https://www.bilibili.com/video/BV14n1ABvEes/))](https://www.bilibili.com/video/BV14n1ABvEes/)
+[使用过程]([https://www.bilibili.com/video/视频ID](https://www.bilibili.com/video/BV14n1ABvEes/))
 > **Language**: [English](#english-version) | [中文](#chinese-version)
 <div id="english-version">
 **Mile Engine** is a game and graphics development engine that heavily relies on GPU parallel computing.  
