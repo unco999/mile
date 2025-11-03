@@ -975,25 +975,39 @@ pub fn mile_test(gpu_ui: Arc<RefCell<GpuUi>>,queue:&wgpu::Queue,device:&wgpu::De
     let emit = gpu_ui.borrow().event_hub.sender.clone();
     
 
-    Mui::new(counter, emit)
-        .default_state(UiState(0))
-        .state(UiState(0))
-        .texture("caton (2).png")
-        .size_with_image()
-        .pos(vec2(300.0, 300.0))
-        .frag(|data,panel_id|{
-            let t = rv("color");
-            let time = sin(cv("time"));
-            wvec4(time, t.y(), t.z(), t.w())
-        })
-        .on()
-            .call(Call::CLICK, move | data,panelid|{
-                data.count += 1;
-                println!("当前的点击次数 {:?}",data.count);
-            })
-            .next_state(Call::CLICK, UiState(1))
-            .exit()
-        .build(gpu_ui, queue, device);
+    for x in 0..3{
+        for y in 0 .. 3{
+          Mui::new(counter.clone(), emit.clone())
+         .default_state(UiState(0))
+         .state(UiState(0))
+         .texture("caton (2).png")
+         .size_with_image()
+         .pos(vec2(x as f32 * 200.0 + 300.0, y as f32 * 200.0 + 300.0))
+         .frag(|data,panel_id|{
+             let t = rv("color");
+             let time = sin(cv("time"));
+             wvec4(time, t.y(), t.z(), t.w())
+         })
+         .on()
+             .call(Call::CLICK, move | data,panelid|{
+                 data.count += 1;
+                 println!("当前的点击次数 {:?}",data.count);
+             })
+             .next_state(Call::CLICK, UiState(1))
+             .exit()
+          .state(UiState(1))
+            .texture("caton (3).png")
+            .size_with_image()
+            .on()
+                .call(Call::CLICK, move | data,panelid|{
+                     data.count += 1;
+                     println!("当前的点击次数 {:?}",data.count);
+                 })
+                 .next_state(Call::CLICK, UiState(0))
+                 .exit()
+         .build(gpu_ui.clone(), queue, device);
+        }
+    } 
  
 
 
