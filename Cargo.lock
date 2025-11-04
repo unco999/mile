@@ -1411,6 +1411,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mile_state"
+version = "0.1.0"
+dependencies = [
+ "mile_api",
+]
+
+[[package]]
 name = "mile_ui"
 version = "0.1.0"
 dependencies = [

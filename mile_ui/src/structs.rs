@@ -4,7 +4,8 @@ use image::{DynamicImage, GenericImage, GenericImageView, ImageReader, RgbaImage
 use std::{collections::HashMap, path::Path};
 use wgpu::{BufferAddress, TextureFormat, util::DeviceExt};
 
-use crate::{Panel, mile_ui_wgsl::Call};
+use crate::mui::Panel;
+
 pub trait GpuPanelAttach: Pod + Zeroable + Send + Sync + 'static {
     /// 生成该 Panel 的扩展数据
     fn generate_for_panel(&self, idx: u32, panel: &Panel) -> Self;

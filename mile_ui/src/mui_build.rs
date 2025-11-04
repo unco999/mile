@@ -1,12 +1,4 @@
-use crate::{
-    CpuPanelEvent, GpuUi, NetWorkTransition, PANEL_ID, Panel, StateTransition,
-    TransformAnimFieldInfo, UIEventHub, UiInteractionScope,
-    structs::{
-        AnimOp, CollectionId, CollectionSampling, EasingMask, EntryState, PanelEvent, PanelField,
-        PanelInteraction, RelLayoutMask,
-    },
-    ui_network::{Collection, Rel, collection_by_name, rel_by_name},
-};
+
 use flume::Sender;
 use glam::{Vec2, vec2, vec4};
 use mile_api::{ModuleEventType, ModuleParmas};
@@ -27,7 +19,9 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use wgpu::naga::keywords::wgsl::RESERVED;
+use crate::prelude::*;
+
+use crate::{mui::{CpuPanelEvent, GpuUi, NetWorkTransition, Panel, UiInteractionScope}, structs::{PanelEvent, PanelInteraction}};
 
 pub type StateId = u32;
 
@@ -644,7 +638,7 @@ where
                         if let Some(offset) = offset_o {
                             let _ = emit.send(CpuPanelEvent::SpecielAnim((
                                 panel_id,
-                                crate::TransformAnimFieldInfo {
+                                TransformAnimFieldInfo {
                                     field_id: (PanelField::POSITION_X | PanelField::POSITION_Y)
                                         .bits(),
                                     start_value: vec![0.0; 2],
@@ -702,7 +696,7 @@ where
                 let data_ref = self.data.clone();
                 println!("在{}状态注册了自定义frag", state);
                 let emit = ui.global_hub.sender.clone();
-                let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id: PANEL_ID| {
+                let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id| {
                     // 数据的可变借用
 
                     let mut data = data_ref.borrow_mut();
@@ -728,7 +722,7 @@ where
                 let data_ref = self.data.clone();
                 println!("在{}状态注册了自定义vertex", state);
                 let emit = ui.global_hub.sender.clone();
-                let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id: PANEL_ID| {
+                let wrap: Box<dyn FnMut(u32)> = Box::new(move |panel_id| {
                     // 数据的可变借用
                     let mut data = data_ref.borrow_mut();
 

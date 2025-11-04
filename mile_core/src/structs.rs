@@ -25,11 +25,7 @@ use mile_gpu_dsl::{
     },
 };
 use mile_graphics::structs::WGPUContext;
-use mile_ui::{
-    GpuUi, Panel,
-    mile_ui_wgsl::mile_test,
-    structs::{AnimOp, MouseState, PanelEvent, PanelField, PanelInteraction},
-};
+use mile_ui::prelude::*;
 use rand::{Rng, rng};
 use wgpu::BindGroupLayout;
 use winit::{

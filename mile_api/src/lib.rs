@@ -16,6 +16,7 @@ use wgpu::{
     wgc::device::queue,
 };
 
+pub mod interface;
 use lazy_static::lazy_static;
 
 // 使用 lazy_static 创建一个全局的 HashMap

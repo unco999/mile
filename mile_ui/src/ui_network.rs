@@ -8,11 +8,7 @@ use std::{
 };
 use wgpu::{naga::GatherMode, util::DeviceExt};
 
-use crate::{
-    GlobalLayout, PanelAnimDelta,
-    structs::{PanelField, RelLayoutMask},
-};
-
+use crate::prelude::*;
 type RelID = u32;
 type CollectionId = u32;
 type offset = u32;
