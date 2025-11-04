@@ -284,48 +284,59 @@ impl<E: Event> EventStream<E> {
         })
     }
 
+    #[inline]
     fn wrap(event: DynEvent) -> EventDelivery<E> {
         EventDelivery {
             inner: Self::downcast(event),
         }
     }
 
+    #[inline]
     pub fn recv(&self) -> Result<EventDelivery<E>, RecvError> {
         self.receiver.recv().map(Self::wrap)
     }
 
+    #[inline]
     pub fn recv_timeout(&self, timeout: Duration) -> Result<EventDelivery<E>, RecvTimeoutError> {
         self.receiver.recv_timeout(timeout).map(Self::wrap)
     }
 
+    #[inline]
     pub fn try_recv(&self) -> Result<EventDelivery<E>, TryRecvError> {
         self.receiver.try_recv().map(Self::wrap)
     }
 
+    #[inline]
     pub fn drain(&self) -> Vec<EventDelivery<E>> {
         self.receiver.try_iter().map(Self::wrap).collect()
     }
 
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = EventDelivery<E>> + '_ {
         self.receiver.iter().map(Self::wrap)
     }
 
+    #[inline]
     pub fn try_iter(&self) -> impl Iterator<Item = EventDelivery<E>> + '_ {
         self.receiver.try_iter().map(Self::wrap)
     }
 
+    #[inline]
     pub fn poll_latest(&self) -> Option<EventDelivery<E>> {
         self.receiver.try_iter().map(Self::wrap).last()
     }
 
+    #[inline]
     pub fn recv_arc(&self) -> Result<Arc<E>, RecvError> {
         self.recv().map(EventDelivery::into_arc)
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.receiver.is_empty()
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.receiver.len()
     }

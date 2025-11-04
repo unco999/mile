@@ -1,10 +1,13 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
-use bytemuck::{cast_slice, Zeroable};
-use mile_api::{prelude::*,*};
+use bytemuck::{Zeroable, cast_slice};
+use mile_api::{prelude::*, *};
 use wgpu::{Device, util::DownloadBuffer};
 
-use crate::prelude::{gpu_ast_compute_pipeline::ComputePipelineConfig, manager::{*},gpu_ast::{*},render_layer::{*},render_binding::{*},op::*,*};
+use crate::prelude::{
+    gpu_ast::*, gpu_ast_compute_pipeline::ComputePipelineConfig, manager::*, op::*,
+    render_binding::*, render_layer::*, *,
+};
 
 /// Kennel 初始化配置
 pub struct KennelConfig {
@@ -41,7 +44,7 @@ pub struct Kennel {
     render_binding_resources: Option<RenderBindingResources>,
     render_binding_capacity: usize,
     _global_uniform: Rc<CpuGlobalUniform>,
-    _global_hub:Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>
+    _global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>,
 }
 
 impl Kennel {
@@ -50,7 +53,7 @@ impl Kennel {
         queue: &wgpu::Queue,
         global_uniform: Rc<CpuGlobalUniform>,
         config: KennelConfig,
-        _global_hub:Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>
+        _global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>,
     ) -> Self {
         let tick_interval = config.readback_interval_secs.max(1);
         let pipeline = ProgramPipeline::new(
@@ -69,7 +72,7 @@ impl Kennel {
             render_binding_resources: None,
             render_binding_capacity: 0,
             _global_uniform: global_uniform,
-            _global_hub
+            _global_hub,
         }
     }
 
@@ -82,7 +85,8 @@ impl Kennel {
         let handle = self.pipeline.register_program(expr, registry)?;
 
         if let Some(info) = self.pipeline.program_info(handle) {
-            self.programs.insert(handle.0, RegisteredProgram { handle, info });
+            self.programs
+                .insert(handle.0, RegisteredProgram { handle, info });
             self.ordered_programs.push(handle.0);
         }
 
@@ -91,11 +95,7 @@ impl Kennel {
         Ok(handle)
     }
 
-    pub fn reserve_render_layers(
-        &mut self,
-        device: &wgpu::Device,
-        capacity: usize,
-    ) {
+    pub fn reserve_render_layers(&mut self, device: &wgpu::Device, capacity: usize) {
         let cap = capacity.max(1);
         self.render_binding_capacity = cap;
         self.render_binding_layers
@@ -145,7 +145,6 @@ impl Kennel {
     pub fn result_buffer(&self) -> &wgpu::Buffer {
         self.pipeline.result_buffer()
     }
-
 
     /// 重新生成渲染绑定层数据与 GPU 资源
     pub fn rebuild_render_bindings(
@@ -199,30 +198,30 @@ impl Kennel {
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
         for ev in self._global_hub.poll() {
             match ev {
-            ModuleEvent::KennelPush(parmas) => {
-                let panel_id = parmas.idx;
+                ModuleEvent::KennelPush(parmas) => {
+                    let panel_id = parmas.idx;
 
-                let mut registry = ImportRegistry::new();
-        
-                // 注册必要的导入
-                registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
-                registry.register_render_import("uv", 1, Box::new(|_| vec![0.0]));
-                registry.register_render_import("color", 2, Box::new(|_| vec![0.0]));
-                                
-                      let result = self.register_program(&parmas.data,&registry);
-                      println!("当前注册新面板情况 {:?}",result);
-                      
-                      let layer_index = self.render_layers().len();
-                      self.rebuild_render_bindings(device,queue);
-                      self._global_hub.push(ModuleEvent::KennelPushResultReadDes(ModuleParmas{
+                    let mut registry = ImportRegistry::new();
+
+                    // 注册必要的导入
+                    registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
+                    registry.register_render_import("uv", 1, Box::new(|_| vec![0.0]));
+                    registry.register_render_import("color", 2, Box::new(|_| vec![0.0]));
+
+                    let result = self.register_program(&parmas.data, &registry);
+                    println!("当前注册新面板情况 {:?}", result);
+
+                    let layer_index = self.render_layers().len();
+                    self.rebuild_render_bindings(device, queue);
+                    self._global_hub
+                        .push(ModuleEvent::KennelPushResultReadDes(ModuleParmas {
                             module_name: "Kennel",
                             idx: layer_index as u32,
                             data: layer_index as u32,
                             _ty: ModuleEventType::Frag.bits(),
-                    }));
-
-            }
-                _=>{}
+                        }));
+                }
+                _ => {}
             }
         }
     }
@@ -231,7 +230,7 @@ impl Kennel {
         &self.render_binding_layers
     }
 
-    pub fn render_binding_layers_mut(&mut self) -> &mut Vec<RenderBindingLayer>{
+    pub fn render_binding_layers_mut(&mut self) -> &mut Vec<RenderBindingLayer> {
         &mut self.render_binding_layers
     }
 
@@ -254,40 +253,29 @@ impl Kennel {
         let node_buffer = self.pipeline.node_buffer().clone();
         let node_slice = node_buffer.slice(0..node_bytes);
 
-        DownloadBuffer::read_buffer(
-            device,
-            queue,
-            &node_slice,
-            move |result| {
-                if let Ok(download) = result {
-                    let nodes: &[GpuAstNode] = cast_slice(&download);
-                    println!("=== 节点调试 (前 {} 个) ===", nodes.len());
-                    for (idx, node) in nodes.iter().enumerate() {
-                        println!("[node {idx}] {:?}", node);
-                    }
+        DownloadBuffer::read_buffer(device, queue, &node_slice, move |result| {
+            if let Ok(download) = result {
+                let nodes: &[GpuAstNode] = cast_slice(&download);
+                println!("=== 节点调试 (前 {} 个) ===", nodes.len());
+                for (idx, node) in nodes.iter().enumerate() {
+                    println!("[node {idx}] {:?}", node);
                 }
-            },
-        );
+            }
+        });
 
         let results_to_read = 12;
-        let result_bytes =
-            (results_to_read as u64) * (std::mem::size_of::<[f32; 4]>() as u64);
+        let result_bytes = (results_to_read as u64) * (std::mem::size_of::<[f32; 4]>() as u64);
         let result_buffer = self.pipeline.result_buffer().clone();
         let result_slice = result_buffer.slice(0..result_bytes);
 
-        DownloadBuffer::read_buffer(
-            device,
-            queue,
-            &result_slice,
-            move |result| {
-                if let Ok(download) = result {
-                    let values: &[[f32; 4]] = cast_slice(&download);
-                    println!("=== 结果调试 (前 {} 项) ===", values.len());
-                    for (idx, value) in values.iter().enumerate() {
-                        println!("[result {idx}] {:?}", value);
-                    }
+        DownloadBuffer::read_buffer(device, queue, &result_slice, move |result| {
+            if let Ok(download) = result {
+                let values: &[[f32; 4]] = cast_slice(&download);
+                println!("=== 结果调试 (前 {} 项) ===", values.len());
+                for (idx, value) in values.iter().enumerate() {
+                    println!("[result {idx}] {:?}", value);
                 }
-            },
-        );
+            }
+        });
     }
 }

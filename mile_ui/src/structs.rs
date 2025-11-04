@@ -11,6 +11,20 @@ pub trait GpuPanelAttach: Pod + Zeroable + Send + Sync + 'static {
     fn generate_for_panel(&self, idx: u32, panel: &Panel) -> Self;
 }
 
+
+/**
+ * UI组件与组件之间的通信面板;
+ */
+pub struct UiMessage<Target, Payload> {
+    pub payload: Payload,
+    _marker: std::marker::PhantomData<Target>,
+}
+
+impl<Target, Payload> UiMessage<Target, Payload> {
+    pub fn new(payload: Payload) -> Self {
+        Self { payload, _marker: std::marker::PhantomData }
+    }
+}
 pub struct PanelAttachContext<E: GpuPanelAttach> {
     panels: Vec<Panel>,
     exts: Vec<E>, // 每种扩展类型都是同一具体类型

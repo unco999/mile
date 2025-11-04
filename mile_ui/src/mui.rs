@@ -5,7 +5,7 @@ use image::{Frame, ImageReader, RgbaImage, imageops::overlay};
 use itertools::Itertools;
 use mile_api::{
     CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, LayerID,
-    ModuleEvent, ModuleEventType, ModuleParmas, Renderable,
+    ModuleEvent, ModuleEventType, ModuleParmas, Renderable, prelude::{EventStream, global_event_bus},
 };
 use mile_gpu_dsl::{core::Expr, prelude::kennel::Kennel};
 use mile_graphics::structs::{GlobalState, GlobalStateRecord, GlobalStateType};
@@ -481,6 +481,7 @@ pub struct GlobalLayout {
 }
 
 pub struct GpuUi {
+    pub event_stream:EventStream<EventTest>,
     pub kennel: Arc<RefCell<Kennel>>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -841,6 +842,9 @@ impl GpuUi {
         global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
         kennel: Arc<RefCell<Kennel>>,
     ) -> Self {
+
+        let event_stream = global_event_bus().subscribe::<EventTest>();
+
         println!(
             "size = {}, align = {}",
             std::mem::size_of::<Panel>(),
@@ -932,6 +936,7 @@ impl GpuUi {
         gpu_debug.create_buffer(device);
 
         Self {
+            event_stream,
             global_hub,
             kennel,
             ui_kennel_des: KennelReadDesPool::default(),
@@ -2353,6 +2358,8 @@ impl GpuUi {
     }
 
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
+
+        
         for ev in self.global_hub.poll() {
             match ev {
                 mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {

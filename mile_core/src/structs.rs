@@ -9,13 +9,13 @@ use std::{
 };
 
 use mile_api::{
-    Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable,
+    Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable, prelude::global_event_bus,
 };
 use mile_font::structs::MileFont;
 
 use mile_gpu_dsl::{core::Expr, prelude::{gpu_ast_compute_pipeline::ComputePipelineConfig, kennel::{Kennel, KennelConfig}}};
 use mile_graphics::structs::WGPUContext;
-use mile_ui::prelude::*;
+use mile_ui::prelude::{*,EventTest};
 use rand::{Rng, rng};
 use wgpu::BindGroupLayout;
 use winit::{
@@ -458,10 +458,11 @@ impl ApplicationHandler<AppEvent> for App {
                         PhysicalKey::Code(KeyCode::Space) => {
                             let ctx = self.wgpu_context.as_ref().unwrap();
 
-                            if let Some(mile_font) = &self.mile_font {
-                                mile_font.borrow_mut().test_entry(&ctx.queue);
-                                mile_font.borrow_mut().test_entry_text(&ctx.queue);
-                            }
+                            global_event_bus().publish_arc(Arc::new(EventTest{index:1}));
+                            // if let Some(mile_font) = &self.mile_font {
+                            //     mile_font.borrow_mut().test_entry(&ctx.queue);
+                            //     mile_font.borrow_mut().test_entry_text(&ctx.queue);
+                            // }
 
                             // if let Some(kennel) = &self.kennel{
                             //     let mut kennel = kennel.borrow_mut();

@@ -1,7 +1,7 @@
 
 use flume::Sender;
 use glam::{Vec2, vec2, vec4};
-use mile_api::{ModuleEventType, ModuleParmas};
+use mile_api::{ModuleEventType, ModuleParmas, prelude::global_event_bus};
 use mile_gpu_dsl::{core::dsl::{sin, wvec4}, prelude::*};
 use std::{
     any::Any,
@@ -513,6 +513,8 @@ where
         //     }
         // }
 
+        
+
         let default_state = self.default_state.0;
         let net_work_config = self.pending_net_work.state_net_work.borrow_mut();
         let config = net_work_config.get(&default_state);
@@ -591,7 +593,6 @@ where
             kennel_des_id: u32::MAX,
             pad_1: 0,
         };
-
         println!("创造了新的面板 {:?}", panel);
 
         drop(states);

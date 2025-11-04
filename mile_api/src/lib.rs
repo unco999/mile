@@ -24,7 +24,7 @@ pub mod interface;
 
 pub mod prelude {
     pub use crate::util::{*};
-    pub use crate::event_bus::{*};
+    pub use crate::event_bus::{*,global_event_bus};
 }
 
 use lazy_static::lazy_static;
