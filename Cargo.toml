@@ -1,5 +1,5 @@
 
 
 [workspace]
-members = [ "mile_state", "mile_gpu_dsl", "mile_api","mile_core", "mile_font", "mile_graphics", "mile_ui"]
+members = [ "mile_state", "mile_gpu_dsl", "mile_api","mile_db", "mile_core", "mile_font", "mile_graphics", "mile_ui"]
 resolver = "2"

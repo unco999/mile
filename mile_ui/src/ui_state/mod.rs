@@ -9,6 +9,7 @@ use std::{
 use glam::{Vec2, Vec3, Vec4};
 
 use mile_api::prelude::Event;
+use mile_gpu_dsl::core::Expr;
 
 /// Unique identifier for a UI state. Accepts any hashable + cloneable key type.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -52,8 +53,8 @@ pub struct VisualSpec {
     pub nine_slice: Option<[f32; 4]>,
     pub tint: Vec4,
     pub opacity: f32,
-    pub shader: Option<String>,
-    pub shader_params: HashMap<String, Vec4>,
+    pub frag:Option<Expr>,
+    pub vertex:Option<Expr>,
 }
 
 /// Arbitrary payload stored alongside a state. This allows the caller to attach
