@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use bytemuck::{cast_slice, Zeroable};
-use mile_api::{CpuGlobalUniform, GlobalEventHub, ModuleEvent, ModuleEventType, ModuleParmas, Tick};
+use mile_api::{prelude::*,*};
 use wgpu::{Device, util::DownloadBuffer};
 
 use crate::prelude::{gpu_ast_compute_pipeline::ComputePipelineConfig, manager::{*},gpu_ast::{*},render_layer::{*},render_binding::{*},op::*,*};
@@ -36,7 +36,7 @@ pub struct Kennel {
     pipeline: ProgramPipeline,
     programs: HashMap<u32, RegisteredProgram>,
     ordered_programs: Vec<u32>,
-    readback_tick: Tick,
+    readback_tick: TickUitl,
     render_binding_layers: Vec<RenderBindingLayer>,
     render_binding_resources: Option<RenderBindingResources>,
     render_binding_capacity: usize,
@@ -64,7 +64,7 @@ impl Kennel {
             pipeline,
             programs: HashMap::new(),
             ordered_programs: Vec::new(),
-            readback_tick: Tick::new(tick_interval),
+            readback_tick: TickUitl::new(tick_interval),
             render_binding_layers: Vec::new(),
             render_binding_resources: None,
             render_binding_capacity: 0,
