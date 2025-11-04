@@ -1,2 +1,6 @@
 pub mod structs;
-mod test;
+pub mod test;
+
+pub mod prelude {
+    pub use crate::structs::{*};
+}
