@@ -1,5 +1,4 @@
 # Mile Engine 🌍
-[使用过程]([https://www.bilibili.com/video/视频ID](https://www.bilibili.com/video/BV14n1ABvEes/))
 > **Language**: [English](#english-version) | [中文](#chinese-version)
 <div id="english-version">
 **Mile Engine** is a game and graphics development engine that heavily relies on GPU parallel computing.  
@@ -14,7 +13,7 @@ Project entry point is at `mile_core/src/main.rs`:
 cd mile/mile_core
 ```
 
-![Demo GIF](https://github.com/unco999/mile/blob/master/markdown/01.gif)
+![Demo GIF](https://github.com/unco999/mile/blob/master/markdown/02.gif)
 
 ## 🖌 Mile UI – GPU-Parallel Stateful Interface
 Mile UI is an innovative UI framework that enables high-performance, composable, stateful interface elements and collection operations through GPU parallel computing.
