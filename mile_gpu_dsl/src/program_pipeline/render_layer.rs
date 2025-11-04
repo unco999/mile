@@ -1,13 +1,8 @@
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
+use crate::prelude::{gpu_ast::{*},op::{*}, gpu_ast_compute_pipeline::*,manager::{*}, gpu_program::*, *};
 
-use crate::mat::gpu_program::{
-    FactorUnary, RenderComponent, RenderExprNode, RenderExprOp, SerializableBinaryOp,
-    SerializableGpuProgram, SerializableUnaryOp,
-};
-
-use super::ProgramHandle;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RenderChannel {
     Constant(f32),

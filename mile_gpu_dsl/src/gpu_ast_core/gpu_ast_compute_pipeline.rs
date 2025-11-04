@@ -4,30 +4,24 @@ use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, CommandEncoder,
     ComputePass, ComputePipeline, Device, PipelineLayout, Queue, ShaderModule, util::DeviceExt,
 };
+use crate::prelude::gpu_ast::{*};
+use crate::prelude::gpu_program::{*};
 
-use crate::mat::{
-    gpu_ast::{GpuAstGraph, GpuAstNode},
-    gpu_program::SerializableGpuProgram,
-};
 
-/// GPU 璁＄畻绠＄嚎绠＄悊鍣?
 pub struct GpuComputePipeline {
     // 缂撳啿鍖?
     pub node_buffer: Buffer,
     pub result_buffer: Buffer,
     import_buffer: Buffer,
 
-    // 绠＄嚎璧勬簮
     bind_group: BindGroup,
     bind_group_layout: BindGroupLayout,
     compute_pipeline: ComputePipeline,
 
-    // 閰嶇疆
     max_nodes: u32,
     max_imports: u32,
 }
 
-/// 璁＄畻绠＄嚎閰嶇疆
 pub struct ComputePipelineConfig {
     pub max_nodes: u32,
     pub max_imports: u32,
@@ -100,7 +94,6 @@ impl GpuComputePipeline {
         }
     }
 
-    /// 鏇存柊 AST 鑺傜偣鏁版嵁鍒?GPU 缂撳啿鍖?
     pub fn update_nodes(
         &mut self,
         graph: &GpuAstGraph,

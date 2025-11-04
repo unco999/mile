@@ -12,18 +12,8 @@ use mile_api::{
     Computeable, CpuGlobalUniform, GlobalEventHub, GpuDebug, ModuleEvent, ModuleParmas, Renderable,
 };
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::{
-    core::{
-        Expr,
-        dsl::{var, wvec4},
-    },
-    dsl::cv,
-    mat::{
-        gpu_ast_compute_pipeline::ComputePipelineConfig,
-        kennel::{Kennel, KennelConfig},
-        op::ImportRegistry,
-    },
-};
+
+use mile_gpu_dsl::{core::Expr, prelude::{gpu_ast_compute_pipeline::ComputePipelineConfig, kennel::{Kennel, KennelConfig}}};
 use mile_graphics::structs::WGPUContext;
 use mile_ui::prelude::*;
 use rand::{Rng, rng};

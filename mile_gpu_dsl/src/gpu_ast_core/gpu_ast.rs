@@ -2,10 +2,8 @@ use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 
-use crate::{
-    core::{BinaryOp, UnaryFunc},
-    mat::op::{ImportType, MatOp, Matrix, MatrixPlan},
-};
+use crate::prelude::gpu_program::{*};
+use crate::prelude::{*,op::{*}};
 
 bitflags! {
     /// GPU AST Node State

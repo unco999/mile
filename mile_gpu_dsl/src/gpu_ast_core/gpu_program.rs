@@ -1,12 +1,6 @@
 use serde::Serialize;
 
-use crate::{
-    core::{BinaryOp, Expr, UnaryFunc, Vec4},
-    mat::{
-        gpu_ast::{DataType, GpuAstNode, GpuAstState, GpuOp},
-        op::{ImportRegistry, ImportType},
-    },
-};
+use crate::prelude::{*,op::{*},gpu_ast::{*}};
 
 /// 描述构建 GPU 计算节点失败的原因
 #[derive(Debug)]

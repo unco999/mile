@@ -2,12 +2,7 @@
 use flume::Sender;
 use glam::{Vec2, vec2, vec4};
 use mile_api::{ModuleEventType, ModuleParmas};
-use mile_gpu_dsl::{
-    core::{
-        Expr, dsl::{IF, sin, wvec4},
-    },
-    dsl::*,
-};
+use mile_gpu_dsl::{core::dsl::{sin, wvec4}, prelude::*};
 use std::{
     any::Any,
     cell::{Cell, RefCell},

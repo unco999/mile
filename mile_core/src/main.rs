@@ -8,7 +8,7 @@ use mile_ui::prelude::*;
 use crate::structs::{App, AppEvent};
 use mile_api::{GlobalEventHub, ModuleEvent, ModuleParmas};
 use mile_font::structs::MileFont;
-use mile_gpu_dsl::core::Expr;
+use mile_gpu_dsl::prelude::Expr;
 use mile_graphics::structs::{GlobalState, WGPUContext};
 
 use winit::event_loop::{self, EventLoop};

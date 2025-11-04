@@ -7,7 +7,7 @@ use mile_api::{
     CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, LayerID,
     ModuleEvent, ModuleEventType, ModuleParmas, Renderable,
 };
-use mile_gpu_dsl::{core::Expr, mat::kennel::Kennel, program_pipeline::RenderBindingLayer};
+use mile_gpu_dsl::{core::Expr, prelude::kennel::Kennel};
 use mile_graphics::structs::{GlobalState, GlobalStateRecord, GlobalStateType};
 use std::{
     any::Any,
