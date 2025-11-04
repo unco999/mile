@@ -77,7 +77,7 @@ where
     fn set_collection(mut self, id: u32) -> Self {
         let mui = self.mui;
         {
-            let mut configs = mui.pending_net_work.state_net_work.borrow_mut();
+            let mut configs: std::cell::RefMut<'_, HashMap<u32, StateNetWorkConfig>> = mui.pending_net_work.state_net_work.borrow_mut();
             let state_network_config = configs.get_mut(&self.state_id).unwrap();
             state_network_config.insert_collection = Some(id);
         }
@@ -168,6 +168,7 @@ impl From<Call> for PanelInteraction {
         }
     }
 }
+
 
 ///
 pub struct StateConfig<T> {
@@ -779,14 +780,14 @@ where
 
             self.net_work_build(curr_id);
 
-            let _ = ui
-                .event_hub
-                .sender
-                .send(CpuPanelEvent::StateTransition(StateTransition {
-                    state_config_des: transfrom_config_des,
-                    new_state: self.default_state,
-                    panel_id: self.panel_id,
-                }));
+            // let _ = ui
+            //     .event_hub
+            //     .sender
+            //     .send(CpuPanelEvent::StateTransition(StateTransition {
+            //         state_config_des: transfrom_config_des,
+            //         new_state: self.default_state,
+            //         panel_id: self.panel_id,
+            //     }));
         }
     }
 }
@@ -890,11 +891,11 @@ where
                     }
 
                     if let Some(next) = next_config {
-                        let _ = emit.send(CpuPanelEvent::StateTransition(StateTransition {
-                            state_config_des: next.clone(),
-                            new_state: *uistate,
-                            panel_id,
-                        }));
+                        // let _ = emit.send(CpuPanelEvent::StateTransition(StateTransition {
+                        //     state_config_des: next.clone(),
+                        //     new_state: *uistate,
+                        //     panel_id,
+                        // }));
                     }
                 }
             });
