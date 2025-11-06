@@ -1,19 +1,14 @@
 use std::{
-    any::type_name,
-    collections::HashMap,
-    hash::Hash,
-    marker::PhantomData,
-    path::Path,
-    sync::Arc,
+    any::type_name, collections::HashMap, hash::Hash, marker::PhantomData, path::Path, sync::Arc,
 };
 
 use blake3::{Hash as BlakeHash, Hasher as BlakeHasher};
 use parking_lot::RwLock;
 use redb::{
-    backends::InMemoryBackend, Database, DatabaseError, Error as RedbError,
-    ReadableTable, TableDefinition,
+    Database, DatabaseError, Error as RedbError, ReadableTable, TableDefinition,
+    backends::InMemoryBackend,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 /// Errors originating from the storage layer or (de)serialization.
@@ -100,8 +95,8 @@ impl SchemaFingerprintBuilder {
 
 /// Trait describing how a typed table should be bound into the database.
 pub trait TableBinding {
-    type Key: Serialize + DeserializeOwned + Eq + Hash + Send + Sync + 'static;
-    type Value: Serialize + DeserializeOwned + Send + Sync + 'static;
+    type Key: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + 'static;
+    type Value: Serialize + DeserializeOwned + Clone + PartialEq + Send + Sync + 'static;
 
     /// Provides a descriptor that can encode schema/version metadata.
     /// Override this method when you want the fingerprint to track structural changes.
@@ -113,6 +108,9 @@ pub trait TableBinding {
     fn fingerprint() -> SchemaFingerprint {
         SchemaFingerprint::for_types::<Self::Key, Self::Value>(Self::descriptor())
     }
+
+    /// Called after a value is written to the table. Default implementation does nothing.
+    fn emit_change(_key: &Self::Key, _old: Option<&Self::Value>, _new: &Self::Value) {}
 }
 
 /// Lightweight wrapper around a Redb [`Database`] that keeps track of lazily-created tables.
@@ -145,12 +143,14 @@ impl MileDb {
     pub fn bind_table<B: TableBinding>(&self) -> Result<TableHandle<B>, DbError> {
         let fingerprint = B::fingerprint();
         let name = self.table_name(fingerprint);
-        Ok(TableHandle {
+        let handle = TableHandle {
             db: Arc::clone(&self.inner),
             table: TableDefinition::new(name),
             fingerprint,
             _binding: PhantomData,
-        })
+        };
+        handle.ensure_table_exists()?;
+        Ok(handle)
     }
 
     fn from_database(database: Database) -> Self {
@@ -174,7 +174,6 @@ impl MileDb {
 }
 
 /// Handle returned from [`MileDb::bind_table`], parameterised by a [`TableBinding`].
-#[derive(Clone)]
 pub struct TableHandle<B: TableBinding> {
     db: Arc<Database>,
     table: TableDefinition<'static, u128, Vec<u8>>,
@@ -191,17 +190,19 @@ impl<B: TableBinding> TableHandle<B> {
     /// Inserts or overwrites a value for the given key.
     pub fn insert(&self, key: &B::Key, value: &B::Value) -> Result<(), DbError> {
         let key_hash = compute_key_hash(key)?;
-        let payload = EntryEnvelopeRef { key, value };
-        let bytes = bincode::serialize(&payload)?;
-
-        let txn = self.db.begin_write().map_err(map_redb_error)?;
-        {
-            let mut table = txn.open_table(self.table).map_err(map_redb_error)?;
-            table
-                .insert(key_hash, &bytes)
-                .map_err(map_redb_error)?;
+        let existing = self.load_entry(key_hash)?;
+        let old = match existing {
+            Some(found) if found.key == *key => Some(found.value),
+            Some(_) => return Err(DbError::HashCollision),
+            None => None,
+        };
+        let changed = old
+            .as_ref()
+            .map_or(true, |existing| existing != value);
+        self.write_serialized(key_hash, key, value)?;
+        if changed {
+            B::emit_change(key, old.as_ref(), value);
         }
-        txn.commit().map_err(map_redb_error)?;
         Ok(())
     }
 
@@ -235,16 +236,76 @@ impl<B: TableBinding> TableHandle<B> {
         }
     }
 
+    /// Returns an editable entry if it exists. Mutations must be committed explicitly.
+    pub fn get_for_update(&self, key: &B::Key) -> Result<Option<EditableEntry<B>>, DbError> {
+        let key_hash = compute_key_hash(key)?;
+        let entry = self.load_entry(key_hash)?;
+        match entry {
+            Some(found) if found.key == *key => Ok(Some(EditableEntry::new(self, found.key, found.value, true))),
+            Some(_) => Err(DbError::HashCollision),
+            None => Ok(None),
+        }
+    }
+
+    /// Fetches an entry if it exists, otherwise prepares a new entry seeded with `default_value`.
+    pub fn upsert_entry(
+        &self,
+        key: B::Key,
+        default_value: B::Value,
+    ) -> Result<EditableEntry<B>, DbError> {
+        let key_hash = compute_key_hash(&key)?;
+        let entry = self.load_entry(key_hash)?;
+        match entry {
+            Some(found) if found.key == key => Ok(EditableEntry::new(self, found.key, found.value, true)),
+            Some(_) => Err(DbError::HashCollision),
+            None => Ok(EditableEntry::new(self, key, default_value, false)),
+        }
+    }
+
     fn load_entry(&self, key_hash: u128) -> Result<Option<EntryEnvelope<B::Key, B::Value>>, DbError> {
         let txn = self.db.begin_read().map_err(map_redb_error)?;
-        let table = txn.open_table(self.table).map_err(map_redb_error)?;
-        if let Some(value) = table.get(key_hash).map_err(map_redb_error)? {
-            let data = value.value();
-            let entry = bincode::deserialize::<EntryEnvelope<B::Key, B::Value>>(&data)?;
-            Ok(Some(entry))
-        } else {
-            Ok(None)
+        match txn.open_table(self.table) {
+            Ok(table) => {
+                if let Some(value) = table.get(key_hash).map_err(map_redb_error)? {
+                    let data = value.value();
+                    let entry = bincode::deserialize::<EntryEnvelope<B::Key, B::Value>>(&data)?;
+                    Ok(Some(entry))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(err) => {
+                if matches!(err, redb::TableError::TableDoesNotExist(_)) {
+                    Ok(None)
+                } else {
+                    Err(map_redb_error(err))
+                }
+            }
         }
+    }
+
+    fn write_serialized(&self, key_hash: u128, key: &B::Key, value: &B::Value) -> Result<(), DbError> {
+        let payload = EntryEnvelopeRef { key, value };
+        let bytes = bincode::serialize(&payload)?;
+
+        let txn = self.db.begin_write().map_err(map_redb_error)?;
+        {
+            let mut table = txn.open_table(self.table).map_err(map_redb_error)?;
+            table
+                .insert(key_hash, &bytes)
+                .map_err(map_redb_error)?;
+        }
+        txn.commit().map_err(map_redb_error)?;
+        Ok(())
+    }
+
+    fn ensure_table_exists(&self) -> Result<(), DbError> {
+        let txn = self.db.begin_write().map_err(map_redb_error)?;
+        {
+            txn.open_table(self.table).map_err(map_redb_error)?;
+        }
+        txn.commit().map_err(map_redb_error)?;
+        Ok(())
     }
 }
 
@@ -258,6 +319,65 @@ struct EntryEnvelopeRef<'a, K, V> {
 struct EntryEnvelope<K, V> {
     key: K,
     value: V,
+}
+
+/// Guard that exposes a mutable reference to a value and saves it on commit.
+pub struct EditableEntry<B: TableBinding> {
+    handle: TableHandle<B>,
+    key: B::Key,
+    original: Option<B::Value>,
+    value: B::Value,
+}
+
+impl<B: TableBinding> EditableEntry<B> {
+    fn new(handle: &TableHandle<B>, key: B::Key, value: B::Value, existed: bool) -> Self {
+        let original = existed.then(|| value.clone());
+        Self {
+            handle: TableHandle {
+                db: Arc::clone(&handle.db),
+                table: handle.table,
+                fingerprint: handle.fingerprint,
+                _binding: PhantomData,
+            },
+            key,
+            original,
+            value,
+        }
+    }
+
+    /// Accesses the entry key.
+    pub fn key(&self) -> &B::Key {
+        &self.key
+    }
+
+    /// Provides a shared view of the stored value.
+    pub fn value(&self) -> &B::Value {
+        &self.value
+    }
+
+    /// Provides a mutable view of the stored value.
+    pub fn value_mut(&mut self) -> &mut B::Value {
+        &mut self.value
+    }
+
+    /// Commits the edited value back into the table.
+    pub fn commit(self) -> Result<(), DbError> {
+        let key_hash = compute_key_hash(&self.key)?;
+        self.handle.write_serialized(key_hash, &self.key, &self.value)?;
+        let changed = self
+            .original
+            .as_ref()
+            .map_or(true, |existing| existing != &self.value);
+        if changed {
+            B::emit_change(&self.key, self.original.as_ref(), &self.value);
+        }
+        Ok(())
+    }
+
+    /// Consumes the guard without writing the data back.
+    pub fn abandon(self) -> (B::Key, B::Value) {
+        (self.key, self.value)
+    }
 }
 
 fn compute_key_hash<T: Serialize>(value: &T) -> Result<u128, bincode::Error> {
@@ -282,8 +402,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
     struct UiKey {
         id: u32,
         slot: u8,
@@ -297,12 +418,30 @@ mod tests {
 
     struct UiBinding;
 
+    type ChangeRecord = (UiKey, Option<UiState>, UiState);
+    static CHANGE_EVENTS: OnceLock<Mutex<Option<ChangeRecord>>> = OnceLock::new();
+
+    fn change_slot() -> &'static Mutex<Option<ChangeRecord>> {
+        CHANGE_EVENTS.get_or_init(|| Mutex::new(None))
+    }
+
+    fn take_change() -> Option<ChangeRecord> {
+        change_slot().lock().unwrap().take()
+    }
+
     impl TableBinding for UiBinding {
         type Key = UiKey;
         type Value = UiState;
 
         fn descriptor() -> &'static str {
             "ui_state/v1"
+        }
+
+        fn emit_change(key: &Self::Key, old: Option<&Self::Value>, new: &Self::Value) {
+            change_slot()
+                .lock()
+                .unwrap()
+                .replace((key.clone(), old.cloned(), new.clone()));
         }
     }
 
@@ -317,11 +456,64 @@ mod tests {
         };
 
         table.insert(&key, &value)?;
+        let (event_key, old, new) = take_change().expect("change emitted on insert");
+        assert_eq!(event_key, key);
+        assert!(old.is_none());
+        assert_eq!(new, value);
         assert_eq!(table.get(&key)?, Some(value.clone()));
 
         let removed = table.remove(&key)?;
         assert_eq!(removed, Some(value.clone()));
         assert_eq!(table.get(&key)?, None);
+        assert!(take_change().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn edit_entry_and_commit() -> Result<(), DbError> {
+        let db = MileDb::in_memory()?;
+        let table = db.bind_table::<UiBinding>()?;
+        let key = UiKey { id: 9, slot: 1 };
+        let initial = UiState {
+            name: "Settings".into(),
+            active: false,
+        };
+
+        table.insert(&key, &initial)?;
+
+        let _ = take_change();
+        let mut entry = table.get_for_update(&key)?.expect("entry expected");
+        entry.value_mut().active = true;
+        entry.commit()?;
+
+        let stored = table.get(&key)?.expect("value present");
+        assert!(stored.active);
+        let (ekey, old, new) = take_change().expect("change emitted");
+        assert_eq!(ekey, key);
+        assert_eq!(old.unwrap().active, false);
+        assert_eq!(new.active, true);
+        Ok(())
+    }
+
+    #[test]
+    fn upsert_triggers_change_with_none_old() -> Result<(), DbError> {
+        let db = MileDb::in_memory()?;
+        let table = db.bind_table::<UiBinding>()?;
+        let key = UiKey { id: 11, slot: 2 };
+        let _ = take_change();
+        let mut entry = table.upsert_entry(
+            key.clone(),
+            UiState {
+                name: "NewPanel".into(),
+                active: false,
+            },
+        )?;
+        entry.value_mut().active = true;
+        entry.commit()?;
+
+        let (_, old, new) = take_change().expect("change emitted");
+        assert!(old.is_none());
+        assert!(new.active);
         Ok(())
     }
 

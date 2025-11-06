@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, btree_map::Range},
     error::Error,
     fs,
     hash::Hash,
@@ -11,15 +11,14 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mile_api::{Computeable, CpuGlobalUniform, GpuDebug, Renderable};
+use mile_api::{global::global_event_bus, prelude::{_ty::PanelId, CpuGlobalUniform, EventBus, GpuDebug, ModEventStream, Renderable}};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, morx::InsertionEntryData};
 use wgpu::{
-    Buffer, BufferUsages, Extent3d, RenderPass, SamplerBindingType, TextureFormat,
-    TextureViewDescriptor,
-    hal::{TextureDescriptor, auxil::db},
-    util::DeviceExt,
+    Buffer, BufferUsages, DepthBiasState, Extent3d, RenderPass, SamplerBindingType, TextureFormat, TextureViewDescriptor, hal::{TextureDescriptor, auxil::db}, util::DeviceExt
 };
+
+use crate::event::{BatchFontEntry, BatchRenderFont};
 
 const QUAD_INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
 // Quad 顶点数据（屏幕空间，-0.5 ~ 0.5）
@@ -49,6 +48,31 @@ struct Vertex {
     uv: [f32; 2],
 }
 
+    /**字体style */
+#[derive(Debug)]
+pub struct FontStyle{
+    pub font_size:u32,
+    pub font_file_path:&'static str,
+    pub font_color:[f32;4],
+    pub font_weight:u32,
+    pub font_style:&'static str,
+    pub font_family:&'static str,
+    pub font_line_height:u32,
+    pub font_text_align:&'static str,
+    pub font_text_decoration:&'static str,
+}
+
+
+#[derive(Debug)]
+struct Text<'a>{
+    text:&'a str,
+    style:&'a FontStyle,
+}
+
+struct TextGpu{
+    
+}
+
 #[derive(Clone, Debug)]
 pub struct GlyphMetrics {
     // 字体级别度量
@@ -72,6 +96,12 @@ pub struct GlyphMetrics {
     pub glyph_ver_side_bearing: i32,
 }
 
+#[derive(Default)]
+pub struct RenderPlanStore{
+    pub render_text_plan_map:HashMap<RenderTextPlanIdx,RenderTextPlan>,
+}
+
+type RegisterEvent<'a> = ModEventStream::<(BatchFontEntry,BatchRenderFont<'a, PanelId>)>;
 pub struct MileFont {
     gpu_debug: RefCell<GpuDebug>,
     cache: FontPipeLineCache,
@@ -82,6 +112,9 @@ pub struct MileFont {
     indirects_len: u32,
     num_instances: u32,
     is_update: bool,
+    global_event_hub:&'static EventBus,
+    register_global_event:RegisterEvent<'static>,
+    store:RenderPlanStore
 }
 
 #[repr(C)]
@@ -95,6 +128,7 @@ struct DrawIndexedIndirect {
 }
 
 impl Renderable for MileFont {
+    
     fn render<'a>(
         &self,
         device: &wgpu::Device,
@@ -146,8 +180,14 @@ impl Renderable for MileFont {
         // queue.submit(Some(encoder.finish()));
     }
 
+
+
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.gpu_debug.borrow_mut().debug(device, queue);
+    }
+    
+    fn resize(&mut self,size:winit::dpi::PhysicalSize<u32>,queue: &wgpu::Queue,device: &wgpu::Device) {
+        
     }
 }
 
@@ -168,6 +208,21 @@ struct FontKey {
 pub struct FontBatch {
     pub results: Vec<FontGlyphResult>,
 }
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
+pub struct RenderTextPlan{
+    font_with_board_index_offset_start:u32,
+    font_with_board_index_offset_end:u32,
+    font_size:u32,
+    r:f32,
+    g:f32,
+    b:f32,
+    a:f32,
+    pad:u32
+}
+
+pub type RenderTextPlanIdx = u32;
 
 impl FontBatch {
     pub fn to_gpu_struct(
@@ -256,6 +311,8 @@ struct FontGlyphDes {
 impl MileFont {
     pub fn new(global_unifrom: Rc<CpuGlobalUniform>) -> Self {
         Self {
+            store:RenderPlanStore::default(),
+            global_event_hub:global_event_bus(),
             gpu_debug: RefCell::new(GpuDebug::new("MileFont")),
             cache: Default::default(),
             fonts: Default::default(),
@@ -265,7 +322,39 @@ impl MileFont {
             indirects_len: Default::default(),
             num_instances: Default::default(),
             is_update: false,
+            register_global_event:RegisterEvent::new(global_event_bus())
         }
+    }
+
+    pub fn load_font_file(&mut self){
+        self.load_to_face("../ttf/BIZUDPGothic-Regular.ttf");
+    }
+    
+
+    pub fn evnet_polling(&mut self,device:&wgpu::Device,queue: &wgpu::Queue){
+         let (batch_render_fonts,batch_entry_fonts) = self.register_global_event.poll();
+
+         let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
+
+         for e in &batch_entry_fonts {
+            grouped.entry(&e.font_file_path)
+                .or_default()
+                .push(&e.str);
+         }
+         for (font_file_name,text) in grouped{
+            let result = self.queue_batch_parse(font_file_name,text.iter().as_ref(),16);
+            let cache = self.cache.generic_buffer_cache.as_mut().unwrap();
+
+            if let Ok(mut res) = result {
+                println!("加入字体到印刷板 {:?}",text);
+                let (des, instruction) = res.to_gpu_struct(cache.instruction_buffer_index);
+                self.write_batch_buffer(queue, &des, &instruction);
+            }
+         }
+        for batch_render_font in batch_render_fonts{
+            println!("实际显示字体 {:?}",batch_render_font.str);
+            self.test_entry_text(queue);
+         }
     }
 
     pub fn test_entry_text(&mut self, queue: &wgpu::Queue) {
@@ -306,9 +395,8 @@ impl MileFont {
     }
 
     pub fn test_entry(&mut self, queue: &wgpu::Queue) {
-        self.load_to_face("../ttf/BIZUDPGothic-Regular.ttf");
         let result =
-            self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["币".to_string()], 16);
+            self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["币"], 16);
         let cache = self.cache.generic_buffer_cache.as_mut().unwrap();
 
         if let Ok(mut res) = result {
@@ -484,7 +572,13 @@ impl MileFont {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
@@ -830,7 +924,7 @@ impl MileFont {
     pub fn queue_batch_parse(
         &mut self,
         font_name: &str,
-        text_batch: &[String],
+        text_batch: &[&str],
         font_size: u32,
     ) -> Result<FontBatch, Box<dyn Error>> {
         // --- Step 1: 获取字体句柄 ---
@@ -863,7 +957,7 @@ impl MileFont {
                 let mut local_glyphs = Vec::new();
 
                 for ch in text.chars() {
-                    if cache.glyphs.contains_key(&ch) {
+                    if cache.glyphs.contains_key(&ch) { 
                         continue;
                     }
 

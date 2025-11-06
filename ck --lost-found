@@ -1,0 +1,89 @@
+[33mc80fba1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mrefactor-mui[m[33m)[m HEAD@{0}: reset: moving to c80fba1dc0ad196e87d470c026d326806cd24149
+[33m17b60d4[m HEAD@{1}: commit: 新架构 mui
+[33mc80fba1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mrefactor-mui[m[33m)[m HEAD@{2}: reset: moving to c80fba1dc0ad196e87d470c026d326806cd24149
+[33mc3bd7e0[m HEAD@{3}: reset: moving to HEAD
+[33mc3bd7e0[m HEAD@{4}: commit: 新架构 mui
+[33mc80fba1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mrefactor-mui[m[33m)[m HEAD@{5}: reset: moving to HEAD~1
+[33m732d075[m[33m ([m[1;31morigin/refactor-mui[m[33m)[m HEAD@{6}: commit: 重构
+[33mc80fba1[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mrefactor-mui[m[33m)[m HEAD@{7}: commit: db 初步构建
+[33m913f494[m HEAD@{8}: commit: ui_state
+[33m471b08a[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmaster[m[33m)[m HEAD@{9}: reset: moving to HEAD
+[33m471b08a[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmaster[m[33m)[m HEAD@{10}: checkout: moving from master to refactor-mui
+[33m471b08a[m[33m ([m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmaster[m[33m)[m HEAD@{11}: commit: UI组件状态服务器与组件状态服务器之间通信
+[33m4f1a29b[m HEAD@{12}: commit: 增加多线程泛型事件库 整理公共接口
+[33meafd8fc[m HEAD@{13}: commit: 对外接口
+[33m10777c9[m HEAD@{14}: commit: 整理接口
+[33m0ae83cd[m HEAD@{15}: pull --ff --recurse-submodules --progress origin: Merge made by the 'ort' strategy.
+[33m2068f5f[m HEAD@{16}: commit: 重新规范化导出
+[33m4ae1fcf[m HEAD@{17}: commit: wgsl
+[33m934466b[m HEAD@{18}: commit: 开始支持 if 节点 与 略微复杂的自定义frag ast表达式
+[33m4c74681[m HEAD@{19}: commit: 尝试添加 IF ast 节点
+[33m45d9621[m HEAD@{20}: commit: Revert "Fix markdown link formatting in README.md"
+[33m09bdf7c[m HEAD@{21}: reset: moving to 09bdf7ccb979d93870d9df58587acf33b90132ab
+[33me2162ca[m HEAD@{22}: revert: Revert "Fix markdown link formatting in README.md"
+[33m09bdf7c[m HEAD@{23}: pull --ff --recurse-submodules --progress origin: Fast-forward
+[33me054460[m HEAD@{24}: commit: 多面板
+[33mbbca02c[m HEAD@{25}: commit: 最新测试
+[33md8a08fb[m HEAD@{26}: pull --ff --recurse-submodules --progress origin: Fast-forward
+[33ma840189[m HEAD@{27}: checkout: moving from lazy-gpu-compute to master
+[33ma263931[m HEAD@{28}: commit: 多导入
+[33mf61a880[m HEAD@{29}: commit: 成功搭建 compute => render dsl
+[33mb51733b[m HEAD@{30}: commit: 成功绑定 render
+[33m62a52e9[m HEAD@{31}: commit: 计算ast绑定至 ui
+[33m36f7fd9[m HEAD@{32}: commit: 实现了 ast to gpu
+[33m935aab3[m HEAD@{33}: commit: 新的plan_to_mile_simple
+[33me46bd47[m[33m ([m[1;31morigin/test-remove-input-var[m[33m)[m HEAD@{34}: checkout: moving from new_texture_array to lazy-gpu-compute
+[33m5e02450[m HEAD@{35}: reset: moving to HEAD
+[33m5e02450[m HEAD@{36}: commit: 改变
+[33me46bd47[m[33m ([m[1;31morigin/test-remove-input-var[m[33m)[m HEAD@{37}: checkout: moving from lazy-gpu-compute to new_texture_array
+[33me46bd47[m[33m ([m[1;31morigin/test-remove-input-var[m[33m)[m HEAD@{38}: checkout: moving from test-remove-input-var to lazy-gpu-compute
+[33me46bd47[m[33m ([m[1;31morigin/test-remove-input-var[m[33m)[m HEAD@{39}: commit: 正确的分量索引
+[33m08bf4f7[m HEAD@{40}: commit: import hash
+[33mcc7d925[m HEAD@{41}: commit: remove dsl_input
+[33m9424a36[m HEAD@{42}: checkout: moving from test-gpu-batch to test-remove-input-var
+[33m9de9b35[m[33m ([m[1;31morigin/test-gpu-batch[m[33m)[m HEAD@{43}: commit: gpu kennel_shader
+[33m4c1b46c[m HEAD@{44}: commit: dsl compute batch bind pipeline
+[33m0f10ad3[m HEAD@{45}: commit: gpu pipeline
+[33maba0746[m HEAD@{46}: commit: batch generic matrix plan
+[33m9533c92[m HEAD@{47}: checkout: moving from master to test-gpu-batch
+[33m9533c92[m HEAD@{48}: checkout: moving from test-gpu-dsl to master
+[33m50c802a[m HEAD@{49}: checkout: moving from master to test-gpu-dsl
+[33m9533c92[m HEAD@{50}: checkout: moving from test-gpu-dsl to master
+[33m50c802a[m HEAD@{51}: commit: dsl
+[33m607e635[m HEAD@{52}: commit: dsl
+[33mc06f02c[m HEAD@{53}: commit: dsl
+[33md589cdd[m HEAD@{54}: commit: dsl
+[33m5c3cd58[m HEAD@{55}: commit: dsl if
+[33m8d36b9d[m HEAD@{56}: commit: gpu dsl node
+[33m195c193[m HEAD@{57}: commit: gpu dsl
+[33m0a4ccc0[m HEAD@{58}: commit: Create README.md
+[33m84565cd[m HEAD@{59}: merge master: Fast-forward
+[33m2de476e[m HEAD@{60}: checkout: moving from master to test-gpu-dsl
+[33m84565cd[m HEAD@{61}: checkout: moving from test-gpu-dsl to master
+[33m2de476e[m HEAD@{62}: checkout: moving from master to test-gpu-dsl
+[33m84565cd[m HEAD@{63}: commit: re
+[33m216f948[m HEAD@{64}: commit: markdown
+[33m6e37276[m HEAD@{65}: commit: markdown
+[33m05d2f5c[m HEAD@{66}: commit: markdown
+[33me8c29de[m HEAD@{67}: commit: markdown
+[33m5e466c1[m HEAD@{68}: commit: markdown
+[33m30121eb[m HEAD@{69}: commit: markdown
+[33m6e3fb31[m HEAD@{70}: commit: markdown
+[33mee8e55e[m HEAD@{71}: commit: markdown
+[33m9787204[m HEAD@{72}: commit: markdwon
+[33mf67facc[m HEAD@{73}: commit: update
+[33mf1c5fef[m HEAD@{74}: pull --ff --recurse-submodules --progress origin: Merge made by the 'ort' strategy.
+[33me55f5e3[m HEAD@{75}: commit: icon
+[33m97c6ad6[m HEAD@{76}: checkout: moving from test-gpu-dsl to master
+[33m2de476e[m HEAD@{77}: reset: moving to 2de476e02e3438d548ef4c26fa95e6e71a757599
+[33m771a465[m HEAD@{78}: commit: icon
+[33m2de476e[m HEAD@{79}: commit: vec2 vec3 vec4
+[33m2e0e273[m HEAD@{80}: commit: dsl
+[33m97c6ad6[m HEAD@{81}: checkout: moving from master to test-gpu-dsl
+[33m97c6ad6[m HEAD@{82}: commit: dsl
+[33mae19f97[m HEAD@{83}: commit: .gitignore
+[33md6e0e73[m HEAD@{84}: commit: Create LICENSE
+[33m7fcf10e[m HEAD@{85}: pull --ff --recurse-submodules --progress origin: Fast-forward
+[33m9606e57[m HEAD@{86}: pull --ff --recurse-submodules --progress origin: Merge made by the 'ort' strategy.
+[33mf8d6e0e[m HEAD@{87}: commit: markdown
+[33m331c1ce[m HEAD@{88}: commit (initial): 初始化

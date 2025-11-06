@@ -11,3 +11,5 @@ rayon = "1.11.0"
 mile_api = { path = "../mile_api"}
 pollster = "0.4"
 image = "0.25.8"
+bitflags = "2.9.4"
+winit = "0.30"

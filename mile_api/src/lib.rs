@@ -16,15 +16,15 @@ use wgpu::{
     wgc::device::queue,
 };
 pub mod util;
-
 pub mod event_bus;
-
-
+pub mod global;
 pub mod interface;
 
 pub mod prelude {
     pub use crate::util::{*};
-    pub use crate::event_bus::{*,global_event_bus};
+    pub use crate::event_bus::{*};
+    pub use crate::global::{*};
+    pub use crate::interface::{*};
 }
 
 use lazy_static::lazy_static;

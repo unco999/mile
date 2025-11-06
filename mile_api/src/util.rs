@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use bytemuck::{Pod, Zeroable};
 
 pub struct TickUitl {
     interval: Duration, // 设定的间隔时间
@@ -22,5 +23,29 @@ impl TickUitl {
             return true;
         }
         false
+    }
+}
+
+pub struct WGPU;
+
+impl WGPU {
+    pub fn write_buffer_with_offset_bytes<T: Pod + Zeroable>(
+        buffer: &wgpu::Buffer,
+        queue: &wgpu::Queue,
+        offset: wgpu::BufferAddress,
+        data: &T,
+    ) {
+        let gpu_data = bytemuck::bytes_of(data);
+        queue.write_buffer(buffer, offset, gpu_data);
+    }
+
+    pub fn write_buffer_with_offset_slice<T: Pod + Zeroable>(
+        buffer: &wgpu::Buffer,
+        queue: &wgpu::Queue,
+        offset: wgpu::BufferAddress,
+        data: &[T],
+    ) {
+        let gpu_data = bytemuck::cast_slice(data);
+        queue.write_buffer(buffer, offset, gpu_data);
     }
 }

@@ -281,13 +281,10 @@ const REL_IMMEDIATELY_PARAMS3 = 8u;
 
 
 const COLLECTION_SIM_OFFSET:u32 = 16384u; // collection_flat 璧峰鍋忕Щ
-// 璇诲彇 panel meta
-// 鑾峰彇 panel meta
 fn panel_meta(panel_id: u32, field_idx: u32) -> u32 {
     return raw_data[panel_id * PANEL_META_SIZE + field_idx];
 }
 
-// 鑾峰彇 panel 鍦?collection 涓?index
 fn panel_in_collection_index(panel_id: u32) -> u32 {
     return panel_meta(panel_id, IN_COLLECTION_INDEX_META_OFFSET);
 }
@@ -297,7 +294,6 @@ fn get_source_first_panel(collection_id:u32) -> u32{
     return raw_data[COLLECTION_SIM_OFFSET + collection_id * COLLECTION_CHILDREN_LEN];
 }
 
-// 鑾峰彇 panel 瀵瑰簲 rel 鑼冨洿
 fn get_panel_rel_range(panel_id: u32) -> vec2<u32> {
     return vec2<u32>(
         panel_meta(panel_id, REL_META_OFFSET),
@@ -339,7 +335,6 @@ fn calc_ring_position_with_center(
     // 姣忎釜鍏冪礌鐨勮搴︽杩?
     let angle = start_angle + 6.2831855 * f32(index_in_collection) / f32(items_len); // 2蟺
 
-    // 璁＄畻鐩稿鍧愭爣锛堢粫鍦嗗績鏃嬭浆锛?
     let pos = vec2(cos(angle), sin(angle)) * radius;
 
     // 鍔犱笂涓績鐐瑰亸绉?
@@ -366,21 +361,16 @@ fn get_source_first_panel_id(me_panel_idx:u32)->u32{
 var<workgroup> center: vec2<f32>;
 var<workgroup> stop_mask: atomic<u32>;
 
-// -------------------- 灏濊瘯杩愯鍔ㄧ敾 --------------------
 fn try_run_anim(anim_field: u32) -> bool {
-    // 鍘熷瓙璇绘棫鐨?stop_mask
     let prev_mask = atomicOr(&stop_mask, anim_field);
 
-    // 濡傛灉涔嬪墠宸茬粡鏈夌浉鍚屽瓧娈佃鍗犵敤锛屽垯涓嶈繍琛?
     if ((prev_mask & anim_field) != 0u) {
-        return false; // 鍚屽瓧娈靛姩鐢诲凡缁忚繍琛?
+        return false;
     }
 
-    // 鍚﹀垯锛屾湰绾跨▼鍙互杩愯璇ュ姩鐢?
     return true;
 }
 
-// ------------------- Panel 瀛楁鏍囪 -------------------
 const POSITION_X       : u32 = 1u;       // 0b0000_0000_0001
 const POSITION_Y       : u32 = 2u;       // 0b0000_0000_0010
 const SIZE_X           : u32 = 4u;       // 0b0000_0000_0100

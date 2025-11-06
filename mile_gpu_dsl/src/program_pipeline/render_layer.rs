@@ -1,13 +1,21 @@
 use std::ops::Range;
 
+use crate::prelude::{
+    gpu_ast::*, gpu_ast_compute_pipeline::*, gpu_program::*, manager::*, op::*, *,
+};
 use bytemuck::{Pod, Zeroable};
-use crate::prelude::{gpu_ast::{*},op::{*}, gpu_ast_compute_pipeline::*,manager::{*}, gpu_program::*, *};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RenderChannel {
     Constant(f32),
-    ComputeResult { node_index: u32 },
-    RenderImport { name: &'static str, mask: u32, component: u32 },
+    ComputeResult {
+        node_index: u32,
+    },
+    RenderImport {
+        name: &'static str,
+        mask: u32,
+        component: u32,
+    },
     RenderComposite {
         mask: u32,
         component: u32,
@@ -109,7 +117,11 @@ impl RenderBindingComponent {
                 factor_unary: 0,
                 payload: [0.0; 4],
             },
-            RenderChannel::RenderImport { name: _, mask, component } => Self {
+            RenderChannel::RenderImport {
+                name: _,
+                mask,
+                component,
+            } => Self {
                 channel_type: CHANNEL_RENDER_IMPORT,
                 source_index: *mask,
                 component_index: component_index as u32,
@@ -147,7 +159,10 @@ impl RenderBindingComponent {
                     *offset,
                 ],
             },
-            RenderChannel::RenderExpression { expr_start, expr_len } => Self {
+            RenderChannel::RenderExpression {
+                expr_start,
+                expr_len,
+            } => Self {
                 channel_type: CHANNEL_RENDER_EXPR,
                 source_index: *expr_start,
                 component_index: *expr_len,
@@ -187,8 +202,7 @@ impl RenderLayerDescriptor {
         node_offset: u32,
         expr_offset: u32,
     ) -> Self {
-        let compute_range =
-            node_offset..(node_offset + program.compute_nodes.len() as u32);
+        let compute_range = node_offset..(node_offset + program.compute_nodes.len() as u32);
 
         let channels = std::array::from_fn(|idx| {
             let component = &program.render_plan.components[idx];
@@ -197,9 +211,18 @@ impl RenderLayerDescriptor {
                 RenderComponent::ComputeNode { node_id } => RenderChannel::ComputeResult {
                     node_index: node_offset + *node_id,
                 },
-                RenderComponent::RenderImport { name, mask, component } =>
-                    RenderChannel::RenderImport { name: *name, mask: *mask, component: *component },
-                RenderComponent::RenderComposite { name: _, mask,
+                RenderComponent::RenderImport {
+                    name,
+                    mask,
+                    component,
+                } => RenderChannel::RenderImport {
+                    name: *name,
+                    mask: *mask,
+                    component: *component,
+                },
+                RenderComponent::RenderComposite {
+                    name: _,
+                    mask,
                     component,
                     factor_render_component,
                     factor_render_scale,
@@ -209,24 +232,25 @@ impl RenderLayerDescriptor {
                     factor_outer_compute,
                     factor_unary,
                     offset,
-                } =>
-                    RenderChannel::RenderComposite {
-                        mask: *mask,
-                        component: *component,
-                        factor_render_component: *factor_render_component,
-                        factor_render_scale: *factor_render_scale,
-                        factor_inner_constant: *factor_inner_constant,
-                        factor_inner_compute: factor_inner_compute.map(|id| node_offset + id),
-                        factor_outer_constant: *factor_outer_constant,
-                        factor_outer_compute: factor_outer_compute.map(|id| node_offset + id),
-                        factor_unary: *factor_unary,
-                        offset: *offset,
-                    },
-                RenderComponent::RenderExpression { expr_start, expr_len } =>
-                    RenderChannel::RenderExpression {
-                        expr_start: expr_offset + *expr_start,
-                        expr_len: *expr_len,
-                    },
+                } => RenderChannel::RenderComposite {
+                    mask: *mask,
+                    component: *component,
+                    factor_render_component: *factor_render_component,
+                    factor_render_scale: *factor_render_scale,
+                    factor_inner_constant: *factor_inner_constant,
+                    factor_inner_compute: factor_inner_compute.map(|id| node_offset + id),
+                    factor_outer_constant: *factor_outer_constant,
+                    factor_outer_compute: factor_outer_compute.map(|id| node_offset + id),
+                    factor_unary: *factor_unary,
+                    offset: *offset,
+                },
+                RenderComponent::RenderExpression {
+                    expr_start,
+                    expr_len,
+                } => RenderChannel::RenderExpression {
+                    expr_start: expr_offset + *expr_start,
+                    expr_len: *expr_len,
+                },
             }
         });
 
@@ -240,9 +264,9 @@ impl RenderLayerDescriptor {
     pub fn to_binding_layer(&self) -> RenderBindingLayer {
         let mut layer = RenderBindingLayer::zeroed();
         layer.compute_start = self.compute_range.start;
-       layer.compute_count = self.compute_range.end - self.compute_range.start;
+        layer.compute_count = self.compute_range.end - self.compute_range.start;
         for (idx, channel) in self.channels.iter().enumerate() {
-        layer.components[idx] = RenderBindingComponent::from_channel(channel, idx);
+            layer.components[idx] = RenderBindingComponent::from_channel(channel, idx);
         }
         layer
     }
@@ -318,7 +342,9 @@ pub fn encode_render_expr_nodes(
                     SerializableBinaryOp::LessEqual => RENDER_EXPR_OP_BINARY_LE,
                     SerializableBinaryOp::Equal => RENDER_EXPR_OP_BINARY_EQ,
                     SerializableBinaryOp::NotEqual => RENDER_EXPR_OP_BINARY_NE,
-                    SerializableBinaryOp::Index => unreachable!("index operator not expected in render expression"),
+                    SerializableBinaryOp::Index => {
+                        unreachable!("index operator not expected in render expression")
+                    }
                 },
                 arg0: node.arg0 + expr_offset,
                 arg1: node.arg1 + expr_offset,
@@ -351,5 +377,3 @@ pub fn encode_render_expr_nodes(
         })
         .collect()
 }
-
-

@@ -1,6 +1,7 @@
+use mile_api::prelude::{ImportRegistry, ImportType};
 use serde::Serialize;
 
-use crate::prelude::{*,op::{*},gpu_ast::{*}};
+use crate::prelude::{gpu_ast::*, op::*, *};
 
 /// 描述构建 GPU 计算节点失败的原因
 #[derive(Debug)]

@@ -3,11 +3,12 @@ use std::sync::Mutex;
 use std::time::Instant;
 use std::{borrow::Cow, sync::Arc};
 
-use mile_api::{Computeable, Renderable};
+use mile_api::prelude::{Computeable, Renderable};
 use pollster::block_on;
 use wgpu::util::DeviceExt;
-use wgpu::{BindGroup, Buffer, RenderPass, VertexStepMode::*};
+use wgpu::{BindGroup, Buffer, DepthBiasState, RenderPass, StoreOp, VertexStepMode::*};
 use wgpu::{ShaderSource, Surface, util::BufferInitDescriptor};
+use winit::dpi::PhysicalSize;
 use winit::{
     event_loop::{self, EventLoop},
     window::Window,
@@ -26,6 +27,14 @@ pub struct WGPUContext {
     pub global_uniform_buffer: Buffer,
     pub bindgroup: BindGroup,
     pub global_state: Arc<Mutex<GlobalState>>,
+    pub realtime_info:RealTimeInfo
+}
+
+#[derive(Default,Clone)]
+pub struct RealTimeInfo{
+    windows_width:u32,
+    windows_height:u32,
+    depth_view:Option<wgpu::TextureView>
 }
 
 #[derive(Debug)]
@@ -150,6 +159,20 @@ pub const VERTEX_LIST: &[Vertex] = &[
     },
 ];
 
+fn create_depth_view(device: &wgpu::Device, size: PhysicalSize<u32>) -> wgpu::TextureView {
+    let depth = device.create_texture(&wgpu::TextureDescriptor{
+        label: Some("depth"),
+        size: wgpu::Extent3d{ width: size.width.max(1), height: size.height.max(1), depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    depth.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
 impl WGPUContext {
     pub fn new(window: Arc<Window>, global_state: Arc<Mutex<GlobalState>>) -> Self {
         let instance = wgpu::Instance::default();
@@ -158,11 +181,12 @@ impl WGPUContext {
         // 使用 pollster 阻塞等待异步函数完成
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
+            compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }))
         .expect("Failed to find an appropriate adapter");
 
+ 
         let limits = adapter.limits();
 
         println!(
@@ -182,15 +206,39 @@ impl WGPUContext {
         }))
         .expect("Failed to create device");
 
+
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
+
+        let depth_view = create_depth_view(&device,size);
+        
 
         let surface_config = surface
             .get_default_config(&adapter, width, height)
             .expect("Failed to get default surface config");
 
-        surface.configure(&device, &surface_config);
+        let caps = surface.get_capabilities(&adapter);
+        let surface_format = caps.formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())                  // 优先 sRGB
+            .unwrap_or(caps.formats[0]);
+        let present_mode = caps.present_modes[0];     // 也可挑 Fifo/AutoVsync 等
+        let alpha_mode = caps.alpha_modes[0];
+        let (width,height) =  (window.inner_size().width,window.inner_size().height);
+        let mut config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode,
+            alpha_mode,
+            view_formats:vec![],
+            desired_maximum_frame_latency: 0,     // 若做 sRGB->linear 互通可填入
+        };
+
+        surface.configure(&device, &config);
 
         // 如果有 pipeline 等初始化，也可以在这里同步创建
         let (render_pipeline, bind_group_layout, bindgroup, buffer) =
@@ -217,6 +265,7 @@ impl WGPUContext {
             global_uniform_buffer: buffer,
             bindgroup,
             global_state,
+            realtime_info: RealTimeInfo { windows_width: width, windows_height: height ,depth_view:Some(depth_view) },
         }
     }
 
@@ -227,6 +276,7 @@ impl WGPUContext {
         config.width = width;
         config.height = height;
         self.surface.configure(&self.device, &config);
+        self.realtime_info.depth_view = Some(create_depth_view(&self.device, new_size));
     }
 
     pub fn compute(&self, computeables: &[&dyn Computeable]) {
@@ -241,7 +291,9 @@ impl WGPUContext {
                 ..Default::default()
             });
             for c in computeables {
-                c.compute(&mut cpass);
+                if c.is_dirty() {
+                    c.encode(&mut cpass);
+                }
             }
         }
         self.queue.submit(Some(encoder.finish()));
@@ -282,7 +334,11 @@ impl WGPUContext {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment{
+                    view: &self.realtime_info.depth_view.as_ref().expect("没有创造深度图"),
+                    depth_ops: Some(wgpu::Operations{ load: wgpu::LoadOp::Clear(1.0), store: StoreOp::Discard}),
+                    stencil_ops: None,
+                }),
                 ..Default::default()
             });
             let time_sec = self.app_state.update_time();
@@ -390,7 +446,13 @@ impl WGPUContext {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,

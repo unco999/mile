@@ -1,11 +1,13 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use flume::{RecvError, RecvTimeoutError, Receiver, Sender, TryRecvError, TrySendError};
+use flume::{Receiver, RecvError, RecvTimeoutError, Sender, TryRecvError, TrySendError};
 use std::{
-    any::{Any, TypeId}, cell::Cell, fmt, marker::PhantomData, ops::Deref, sync::{
-        Arc, OnceLock, Weak, atomic::{AtomicU64, Ordering}
+    any::{Any, TypeId}, cell::Cell, fmt, marker::PhantomData, ops::Deref, process::Output, sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicU64, Ordering},
     }, time::Duration
 };
+
 
 pub trait Event: Any + Send + Sync + 'static {}
 impl<T: Any + Send + Sync + 'static> Event for T {}
@@ -154,7 +156,7 @@ impl EventBus {
         self.inner
             .subscribers
             .get(&TypeId::of::<E>())
-            .map(|entry| entry.value().snapshot().len())
+            .map(|entry: dashmap::mapref::one::Ref<'_, TypeId, Arc<SubscriberList>>| entry.value().snapshot().len())
             .unwrap_or(0)
     }
 
@@ -268,6 +270,113 @@ where
         fmt::Debug::fmt(&*self.inner, f)
     }
 }
+pub struct ModEventStream<T>
+where
+    T: EventTuple,
+{
+    streams: T::Streams,
+}
+
+impl<T> ModEventStream<T>
+where
+    T: EventTuple,
+{
+    pub fn new(event_bus: &EventBus) -> Self {
+        Self {
+            streams: T::subscribe(event_bus),
+        }
+    }
+
+    pub fn from_streams(streams: T::Streams) -> Self {
+        Self { streams }
+    }
+
+    pub fn into_streams(self) -> T::Streams {
+        self.streams
+    }
+
+    pub fn streams(&self) -> &T::Streams {
+        &self.streams
+    }
+
+    pub fn streams_mut(&mut self) -> &mut T::Streams {
+        &mut self.streams
+    }
+
+    pub fn try_recv(&self) -> T::TryResults {
+        T::try_recv(&self.streams)
+    }
+
+    pub fn poll(&self) -> T::PollResults {
+        T::poll(&self.streams)
+    }
+}
+
+impl<T> fmt::Debug for ModEventStream<T>
+where
+    T: EventTuple,
+    T::Streams: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModEventStream")
+            .field("streams", &self.streams)
+            .finish()
+    }
+}
+
+pub trait EventTuple: Sized {
+    type Streams;
+    type TryResults;
+    type PollResults;
+
+    fn subscribe(event_bus: &EventBus) -> Self::Streams;
+    fn try_recv(streams: &Self::Streams) -> Self::TryResults;
+    fn poll(streams: &Self::Streams) -> Self::PollResults;
+}
+
+macro_rules! impl_event_tuple {
+    ($([$event:ident, $binding:ident]),+ $(,)?) => {
+        impl<$($event: Event),+> EventTuple for ($($event,)+) {
+            type Streams = ($(EventStream<$event>,)+);
+            type TryResults = ($(Result<EventDelivery<$event>, TryRecvError>,)+);
+            type PollResults = ($(Vec<EventDelivery<$event>>,)+);
+
+            fn subscribe(event_bus: &EventBus) -> Self::Streams {
+                ($(event_bus.subscribe::<$event>(),)+)
+            }
+
+            fn try_recv(streams: &Self::Streams) -> Self::TryResults {
+                let &( $( ref $binding, )+ ) = streams;
+                ($( $binding.try_recv(), )+)
+            }
+
+            fn poll(streams: &Self::Streams) -> Self::PollResults {
+                let &( $( ref $binding, )+ ) = streams;
+                ($( $binding.drain(), )+)
+            }
+        }
+    };
+}
+
+impl_event_tuple!([E0, stream0]);
+impl_event_tuple!([E0, stream0], [E1, stream1]);
+impl_event_tuple!([E0, stream0], [E1, stream1], [E2, stream2]);
+impl_event_tuple!([E0, stream0], [E1, stream1], [E2, stream2], [E3, stream3]);
+impl_event_tuple!(
+    [E0, stream0],
+    [E1, stream1],
+    [E2, stream2],
+    [E3, stream3],
+    [E4, stream4]
+);
+impl_event_tuple!(
+    [E0, stream0],
+    [E1, stream1],
+    [E2, stream2],
+    [E3, stream3],
+    [E4, stream4],
+    [E5, stream5]
+);
 
 pub struct EventStream<E: Event> {
     receiver: Receiver<DynEvent>,
@@ -359,18 +468,14 @@ impl<E: Event> fmt::Debug for EventStream<E> {
     }
 }
 
-static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
-
-pub fn global_event_bus() -> &'static EventBus {
-    GLOBAL_BUS.get_or_init(EventBus::new)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[derive(Debug)]
     struct Ping(u32);
+    #[derive(Debug)]
+    struct Pong(u32);
 
     #[test]
     fn publish_to_multiple_subscribers() {
@@ -416,5 +521,32 @@ mod tests {
         let event = stream.recv().unwrap();
         let owned = event.into_owned().expect("exclusive ownership");
         assert_eq!(owned.0, 99);
+    }
+
+    #[test]
+    fn mod_event_stream_handles_multiple_types() {
+        let bus = EventBus::new();
+        let streams = ModEventStream::<(Ping, Pong)>::new(&bus);
+
+        bus.publish(Ping(1));
+        bus.publish(Pong(2));
+
+        let (ping, pong) = streams.try_recv();
+
+        assert_eq!(ping.unwrap().into_arc().0, 1);
+        assert_eq!(pong.unwrap().into_arc().0, 2);
+
+        bus.publish(Ping(10));
+        bus.publish(Ping(11));
+        bus.publish(Pong(12));
+
+        let (mut ping_events, mut pong_events) = streams.poll();
+
+        assert_eq!(ping_events.len(), 2);
+        assert_eq!(ping_events.remove(0).into_arc().0, 10);
+        assert_eq!(ping_events.remove(0).into_arc().0, 11);
+
+        assert_eq!(pong_events.len(), 1);
+        assert_eq!(pong_events.remove(0).into_arc().0, 12);
     }
 }

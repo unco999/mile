@@ -78,8 +78,8 @@ fn vs_main(
 
     var out: VertexOutput;
     // 简单正交投影，x,y 范围 [-1,1]
-    let scale: vec2<f32> = vec2<f32>(0.5, 0.5); // 缩放到屏幕一半
-    out.position = vec4<f32>(position.x / aspect_ratio,position.y, 0.0, 1.0);
+    let scale: vec2<f32> = vec2<f32>(0.5, 0.5 * aspect_ratio); // 缩放到屏幕一半
+    out.position = vec4<f32>(position.x,position.y * aspect_ratio, 0.0, 1.0);
     out.uv = uv;
     return out;
 }

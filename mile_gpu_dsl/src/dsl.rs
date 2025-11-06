@@ -1,31 +1,40 @@
-use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
-use std::f32::EPSILON;
-use std::rc::Rc;
 use crate::core::*;
-
-
+use std::f32::EPSILON;
+use std::ops::{Add, Div, Index, IndexMut, Mul, Sub};
+use std::rc::Rc;
 
 impl From<f64> for Expr {
-    fn from(v: f64) -> Self { Expr::Constant(v as f32) }
+    fn from(v: f64) -> Self {
+        Expr::Constant(v as f32)
+    }
 }
 
 impl From<u32> for Expr {
-    fn from(v: u32) -> Self { Expr::Constant(v as f32) }
+    fn from(v: u32) -> Self {
+        Expr::Constant(v as f32)
+    }
 }
 impl From<bool> for Expr {
-    fn from(b: bool) -> Self { Expr::Constant(if b { 1.0 } else { 0.0 }) }
+    fn from(b: bool) -> Self {
+        Expr::Constant(if b { 1.0 } else { 0.0 })
+    }
 }
-
 
 // VecN -> Expr (wrap a VecN as an Expr::VecN)
 impl From<Vec2> for Expr {
-    fn from(v: Vec2) -> Self { Expr::Vec2(v) }
+    fn from(v: Vec2) -> Self {
+        Expr::Vec2(v)
+    }
 }
 impl From<Vec3> for Expr {
-    fn from(v: Vec3) -> Self { Expr::Vec3(v) }
+    fn from(v: Vec3) -> Self {
+        Expr::Vec3(v)
+    }
 }
 impl From<Vec4> for Expr {
-    fn from(v: Vec4) -> Self { Expr::Vec4(v) }
+    fn from(v: Vec4) -> Self {
+        Expr::Vec4(v)
+    }
 }
 
 // ---------- tuple -> Expr (vec2/vec3/vec4) by generics ----------
@@ -50,7 +59,11 @@ where
 {
     fn from(tuv: (T, U, V)) -> Self {
         let (a, b, c) = tuv;
-        Expr::Vec3(Vec3::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into())))
+        Expr::Vec3(Vec3::new(
+            Box::new(a.into()),
+            Box::new(b.into()),
+            Box::new(c.into()),
+        ))
     }
 }
 
@@ -64,7 +77,12 @@ where
 {
     fn from(tuvw: (T, U, V, W)) -> Self {
         let (a, b, c, d) = tuvw;
-        Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
+        Expr::Vec4(Vec4::new(
+            Box::new(a.into()),
+            Box::new(b.into()),
+            Box::new(c.into()),
+            Box::new(d.into()),
+        ))
     }
 }
 
@@ -96,19 +114,42 @@ where
     W: Into<Expr>,
 {
     fn from((a, b, c, d): (T, U, V, W)) -> Self {
-        Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into()))
+        Vec4::new(
+            Box::new(a.into()),
+            Box::new(b.into()),
+            Box::new(c.into()),
+            Box::new(d.into()),
+        )
     }
 }
 
 // ---------- optionally: array -> Expr (if 2/3/4 sized arrays desired) ----------
 impl From<[f32; 2]> for Expr {
-    fn from(a: [f32; 2]) -> Self { Expr::Vec2(Vec2::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])))) }
+    fn from(a: [f32; 2]) -> Self {
+        Expr::Vec2(Vec2::new(
+            Box::new(Expr::Constant(a[0])),
+            Box::new(Expr::Constant(a[1])),
+        ))
+    }
 }
 impl From<[f32; 3]> for Expr {
-    fn from(a: [f32; 3]) -> Self { Expr::Vec3(Vec3::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])), Box::new(Expr::Constant(a[2])))) }
+    fn from(a: [f32; 3]) -> Self {
+        Expr::Vec3(Vec3::new(
+            Box::new(Expr::Constant(a[0])),
+            Box::new(Expr::Constant(a[1])),
+            Box::new(Expr::Constant(a[2])),
+        ))
+    }
 }
 impl From<[f32; 4]> for Expr {
-    fn from(a: [f32; 4]) -> Self { Expr::Vec4(Vec4::new(Box::new(Expr::Constant(a[0])), Box::new(Expr::Constant(a[1])), Box::new(Expr::Constant(a[2])), Box::new(Expr::Constant(a[3])))) }
+    fn from(a: [f32; 4]) -> Self {
+        Expr::Vec4(Vec4::new(
+            Box::new(Expr::Constant(a[0])),
+            Box::new(Expr::Constant(a[1])),
+            Box::new(Expr::Constant(a[2])),
+            Box::new(Expr::Constant(a[3])),
+        ))
+    }
 }
 // ---------- htructors that fold when possible ----------
 
@@ -116,18 +157,31 @@ pub fn vec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
     Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
 }
 pub fn vec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
-    Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
+    Expr::Vec3(Vec3::new(
+        Box::new(x.into()),
+        Box::new(y.into()),
+        Box::new(z.into()),
+    ))
 }
-pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a:A,b:B,c:C,d:D) -> Expr {
-    Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
+pub fn vec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(
+    a: A,
+    b: B,
+    c: C,
+    d: D,
+) -> Expr {
+    Expr::Vec4(Vec4::new(
+        Box::new(a.into()),
+        Box::new(b.into()),
+        Box::new(c.into()),
+        Box::new(d.into()),
+    ))
 }
 
-
-pub fn cv(v:&'static str)->Expr{
+pub fn cv(v: &'static str) -> Expr {
     Expr::ComputeImport(v)
 }
 
-pub fn rv(v:&'static str)->Expr{
+pub fn rv(v: &'static str) -> Expr {
     Expr::RenderImport(v)
 }
 
@@ -160,9 +214,9 @@ impl Expr {
 
     pub fn take<T: Into<Expr>>(&self, index_expr: T) -> Expr {
         Expr::BinaryOp(
-            BinaryOp::Index, 
-            Box::new(self.clone()),  // 使用 Rc 共享而不是克隆
-            Box::new(index_expr.into())
+            BinaryOp::Index,
+            Box::new(self.clone()), // 使用 Rc 共享而不是克隆
+            Box::new(index_expr.into()),
         )
     }
 }
@@ -203,102 +257,135 @@ impl Add<&'static str> for Expr {
 // convenience: Expr * f32
 impl Mul<f32> for Expr {
     type Output = Expr;
-    fn mul(self, rhs: f32) -> Expr { self * Expr::Constant(rhs) }
+    fn mul(self, rhs: f32) -> Expr {
+        self * Expr::Constant(rhs)
+    }
 }
-
 
 impl Mul<Expr> for f32 {
     type Output = Expr;
-    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+    fn mul(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) * rhs
+    }
 }
 
 impl Mul<Expr> for u32 {
     type Output = Expr;
-    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+    fn mul(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) * rhs
+    }
 }
 
 impl Mul<Expr> for i32 {
     type Output = Expr;
-    fn mul(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) * rhs}
+    fn mul(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) * rhs
+    }
 }
 
 impl Add<Expr> for f32 {
     type Output = Expr;
-    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
+    fn add(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) + rhs
+    }
 }
 
 impl Add<Expr> for u32 {
     type Output = Expr;
-    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
+    fn add(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) + rhs
+    }
 }
 
 impl Add<Expr> for i32 {
     type Output = Expr;
-    fn add(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) + rhs}
+    fn add(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) + rhs
+    }
 }
 
 impl Div<Expr> for f32 {
     type Output = Expr;
-    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+    fn div(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) / rhs
+    }
 }
 
 impl Div<Expr> for u32 {
     type Output = Expr;
-    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+    fn div(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) / rhs
+    }
 }
 
 impl Div<Expr> for i32 {
     type Output = Expr;
-    fn div(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) / rhs}
+    fn div(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) / rhs
+    }
 }
-
 
 impl Sub<Expr> for f32 {
     type Output = Expr;
-    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+    fn sub(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) - rhs
+    }
 }
 
 impl Sub<Expr> for u32 {
     type Output = Expr;
-    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+    fn sub(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) - rhs
+    }
 }
 
 impl Sub<Expr> for i32 {
     type Output = Expr;
-    fn sub(self, rhs: Expr) -> Expr { Expr::Constant(self as f32) - rhs}
+    fn sub(self, rhs: Expr) -> Expr {
+        Expr::Constant(self as f32) - rhs
+    }
 }
 
 impl Mul<Expr> for &'static str {
     type Output = Expr;
-    fn mul(self, rhs: Expr) -> Expr { Expr::RenderImport(self) * rhs}
+    fn mul(self, rhs: Expr) -> Expr {
+        Expr::RenderImport(self) * rhs
+    }
 }
 
 impl Div<Expr> for &'static str {
     type Output = Expr;
-    fn div(self, rhs: Expr) -> Expr { Expr::RenderImport(self) / rhs}
+    fn div(self, rhs: Expr) -> Expr {
+        Expr::RenderImport(self) / rhs
+    }
 }
 
-impl Add<Expr> for&'static str {
+impl Add<Expr> for &'static str {
     type Output = Expr;
-    fn add(self, rhs: Expr) -> Expr { Expr::RenderImport(self) + rhs}
+    fn add(self, rhs: Expr) -> Expr {
+        Expr::RenderImport(self) + rhs
+    }
 }
 
 impl Sub<Expr> for &'static str {
     type Output = Expr;
-    fn sub(self, rhs: Expr) -> Expr { Expr::RenderImport(self) - rhs}
+    fn sub(self, rhs: Expr) -> Expr {
+        Expr::RenderImport(self) - rhs
+    }
 }
-
 
 // convenience: Expr * f32
 impl Mul<u32> for Expr {
     type Output = Expr;
-    fn mul(self, rhs: u32) -> Expr { self * Expr::Constant(rhs as f32) }
+    fn mul(self, rhs: u32) -> Expr {
+        self * Expr::Constant(rhs as f32)
+    }
 }
 
 // convenience: Expr * f32
 impl Mul<i32> for Expr {
     type Output = Expr;
-    fn mul(self, rhs: i32) -> Expr { self * Expr::Constant(rhs as f32) }
+    fn mul(self, rhs: i32) -> Expr {
+        self * Expr::Constant(rhs as f32)
+    }
 }
-
-
