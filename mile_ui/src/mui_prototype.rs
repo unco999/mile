@@ -9,7 +9,10 @@ use crate::{
     structs::PanelInteraction,
 };
 use glam::{Vec2, Vec4, vec2};
-use mile_api::{global::{global_db, global_event_bus}, prelude::_ty::PanelId};
+use mile_api::{
+    global::{global_db, global_event_bus},
+    prelude::_ty::PanelId,
+};
 use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::core::{Expr, dsl::wvec2};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -32,9 +35,7 @@ fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegis
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub(crate) fn install_runtime_event_bridge(
-    registry: Arc<Mutex<PanelEventRegistry>>,
-) {
+pub(crate) fn install_runtime_event_bridge(registry: Arc<Mutex<PanelEventRegistry>>) {
     let stored = EVENT_REGISTRY.get_or_init(|| Arc::clone(&registry)).clone();
     let mut pending = pending_registrations().lock().unwrap();
     if pending.is_empty() {
@@ -680,7 +681,7 @@ enum FlowMode<TPayload: PanelPayload> {
 struct PanelStateDefinition<TPayload: PanelPayload> {
     overrides: PanelStateOverrides,
     frag_shader: Option<FragClosure>,
-    vertex_shader:Option<VertexClosure>,
+    vertex_shader: Option<VertexClosure>,
     callbacks: HashMap<UiEventKind, Arc<EventFn<TPayload>>>,
     animations: Vec<AnimationSpec>,
     groups: Vec<MuiGroupDefinition>,
@@ -692,7 +693,7 @@ impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
         Self {
             overrides: PanelStateOverrides::default(),
             frag_shader: None,
-            vertex_shader:None,
+            vertex_shader: None,
             callbacks: HashMap::new(),
             animations: Vec::new(),
             groups: Vec::new(),
@@ -1168,11 +1169,8 @@ fn build_stateless<TPayload: PanelPayload>(
 pub type FragClosure = Arc<dyn Fn(&ShaderScope, PanelId) -> Expr + Send + Sync + 'static>;
 pub type VertexClosure = FragClosure;
 
-
-
 #[derive(Default)]
 pub struct ShaderScope;
-
 
 /// Example listener that can only mutate its own panel via the guard method.
 pub struct CountResetListener;
@@ -1205,17 +1203,19 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 .size(vec2(200.0, 100.0))
                 .position(vec2(333.0, 333.0))
                 .color(Vec4::new(1.0, 0.8, 0.8, 1.0))
-                .border(BorderStyle { color: [1.0,0.0,0.0,1.0], width:10.0, radius: 0.0 })
-                .z_index(5)
-                .fragment_shader(|a,b|{
-                    wvec2(1.0, 1.0)
+                .border(BorderStyle {
+                    color: [1.0, 0.0, 0.0, 1.0],
+                    width: 10.0,
+                    radius: 0.0,
                 })
+                .z_index(5)
+                .fragment_shader(|a, b| wvec2(1.0, 1.0))
                 .events()
-                    .on_event(UiEventKind::Click, |record,_|{
-                            println!("内部点击事件");
-                    })
-                    .finish()
-                .state_transform_fade(0.2);                
+                .on_event(UiEventKind::Click, |record, _| {
+                    println!("内部点击事件");
+                })
+                .finish()
+                .state_transform_fade(0.2);
             state
                 .events()
                 .on_event(UiEventKind::Drag, |record, _args| {
@@ -1235,7 +1235,11 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 .texture("caton (3).png")
                 .size_with_image()
                 .color(Vec4::new(1.0, 0.8, 0.8, 1.0))
-                .border(BorderStyle { color: [1.0,0.0,0.0,0.0], width:5.0, radius: 1.0 })
+                .border(BorderStyle {
+                    color: [1.0, 0.0, 0.0, 0.0],
+                    width: 5.0,
+                    radius: 1.0,
+                })
                 .events()
                 .on_event(UiEventKind::Click, |record, _args| {
                     record.data.count += 1;

@@ -5,8 +5,11 @@
 //! we plug the module into the runtime.
 
 use crate::{
-    runtime::_ty::{AnimtionFieldOffsetPtr, Panel, PanelAnimDelta, GpuInteractionFrameCache, GpuUiDebugReadCallBack},
-    structs::{GpuUiCollection, GpuUiIdInfo, GpuUiInfluence}
+    runtime::_ty::{
+        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrameCache, GpuUiDebugReadCallBack,
+        Panel, PanelAnimDelta,
+    },
+    structs::{GpuUiCollection, GpuUiIdInfo, GpuUiInfluence},
 };
 use bytemuck::bytes_of;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
@@ -42,6 +45,7 @@ pub struct BufferArena {
     pub panel_anim_delta: wgpu::Buffer,
     pub animation_fields: wgpu::Buffer,
     pub animation_values: wgpu::Buffer,
+    pub animation_descriptor: wgpu::Buffer,
     pub collections: wgpu::Buffer,
     pub relations: wgpu::Buffer,
     pub relation_ids: wgpu::Buffer,
@@ -49,6 +53,7 @@ pub struct BufferArena {
     pub interaction_frames: wgpu::Buffer,
     pub debug_buffer: wgpu::Buffer,
     pub capacities: BufferArenaConfig,
+    pub animation_fields_capacity: u32,
 }
 
 impl BufferArena {
@@ -86,6 +91,8 @@ impl BufferArena {
             mapped_at_creation: false,
         });
 
+        let animation_descriptor = GpuAnimationDes::default().to_buffer(device);
+
         let collections = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui::collections"),
             size: (cfg.max_collections as u64 * std::mem::size_of::<GpuUiCollection>() as u64)
@@ -113,7 +120,6 @@ impl BufferArena {
                 | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-
 
         let indirect_draws = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui::indirect-draws"),
@@ -143,6 +149,7 @@ impl BufferArena {
             panel_anim_delta,
             animation_fields,
             animation_values,
+            animation_descriptor,
             collections,
             relations,
             relation_ids,
@@ -150,6 +157,7 @@ impl BufferArena {
             interaction_frames,
             debug_buffer,
             capacities: cfg.clone(),
+            animation_fields_capacity: cfg.max_animation_fields,
         }
     }
 
@@ -172,6 +180,7 @@ impl BufferArena {
             panel_anim_delta: self.panel_anim_delta.slice(..),
             animation_fields: self.animation_fields.slice(..),
             animation_values: self.animation_values.slice(..),
+            animation_descriptor: self.animation_descriptor.slice(..),
             collections: self.collections.slice(..),
             relations: self.relations.slice(..),
             relation_ids: self.relation_ids.slice(..),
@@ -188,6 +197,7 @@ pub struct BufferViewSet<'a> {
     pub panel_anim_delta: wgpu::BufferSlice<'a>,
     pub animation_fields: wgpu::BufferSlice<'a>,
     pub animation_values: wgpu::BufferSlice<'a>,
+    pub animation_descriptor: wgpu::BufferSlice<'a>,
     pub collections: wgpu::BufferSlice<'a>,
     pub relations: wgpu::BufferSlice<'a>,
     pub relation_ids: wgpu::BufferSlice<'a>,

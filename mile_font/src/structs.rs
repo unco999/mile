@@ -11,11 +11,17 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
-use mile_api::{global::global_event_bus, prelude::{_ty::PanelId, CpuGlobalUniform, EventBus, GpuDebug, ModEventStream, Renderable}};
+use mile_api::{
+    global::global_event_bus,
+    prelude::{_ty::PanelId, CpuGlobalUniform, EventBus, GpuDebug, ModEventStream, Renderable},
+};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, morx::InsertionEntryData};
 use wgpu::{
-    Buffer, BufferUsages, DepthBiasState, Extent3d, RenderPass, SamplerBindingType, TextureFormat, TextureViewDescriptor, hal::{TextureDescriptor, auxil::db}, util::DeviceExt
+    Buffer, BufferUsages, DepthBiasState, Extent3d, RenderPass, SamplerBindingType, TextureFormat,
+    TextureViewDescriptor,
+    hal::{TextureDescriptor, auxil::db},
+    util::DeviceExt,
 };
 
 use crate::event::{BatchFontEntry, BatchRenderFont};
@@ -48,30 +54,27 @@ struct Vertex {
     uv: [f32; 2],
 }
 
-    /**字体style */
+/**字体style */
 #[derive(Debug)]
-pub struct FontStyle{
-    pub font_size:u32,
-    pub font_file_path:&'static str,
-    pub font_color:[f32;4],
-    pub font_weight:u32,
-    pub font_style:&'static str,
-    pub font_family:&'static str,
-    pub font_line_height:u32,
-    pub font_text_align:&'static str,
-    pub font_text_decoration:&'static str,
+pub struct FontStyle {
+    pub font_size: u32,
+    pub font_file_path: &'static str,
+    pub font_color: [f32; 4],
+    pub font_weight: u32,
+    pub font_style: &'static str,
+    pub font_family: &'static str,
+    pub font_line_height: u32,
+    pub font_text_align: &'static str,
+    pub font_text_decoration: &'static str,
 }
-
 
 #[derive(Debug)]
-struct Text<'a>{
-    text:&'a str,
-    style:&'a FontStyle,
+struct Text<'a> {
+    text: &'a str,
+    style: &'a FontStyle,
 }
 
-struct TextGpu{
-    
-}
+struct TextGpu {}
 
 #[derive(Clone, Debug)]
 pub struct GlyphMetrics {
@@ -97,11 +100,11 @@ pub struct GlyphMetrics {
 }
 
 #[derive(Default)]
-pub struct RenderPlanStore{
-    pub render_text_plan_map:HashMap<RenderTextPlanIdx,RenderTextPlan>,
+pub struct RenderPlanStore {
+    pub render_text_plan_map: HashMap<RenderTextPlanIdx, RenderTextPlan>,
 }
 
-type RegisterEvent<'a> = ModEventStream::<(BatchFontEntry,BatchRenderFont<'a, PanelId>)>;
+type RegisterEvent<'a> = ModEventStream<(BatchFontEntry, BatchRenderFont<'a, PanelId>)>;
 pub struct MileFont {
     gpu_debug: RefCell<GpuDebug>,
     cache: FontPipeLineCache,
@@ -112,9 +115,9 @@ pub struct MileFont {
     indirects_len: u32,
     num_instances: u32,
     is_update: bool,
-    global_event_hub:&'static EventBus,
-    register_global_event:RegisterEvent<'static>,
-    store:RenderPlanStore
+    global_event_hub: &'static EventBus,
+    register_global_event: RegisterEvent<'static>,
+    store: RenderPlanStore,
 }
 
 #[repr(C)]
@@ -128,7 +131,6 @@ struct DrawIndexedIndirect {
 }
 
 impl Renderable for MileFont {
-    
     fn render<'a>(
         &self,
         device: &wgpu::Device,
@@ -180,14 +182,16 @@ impl Renderable for MileFont {
         // queue.submit(Some(encoder.finish()));
     }
 
-
-
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.gpu_debug.borrow_mut().debug(device, queue);
     }
-    
-    fn resize(&mut self,size:winit::dpi::PhysicalSize<u32>,queue: &wgpu::Queue,device: &wgpu::Device) {
-        
+
+    fn resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+    ) {
     }
 }
 
@@ -211,15 +215,15 @@ pub struct FontBatch {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable, Default)]
-pub struct RenderTextPlan{
-    font_with_board_index_offset_start:u32,
-    font_with_board_index_offset_end:u32,
-    font_size:u32,
-    r:f32,
-    g:f32,
-    b:f32,
-    a:f32,
-    pad:u32
+pub struct RenderTextPlan {
+    font_with_board_index_offset_start: u32,
+    font_with_board_index_offset_end: u32,
+    font_size: u32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+    pad: u32,
 }
 
 pub type RenderTextPlanIdx = u32;
@@ -311,8 +315,8 @@ struct FontGlyphDes {
 impl MileFont {
     pub fn new(global_unifrom: Rc<CpuGlobalUniform>) -> Self {
         Self {
-            store:RenderPlanStore::default(),
-            global_event_hub:global_event_bus(),
+            store: RenderPlanStore::default(),
+            global_event_hub: global_event_bus(),
             gpu_debug: RefCell::new(GpuDebug::new("MileFont")),
             cache: Default::default(),
             fonts: Default::default(),
@@ -322,39 +326,36 @@ impl MileFont {
             indirects_len: Default::default(),
             num_instances: Default::default(),
             is_update: false,
-            register_global_event:RegisterEvent::new(global_event_bus())
+            register_global_event: RegisterEvent::new(global_event_bus()),
         }
     }
 
-    pub fn load_font_file(&mut self){
+    pub fn load_font_file(&mut self) {
         self.load_to_face("../ttf/BIZUDPGothic-Regular.ttf");
     }
-    
 
-    pub fn evnet_polling(&mut self,device:&wgpu::Device,queue: &wgpu::Queue){
-         let (batch_render_fonts,batch_entry_fonts) = self.register_global_event.poll();
+    pub fn evnet_polling(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let (batch_render_fonts, batch_entry_fonts) = self.register_global_event.poll();
 
-         let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
 
-         for e in &batch_entry_fonts {
-            grouped.entry(&e.font_file_path)
-                .or_default()
-                .push(&e.str);
-         }
-         for (font_file_name,text) in grouped{
-            let result = self.queue_batch_parse(font_file_name,text.iter().as_ref(),16);
+        for e in &batch_entry_fonts {
+            grouped.entry(&e.font_file_path).or_default().push(&e.str);
+        }
+        for (font_file_name, text) in grouped {
+            let result = self.queue_batch_parse(font_file_name, text.iter().as_ref(), 16);
             let cache = self.cache.generic_buffer_cache.as_mut().unwrap();
 
             if let Ok(mut res) = result {
-                println!("加入字体到印刷板 {:?}",text);
+                println!("加入字体到印刷板 {:?}", text);
                 let (des, instruction) = res.to_gpu_struct(cache.instruction_buffer_index);
                 self.write_batch_buffer(queue, &des, &instruction);
             }
-         }
-        for batch_render_font in batch_render_fonts{
-            println!("实际显示字体 {:?}",batch_render_font.str);
+        }
+        for batch_render_font in batch_render_fonts {
+            println!("实际显示字体 {:?}", batch_render_font.str);
             self.test_entry_text(queue);
-         }
+        }
     }
 
     pub fn test_entry_text(&mut self, queue: &wgpu::Queue) {
@@ -395,8 +396,7 @@ impl MileFont {
     }
 
     pub fn test_entry(&mut self, queue: &wgpu::Queue) {
-        let result =
-            self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["币"], 16);
+        let result = self.queue_batch_parse("../ttf/BIZUDPGothic-Regular.ttf", &["币"], 16);
         let cache = self.cache.generic_buffer_cache.as_mut().unwrap();
 
         if let Ok(mut res) = result {
@@ -957,7 +957,7 @@ impl MileFont {
                 let mut local_glyphs = Vec::new();
 
                 for ch in text.chars() {
-                    if cache.glyphs.contains_key(&ch) { 
+                    if cache.glyphs.contains_key(&ch) {
                         continue;
                     }
 

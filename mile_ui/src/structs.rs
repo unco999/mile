@@ -4,7 +4,6 @@ use image::{DynamicImage, GenericImage, GenericImageView, ImageReader, RgbaImage
 use std::{collections::HashMap, path::Path};
 use wgpu::{BufferAddress, TextureFormat, util::DeviceExt};
 
-
 /**
  * UI组件与组件之间的通信面板;
  */
@@ -21,7 +20,6 @@ impl<Target, Payload> UiMessage<Target, Payload> {
         }
     }
 }
-
 
 bitflags! {
     pub struct KennelUiBlend: u32 {
@@ -57,8 +55,6 @@ bitflags! {
         const Out = 0b00010000;
     }
 }
-
-
 
 bitflags! {
     /// Interaction Mask

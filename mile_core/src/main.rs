@@ -24,7 +24,6 @@ fn main() {
     let global_state: Arc<Mutex<GlobalState>> = Arc::new(Mutex::new(GlobalState::new()));
     let gs = global_state.clone();
 
-
     // App bundles hubs, fonts, rendering context, and timing info.
     let mut app = App {
         mile_font: None,
@@ -41,5 +40,3 @@ fn main() {
 
     event_loop_main.run_app(&mut app).unwrap();
 }
-
-

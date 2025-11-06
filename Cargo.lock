@@ -1492,6 +1492,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mile_gpu_structs"
+version = "0.1.0"
+
+[[package]]
 name = "mile_graphics"
 version = "0.1.0"
 dependencies = [

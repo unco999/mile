@@ -20,9 +20,18 @@ use super::{
     state::{CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, UIEventHub},
 };
 use crate::{
-    mui_prototype::{PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateOverrides, UiState, install_runtime_event_bridge}, runtime::{_ty::{GpuInteractionFrame, Panel}, UiInteractionScope}, structs::MouseState, util::texture_atlas_store::{self, GpuUiTextureInfo, TextureAtlasStore, UiTextureInfo}
+    mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
+    mui_prototype::{
+        install_runtime_event_bridge, PanelBinding, PanelKey, PanelPayload, PanelRecord,
+        PanelSnapshot, PanelStateOverrides, UiState,
+    },
+    runtime::_ty::{
+        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, TransformAnimFieldInfo,
+    },
+    structs::{AnimOp, EasingMask, MouseState, PanelField},
+    util::texture_atlas_store::{self, GpuUiTextureInfo, TextureAtlasStore, UiTextureInfo},
 };
-use bytemuck::{Pod, Zeroable, bytes_of, cast_slice, offset_of};
+use bytemuck::{bytes_of, cast_slice, offset_of, Pod, Zeroable};
 use mile_api::{
     event_bus::EventBus,
     global::{global_db, global_event_bus},
@@ -32,7 +41,8 @@ use mile_api::{
 use mile_db::{DbError, MileDb};
 use serde::de;
 use wgpu::{
-    DepthBiasState, Device, Queue, util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}
+    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
+    DepthBiasState, Device, Queue,
 };
 
 /// Tracks the previous and current frame interaction state so transitions
@@ -99,7 +109,6 @@ impl GlobalUniformState {
     }
 }
 
-
 #[derive(Default)]
 pub struct TextureGpuData {
     pub atlas_ids: Vec<u32>,
@@ -138,8 +147,6 @@ pub struct PanelCpuDescriptor {
     pub states: HashMap<UiState, PanelStateCpu>,
 }
 
-
-
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
 pub struct MuiRuntime {
     pub buffers: BufferArena,
@@ -157,7 +164,9 @@ pub struct MuiRuntime {
     pub global_db: &'static MileDb,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
-    pub trace:RefCell<GpuDebug>
+    animation_descriptor: GpuAnimationDes,
+    animation_field_cache: HashMap<(u32, u32), u32>,
+    pub trace: RefCell<GpuDebug>,
 }
 
 impl Renderable for MuiRuntime {
@@ -172,11 +181,16 @@ impl Renderable for MuiRuntime {
     }
 
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
-         let mut trace = self.trace.borrow_mut();
-         trace.debug(device, queue);
+        let mut trace = self.trace.borrow_mut();
+        trace.debug(device, queue);
     }
 
-    fn resize(&mut self,size:winit::dpi::PhysicalSize<u32>,queue: &wgpu::Queue,device: &wgpu::Device) {
+    fn resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+    ) {
         let screen = self.global_uniform.cpu_mut();
         screen.screen_size = [size.width, size.height];
         let state_offset = offset_of!(GlobalUniform, screen_size) as wgpu::BufferAddress;
@@ -186,7 +200,6 @@ impl Renderable for MuiRuntime {
             bytemuck::bytes_of(&[size.width, size.height]),
         );
     }
-    
 }
 
 impl Computeable for MuiRuntime {
@@ -206,9 +219,7 @@ impl Computeable for MuiRuntime {
             frame_index: self.state.frame_state.frame_index,
             panel_count: self.panel_instances.len() as u32,
         };
-        self.compute
-            .borrow_mut()
-            .readback_all(device, queue, &ctx);
+        self.compute.borrow_mut().readback_all(device, queue, &ctx);
     }
 
     fn is_dirty(&self) -> bool {
@@ -217,35 +228,30 @@ impl Computeable for MuiRuntime {
 }
 
 impl MuiRuntime {
-    const PANEL_STRIDE: wgpu::BufferAddress =
-        std::mem::size_of::<Panel>() as wgpu::BufferAddress;
-    
-    pub fn write_global_buffer<T:Pod + Zeroable>(
+    const PANEL_STRIDE: wgpu::BufferAddress = std::mem::size_of::<Panel>() as wgpu::BufferAddress;
+
+    pub fn write_global_buffer<T: Pod + Zeroable>(
         &self,
         queue: &Queue,
-        offset:wgpu::BufferAddress,
-        value:T
-    ){
-        queue.write_buffer(&self.global_uniform.buffer, offset, bytemuck::bytes_of(&value));
+        offset: wgpu::BufferAddress,
+        value: T,
+    ) {
+        queue.write_buffer(
+            &self.global_uniform.buffer,
+            offset,
+            bytemuck::bytes_of(&value),
+        );
     }
 
     /// Construct a new runtime using the supplied GPU device.
-    pub fn new(
-        device: &Device,
-        arena_cfg: BufferArenaConfig,
-    ) -> Self {
+    pub fn new(device: &Device, arena_cfg: BufferArenaConfig) -> Self {
         let buffers = BufferArena::new(device, &arena_cfg);
         let render = RenderPipelines::new(device);
         let global_uniform = GlobalUniformState::new(device);
         let mut state = RuntimeState::default();
         let hub = state.event_hub.clone();
         let registry = state.panel_events.clone();
-        let compute = ComputePipelines::new(
-            device,
-            &buffers,
-            global_uniform.buffer(),
-            hub.clone(),
-        );
+        let compute = ComputePipelines::new(device, &buffers, global_uniform.buffer(), hub.clone());
         install_runtime_event_bridge(registry);
 
         Self {
@@ -264,6 +270,8 @@ impl MuiRuntime {
             global_db: global_db(),
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
+            animation_descriptor: GpuAnimationDes::default(),
+            animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime")),
         }
     }
@@ -516,13 +524,24 @@ impl MuiRuntime {
     pub fn refresh_panel_cache<TPayload: PanelPayload>(
         &mut self,
         keys: &[PanelKey],
+        _device: &Device,
+        queue: &Queue,
     ) -> Result<(), DbError> {
         let table = self.global_db.bind_table::<PanelBinding<TPayload>>()?;
         for key in keys {
             match table.get(key)? {
-                Some(record) => {
-                    let descriptor = self.build_cpu_descriptor::<TPayload>(key.clone(), record);
-                    self.panel_cache.insert(key.clone(), descriptor);
+                Some(mut record) => {
+                    let pending = std::mem::take(&mut record.pending_animations);
+                    let descriptor =
+                        self.build_cpu_descriptor::<TPayload>(key.clone(), record.clone());
+                    self.panel_cache.insert(key.clone(), descriptor.clone());
+
+                    if !pending.is_empty() {
+                        self.schedule_panel_animations(queue, &descriptor, pending);
+                    }
+                    let mut entry = table.upsert_entry(key.clone(), record)?;
+                    entry.value_mut().pending_animations.clear();
+                    entry.commit()?;
                 }
                 None => {
                     self.panel_cache.remove(key);
@@ -554,11 +573,10 @@ impl MuiRuntime {
         let count = self.panel_instances.len() as u32;
         self.render
             .set_instance_range(QuadBatchKind::Static, 0..count);
-        self.render
-            .set_indirect_count(QuadBatchKind::Static, 0);
+        self.render.set_indirect_count(QuadBatchKind::Static, 0);
     }
 
-    pub fn event_poll(&mut self){
+    pub fn event_poll(&mut self) {
         let events = self.event_hub().poll();
         if events.is_empty() {
             return;
@@ -589,25 +607,26 @@ impl MuiRuntime {
                 label: Some("ui::render-bind-layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
                     wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                ],
             });
             self.render_bind_group_layout = Some(layout);
         }
@@ -623,14 +642,19 @@ impl MuiRuntime {
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ui::render-bind-group"),
                 layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.global_uniform.buffer().as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: trace.buffer.as_ref().expect("没有绑定trace-buffer").as_entire_binding(),
-                }
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.global_uniform.buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: trace
+                            .buffer
+                            .as_ref()
+                            .expect("没有绑定trace-buffer")
+                            .as_entire_binding(),
+                    },
                 ],
             });
             self.render_bind_group = Some(bind_group);
@@ -651,9 +675,7 @@ impl MuiRuntime {
         if needs_pipeline {
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ui::basic-shader"),
-                source: wgpu::ShaderSource::Wgsl(
-                    include_str!("ui_basic.wgsl").into(),
-                ),
+                source: wgpu::ShaderSource::Wgsl(include_str!("ui_basic.wgsl").into()),
             });
 
             let render_layout = self
@@ -831,7 +853,7 @@ impl MuiRuntime {
         let Some(texture_bindings) = self.texture_bindings.as_ref() else {
             return;
         };
-        
+
         let instance_count = self.panel_instances.len() as u32;
         if instance_count == 0 {
             return;
@@ -874,13 +896,7 @@ impl MuiRuntime {
                 .texture
                 .as_ref()
                 .and_then(|name| self.ensure_texture_loaded(name));
-            state_map.insert(
-                state_id,
-                PanelStateCpu {
-                    overrides,
-                    texture,
-                },
-            );
+            state_map.insert(state_id, PanelStateCpu { overrides, texture });
         }
 
         PanelCpuDescriptor {
@@ -915,10 +931,7 @@ impl MuiRuntime {
 
         let mut size = overrides.and_then(|o| o.size);
         if size.is_none() {
-            if overrides
-                .and_then(|o| o.fit_to_texture)
-                .unwrap_or(false)
-            {
+            if overrides.and_then(|o| o.fit_to_texture).unwrap_or(false) {
                 if let Some(info) = texture_info {
                     if let Some(raw) = self.texture_atlas_store.raw_image_info(&info.path) {
                         size = Some([raw.width as f32, raw.height as f32]);
@@ -937,12 +950,13 @@ impl MuiRuntime {
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
         let event_mask = overrides.and_then(|o| o.event_mask).unwrap_or(0);
         let state_mask = overrides.and_then(|o| o.state_mask).unwrap_or(0);
-        let vertex_shader_id = overrides.and_then(|o| o.vertex_shader_id).unwrap_or(u32::MAX);
-        let fragment_shader_id = overrides.and_then(|o| o.fragment_shader_id).unwrap_or(u32::MAX);
-        let collection_state = overrides
-            .and_then(|o| o.collection_state)
-            .unwrap_or(0);
-
+        let vertex_shader_id = overrides
+            .and_then(|o| o.vertex_shader_id)
+            .unwrap_or(u32::MAX);
+        let fragment_shader_id = overrides
+            .and_then(|o| o.fragment_shader_id)
+            .unwrap_or(u32::MAX);
+        let collection_state = overrides.and_then(|o| o.collection_state).unwrap_or(0);
 
         let transparent = overrides
             .and_then(|o| o.transparent)
@@ -1000,6 +1014,96 @@ impl MuiRuntime {
         }
         panel.pad_border = [0.0, 0.0];
         panel
+    }
+
+    fn schedule_panel_animations(
+        &mut self,
+        queue: &Queue,
+        descriptor: &PanelCpuDescriptor,
+        specs: Vec<AnimationSpec>,
+    ) {
+        if specs.is_empty() {
+            return;
+        }
+        let panel = self.descriptor_to_panel(descriptor);
+        for spec in specs {
+            if let Some(info) = animation_spec_to_transform(&panel, &spec) {
+                self.enqueue_animation(queue, panel.id, info);
+            } else {
+                eprintln!(
+                    "unsupported animation spec {:?} for panel {:?}",
+                    spec.property, panel.id
+                );
+            }
+        }
+    }
+
+    fn enqueue_animation(&mut self, queue: &Queue, panel_id: u32, info: TransformAnimFieldInfo) {
+        let entries = info.split_write_field(panel_id);
+        if entries.is_empty() {
+            return;
+        }
+
+        let entry_size = std::mem::size_of::<AnimtionFieldOffsetPtr>() as wgpu::BufferAddress;
+        let death_offset = offset_of!(AnimtionFieldOffsetPtr, death) as wgpu::BufferAddress;
+
+        for entry in entries {
+            self.kill_conflicting_fields(queue, panel_id, entry.field_id, death_offset, entry_size);
+
+            let index = self.animation_descriptor.animation_count;
+            if index >= self.buffers.animation_fields_capacity {
+                eprintln!(
+                    "animation buffer exhausted (capacity {}), skipping animation for panel {}",
+                    self.buffers.animation_fields_capacity, panel_id
+                );
+                return;
+            }
+
+            let offset = index as wgpu::BufferAddress * entry_size;
+            queue.write_buffer(
+                &self.buffers.animation_fields,
+                offset,
+                bytemuck::cast_slice(std::slice::from_ref(&entry)),
+            );
+
+            self.animation_field_cache
+                .insert((index, panel_id), entry.field_id);
+            self.animation_descriptor.animation_count += 1;
+        }
+
+        self.animation_descriptor.delta_time = self.state.frame_state.delta_time;
+        self.animation_descriptor.total_time += self.state.frame_state.delta_time;
+        self.animation_descriptor
+            .write_to_buffer(queue, &self.buffers.animation_descriptor);
+        let mut compute = self.compute.borrow_mut();
+        compute.update_animation_count(self.animation_descriptor.animation_count);
+        compute.mark_animation_dirty();
+    }
+
+    fn kill_conflicting_fields(
+        &mut self,
+        queue: &Queue,
+        panel_id: u32,
+        field_mask: u32,
+        death_offset: wgpu::BufferAddress,
+        entry_size: wgpu::BufferAddress,
+    ) {
+        let mut stale = Vec::new();
+        for (&(anim_idx, panel_idx), &mask) in self.animation_field_cache.iter() {
+            if panel_idx == panel_id && (mask & field_mask) != 0 {
+                stale.push((anim_idx, panel_idx));
+            }
+        }
+        for (anim_idx, key) in stale {
+            let offset = anim_idx as wgpu::BufferAddress * entry_size + death_offset;
+            let death: u32 = 1;
+            queue.write_buffer(
+                &self.buffers.animation_fields,
+                offset,
+                bytemuck::bytes_of(&death),
+            );
+            self.animation_field_cache.remove(&(anim_idx, key));
+        }
     }
 
     fn ensure_texture_loaded(&mut self, texture_name: &str) -> Option<UiTextureInfo> {
@@ -1088,7 +1192,6 @@ impl MuiRuntime {
         let buffer = self.global_uniform.buffer.clone();
         let mut unitfrom_struct = self.global_uniform.cpu_mut();
 
-
         let pressed = (unitfrom_struct.mouse_state
             & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits()))
             != 0;
@@ -1106,13 +1209,11 @@ impl MuiRuntime {
         );
         queue.write_buffer(
             &buffer,
-            offset_of!(GlobalUniform,mouse_state) as u64,
+            offset_of!(GlobalUniform, mouse_state) as u64,
             bytemuck::bytes_of(&unitfrom_struct.mouse_state),
         );
     }
 
-
-    
     pub fn mouse_press_tick_first(&mut self, queue: &wgpu::Queue) {
         let buffer = self.global_uniform.buffer().clone();
         let mut unitfrom_struct = self.global_uniform.cpu_mut();
@@ -1126,7 +1227,6 @@ impl MuiRuntime {
             unitfrom_struct.press_duration += 0.033;
         }
 
-
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;
         // 写入 GPU buffer
         queue.write_buffer(
@@ -1136,11 +1236,7 @@ impl MuiRuntime {
         );
     }
 
-    pub fn copy_interaction_swap_frame(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-    ) {
+    pub fn copy_interaction_swap_frame(&mut self, device: &Device, queue: &Queue) {
         let frame_size = std::mem::size_of::<GpuInteractionFrame>() as wgpu::BufferAddress;
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1153,21 +1249,40 @@ impl MuiRuntime {
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        
 
         let new_curr_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("ui::interaction-curr"),
-            contents: cast_slice(&[GpuInteractionFrame::empty(self.state.frame_state.frame_index)]),
+            contents: cast_slice(&[GpuInteractionFrame::empty(
+                self.state.frame_state.frame_index,
+            )]),
             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
         });
 
-        encoder.copy_buffer_to_buffer(&self.buffers.interaction_frames, frame_size, &temp_buffer, 0, frame_size);
-        encoder.copy_buffer_to_buffer(&temp_buffer, 0, &self.buffers.interaction_frames, 0, frame_size);
-        encoder.copy_buffer_to_buffer(&new_curr_buffer, 0, &self.buffers.interaction_frames, frame_size, frame_size);
+        encoder.copy_buffer_to_buffer(
+            &self.buffers.interaction_frames,
+            frame_size,
+            &temp_buffer,
+            0,
+            frame_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &temp_buffer,
+            0,
+            &self.buffers.interaction_frames,
+            0,
+            frame_size,
+        );
+        encoder.copy_buffer_to_buffer(
+            &new_curr_buffer,
+            0,
+            &self.buffers.interaction_frames,
+            frame_size,
+            frame_size,
+        );
 
         queue.submit(Some(encoder.finish()));
     }
-    
+
     pub fn update_mouse_state(&mut self, queue: &wgpu::Queue, mouse_state: MouseState) {
         let global = self.global_uniform.cpu_mut();
         global.mouse_state = mouse_state.bits();
@@ -1184,8 +1299,6 @@ impl MuiRuntime {
         let delta_time = self.state.frame_state.delta_time;
 
         let uniform = &mut self.global_uniform;
-
-
 
         // Mirror the legacy `Mui` frame ticking: keep dt/time/frame alive on both CPU & GPU.
         uniform.cpu_mut().dt = delta_time;
@@ -1307,5 +1420,73 @@ impl MuiRuntime {
     /// Update the indirect draw count for a render batch.
     pub fn set_render_batch_indirect_count(&mut self, kind: QuadBatchKind, count: u32) {
         self.render.set_indirect_count(kind, count);
+    }
+}
+
+fn animation_spec_to_transform(
+    panel: &Panel,
+    spec: &AnimationSpec,
+) -> Option<TransformAnimFieldInfo> {
+    let (field_bits, value_len) = match spec.property {
+        AnimProperty::Position => ((PanelField::POSITION_X | PanelField::POSITION_Y).bits(), 2),
+        AnimProperty::Size => ((PanelField::SIZE_X | PanelField::SIZE_Y).bits(), 2),
+        AnimProperty::Opacity => (PanelField::TRANSPARENT.bits(), 1),
+        _ => return None,
+    };
+
+    let target_values = match spec.to {
+        AnimTargetValue::Scalar(v) if value_len == 1 => vec![v],
+        AnimTargetValue::Vec2(v) if value_len == 2 => v.to_vec(),
+        AnimTargetValue::Vec4(v) if value_len == 2 => v[..2].to_vec(),
+        _ => return None,
+    };
+
+    let start_values = if let Some(ref from_value) = spec.from {
+        match (from_value, value_len) {
+            (AnimTargetValue::Scalar(v), 1) => vec![*v],
+            (AnimTargetValue::Vec2(v), 2) => v.to_vec(),
+            (AnimTargetValue::Vec4(v), 2) => v[..2].to_vec(),
+            _ => return None,
+        }
+    } else if spec.from_current {
+        panel_property_as_vec(panel, spec.property)?
+    } else {
+        panel_property_as_vec(panel, spec.property)?
+    };
+
+    Some(TransformAnimFieldInfo {
+        field_id: field_bits,
+        start_value: start_values,
+        target_value: target_values,
+        duration: spec.duration.max(0.0),
+        easing: easing_to_mask(spec.easing),
+        op: AnimOp::SET,
+        hold: 1,
+        delay: spec.delay.max(0.0),
+        loop_count: spec.loop_config.count.unwrap_or(0),
+        ping_pong: if spec.loop_config.ping_pong { 1 } else { 0 },
+        on_complete: 0,
+    })
+}
+
+fn panel_property_as_vec(panel: &Panel, property: AnimProperty) -> Option<Vec<f32>> {
+    match property {
+        AnimProperty::Position => Some(panel.position.to_vec()),
+        AnimProperty::Size => Some(panel.size.to_vec()),
+        AnimProperty::Opacity => Some(vec![panel.transparent]),
+        _ => None,
+    }
+}
+
+fn easing_to_mask(easing: Easing) -> EasingMask {
+    match easing {
+        Easing::Linear => EasingMask::LINEAR,
+        Easing::QuadraticIn => EasingMask::IN_QUAD,
+        Easing::QuadraticOut => EasingMask::OUT_QUAD,
+        Easing::QuadraticInOut => EasingMask::IN_OUT_QUAD,
+        Easing::CubicIn => EasingMask::IN_CUBIC,
+        Easing::CubicOut => EasingMask::OUT_CUBIC,
+        Easing::CubicInOut => EasingMask::IN_OUT_CUBIC,
+        _ => EasingMask::LINEAR,
     }
 }

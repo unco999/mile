@@ -1,7 +1,7 @@
-use bytemuck::{cast_slice, Pod, Zeroable};
+use bytemuck::{bytes_of, cast_slice, Pod, Zeroable};
 
 use crate::structs::{AnimOp, EasingMask};
-
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -338,4 +338,30 @@ pub struct AnimtionFieldOffsetPtr {
     pub death: u32,        // 是否结束
     pub easy_fn: u32,      // easing 函数标识
     pub _pad: [u32; 1],    // 补齐16字节对齐
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
+pub struct GpuAnimationDes {
+    pub animation_count: u32,
+    pub frame_count: u32,
+    pub start_index: u32,
+    pub _pad0: u32,
+    pub delta_time: f32,
+    pub total_time: f32,
+    pub _pad1: [f32; 2],
+}
+
+impl GpuAnimationDes {
+    pub fn to_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("ui::animation-descriptor"),
+            contents: bytes_of(self),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        })
+    }
+
+    pub fn write_to_buffer(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer) {
+        queue.write_buffer(buffer, 0, bytes_of(self));
+    }
 }

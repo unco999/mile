@@ -196,9 +196,7 @@ impl<B: TableBinding> TableHandle<B> {
             Some(_) => return Err(DbError::HashCollision),
             None => None,
         };
-        let changed = old
-            .as_ref()
-            .map_or(true, |existing| existing != value);
+        let changed = old.as_ref().map_or(true, |existing| existing != value);
         self.write_serialized(key_hash, key, value)?;
         if changed {
             B::emit_change(key, old.as_ref(), value);
@@ -241,7 +239,9 @@ impl<B: TableBinding> TableHandle<B> {
         let key_hash = compute_key_hash(key)?;
         let entry = self.load_entry(key_hash)?;
         match entry {
-            Some(found) if found.key == *key => Ok(Some(EditableEntry::new(self, found.key, found.value, true))),
+            Some(found) if found.key == *key => {
+                Ok(Some(EditableEntry::new(self, found.key, found.value, true)))
+            }
             Some(_) => Err(DbError::HashCollision),
             None => Ok(None),
         }
@@ -256,13 +256,18 @@ impl<B: TableBinding> TableHandle<B> {
         let key_hash = compute_key_hash(&key)?;
         let entry = self.load_entry(key_hash)?;
         match entry {
-            Some(found) if found.key == key => Ok(EditableEntry::new(self, found.key, found.value, true)),
+            Some(found) if found.key == key => {
+                Ok(EditableEntry::new(self, found.key, found.value, true))
+            }
             Some(_) => Err(DbError::HashCollision),
             None => Ok(EditableEntry::new(self, key, default_value, false)),
         }
     }
 
-    fn load_entry(&self, key_hash: u128) -> Result<Option<EntryEnvelope<B::Key, B::Value>>, DbError> {
+    fn load_entry(
+        &self,
+        key_hash: u128,
+    ) -> Result<Option<EntryEnvelope<B::Key, B::Value>>, DbError> {
         let txn = self.db.begin_read().map_err(map_redb_error)?;
         match txn.open_table(self.table) {
             Ok(table) => {
@@ -284,16 +289,19 @@ impl<B: TableBinding> TableHandle<B> {
         }
     }
 
-    fn write_serialized(&self, key_hash: u128, key: &B::Key, value: &B::Value) -> Result<(), DbError> {
+    fn write_serialized(
+        &self,
+        key_hash: u128,
+        key: &B::Key,
+        value: &B::Value,
+    ) -> Result<(), DbError> {
         let payload = EntryEnvelopeRef { key, value };
         let bytes = bincode::serialize(&payload)?;
 
         let txn = self.db.begin_write().map_err(map_redb_error)?;
         {
             let mut table = txn.open_table(self.table).map_err(map_redb_error)?;
-            table
-                .insert(key_hash, &bytes)
-                .map_err(map_redb_error)?;
+            table.insert(key_hash, &bytes).map_err(map_redb_error)?;
         }
         txn.commit().map_err(map_redb_error)?;
         Ok(())
@@ -363,7 +371,8 @@ impl<B: TableBinding> EditableEntry<B> {
     /// Commits the edited value back into the table.
     pub fn commit(self) -> Result<(), DbError> {
         let key_hash = compute_key_hash(&self.key)?;
-        self.handle.write_serialized(key_hash, &self.key, &self.value)?;
+        self.handle
+            .write_serialized(key_hash, &self.key, &self.value)?;
         let changed = self
             .original
             .as_ref()

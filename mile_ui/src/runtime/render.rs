@@ -7,8 +7,8 @@ use std::{mem, ops::Range};
 
 use crate::runtime::_ty::{quad_index_bytes, quad_vertex_bytes};
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt},
     IndexFormat,
+    util::{BufferInitDescriptor, DeviceExt},
 };
 
 /// Enumeration of the panel batches we render each frame.

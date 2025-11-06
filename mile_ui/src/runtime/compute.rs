@@ -10,9 +10,9 @@ use bytemuck::cast_slice;
 use wgpu::util::DownloadBuffer;
 
 use crate::runtime::{
-    buffers::{BufferArena, BufferViewSet},
     _ty::GpuInteractionFrame,
-    state::{CpuPanelEvent, UiInteractionScope, UIEventHub},
+    buffers::{BufferArena, BufferViewSet},
+    state::{CpuPanelEvent, UIEventHub, UiInteractionScope},
 };
 use mile_api::interface::GpuDebug;
 
@@ -28,7 +28,7 @@ pub struct FrameComputeContext<'a> {
 pub struct ComputePipelines {
     pub interaction: InteractionComputeStage,
     pub network: NoopStage,
-    pub animation: NoopStage,
+    pub animation: AnimationComputeStage,
 }
 
 impl ComputePipelines {
@@ -41,7 +41,7 @@ impl ComputePipelines {
         Self {
             interaction: InteractionComputeStage::new(device, buffers, global_uniform, event_hub),
             network: NoopStage::default(),
-            animation: NoopStage::default(),
+            animation: AnimationComputeStage::new(device, buffers, global_uniform),
         }
     }
 
@@ -79,6 +79,11 @@ impl ComputePipelines {
     }
 
     #[inline]
+    pub fn mark_animation_dirty(&mut self) {
+        self.animation.set_dirty();
+    }
+
+    #[inline]
     pub fn mark_all_dirty(&mut self) {
         self.interaction.set_dirty();
         self.network.set_dirty();
@@ -99,6 +104,21 @@ impl ComputePipelines {
         self.interaction
             .rebuild_bind_group(device, buffers, global_uniform);
         self.interaction.set_dirty();
+    }
+
+    pub fn rebuild_animation_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) {
+        self.animation
+            .rebuild_bind_groups(device, buffers, global_uniform);
+        self.animation.set_dirty();
+    }
+
+    pub fn update_animation_count(&mut self, count: u32) {
+        self.animation.set_animation_count(count);
     }
 }
 
@@ -334,7 +354,6 @@ impl InteractionComputeStage {
 
         let mut trace_buffer = self.trace.borrow_mut();
         trace_buffer.debug(device, queue);
-        
 
         let hub = self.event_hub.clone();
         DownloadBuffer::read_buffer(
@@ -362,7 +381,7 @@ impl InteractionComputeStage {
                 let new_frame: GpuInteractionFrame = frames[1];
 
                 if new_frame.click_id != u32::MAX {
-                    println!("点击事件 {:?}",new_frame.click_id);
+                    println!("点击事件 {:?}", new_frame.click_id);
                     hub.push(CpuPanelEvent::Click((
                         new_frame.frame,
                         UiInteractionScope {
@@ -373,7 +392,7 @@ impl InteractionComputeStage {
                 }
 
                 if new_frame.drag_id != u32::MAX {
-                    println!("拖拽事件 {:?}",new_frame.drag_id);
+                    println!("拖拽事件 {:?}", new_frame.drag_id);
                     hub.push(CpuPanelEvent::Drag((
                         new_frame.frame,
                         UiInteractionScope {
@@ -384,7 +403,7 @@ impl InteractionComputeStage {
                 }
 
                 if new_frame.hover_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
-                    println!("悬浮事件 {:?}",new_frame.hover_id);
+                    println!("悬浮事件 {:?}", new_frame.hover_id);
                     hub.push(CpuPanelEvent::Hover((
                         new_frame.frame,
                         UiInteractionScope {
@@ -406,6 +425,261 @@ impl InteractionComputeStage {
                 }
             },
         );
+    }
+}
+
+pub struct AnimationComputeStage {
+    pipeline: wgpu::ComputePipeline,
+    layout0: wgpu::BindGroupLayout,
+    layout1: wgpu::BindGroupLayout,
+    bind_group0: wgpu::BindGroup,
+    bind_group1: wgpu::BindGroup,
+    animation_count: u32,
+    dirty: bool,
+}
+
+impl AnimationComputeStage {
+    const WORKGROUP_SIZE: u32 = 64;
+
+    pub fn new(
+        device: &wgpu::Device,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) -> Self {
+        let layout0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui::animation-bind-group-0"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let layout1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui::animation-bind-group-1"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ui::animation-pipeline-layout"),
+            bind_group_layouts: &[&layout0, &layout1],
+            push_constant_ranges: &[],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ui::animation-compute"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../animtion_compute.wgsl").into()),
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("ui::animation-compute-pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        });
+
+        let bind_group0 = Self::create_bind_group0(device, &layout0, buffers, global_uniform);
+        let bind_group1 = Self::create_bind_group1(device, &layout1, buffers);
+
+        Self {
+            pipeline,
+            layout0,
+            layout1,
+            bind_group0,
+            bind_group1,
+            animation_count: 0,
+            dirty: false,
+        }
+    }
+
+    fn create_bind_group0(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::animation-bind-group-0"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: global_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffers.animation_fields.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.panel_anim_delta.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: buffers.animation_descriptor.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: buffers.debug_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    fn create_bind_group1(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        buffers: &BufferArena,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::animation-bind-group-1"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.relation_ids.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.relations.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    pub fn rebuild_bind_groups(
+        &mut self,
+        device: &wgpu::Device,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) {
+        self.bind_group0 = Self::create_bind_group0(device, &self.layout0, buffers, global_uniform);
+        self.bind_group1 = Self::create_bind_group1(device, &self.layout1, buffers);
+    }
+
+    pub fn set_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    pub fn set_animation_count(&mut self, count: u32) {
+        self.animation_count = count;
+        if count > 0 {
+            self.dirty = true;
+        }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn encode(
+        &mut self,
+        pass: &mut wgpu::ComputePass<'_>,
+        _buffers: &BufferViewSet<'_>,
+        _ctx: &FrameComputeContext<'_>,
+    ) {
+        if self.animation_count == 0 {
+            self.dirty = false;
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group0, &[]);
+        pass.set_bind_group(1, &self.bind_group1, &[]);
+        let workgroups = (self.animation_count + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
+        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        self.dirty = false;
+    }
+
+    pub fn readback(
+        &mut self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _ctx: &FrameComputeContext<'_>,
+    ) {
     }
 }
 

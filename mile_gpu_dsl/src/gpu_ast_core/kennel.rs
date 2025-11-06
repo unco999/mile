@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use bytemuck::{Zeroable, cast_slice};
-use mile_api::{prelude::*};
+use mile_api::prelude::*;
 use wgpu::{Device, util::DownloadBuffer};
 
 use crate::prelude::{

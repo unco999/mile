@@ -9,7 +9,10 @@ use flume::{Receiver, Sender};
 use glam::Vec2;
 
 use crate::{
-    mui_anim::AnimationSpec, mui_prototype::{PanelStateOverrides, UiState}, runtime::_ty::TransformAnimFieldInfo, structs::PanelInteraction
+    mui_anim::AnimationSpec,
+    mui_prototype::{PanelStateOverrides, UiState},
+    runtime::_ty::TransformAnimFieldInfo,
+    structs::PanelInteraction,
 };
 
 /// Frame index alias used throughout the UI runtime.

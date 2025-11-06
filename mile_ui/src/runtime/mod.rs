@@ -5,12 +5,12 @@
 //! the existing `mui.rs` implementation yet.  Individual submodules can be fleshed out
 //! and wired into `GpuUi` incrementally.
 
+pub mod _ty;
 pub mod buffers;
 pub mod compute;
 pub mod entry;
 pub mod render;
 pub mod state;
-pub mod _ty;
 
 pub use buffers::{BufferArena, BufferArenaConfig, BufferViewSet};
 pub use compute::{ComputePipelines, FrameComputeContext};

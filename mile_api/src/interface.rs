@@ -1,21 +1,28 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::{Duration, Instant}};
 use bitflags::*;
 use bytemuck::{Pod, Zeroable};
-use wgpu::{RenderPass, util::{BufferInitDescriptor, DeviceExt, DownloadBuffer}};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+use wgpu::{
+    RenderPass,
+    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
+};
 use winit::dpi::PhysicalSize;
 
-pub mod _ty{
+pub mod _ty {
     pub type LayerID = u32;
-    
+
     #[derive(Clone, Copy, Debug)]
     pub struct PanelId(pub u32);
-    
+
     impl Into<u32> for PanelId {
         fn into(self) -> u32 {
             self.0
         }
     }
-
 }
 
 bitflags! {
@@ -39,7 +46,12 @@ pub trait Renderable {
     );
     fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue);
 
-    fn resize(&mut self,size:winit::dpi::PhysicalSize<u32>,queue: &wgpu::Queue,device: &wgpu::Device);
+    fn resize(
+        &mut self,
+        size: winit::dpi::PhysicalSize<u32>,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+    );
 }
 
 pub trait Computeable {
@@ -218,12 +230,10 @@ impl CpuGlobalUniform {
     }
 }
 
-
 pub struct ImportRegistry {
     render_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
     compute_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportType {
@@ -237,7 +247,6 @@ pub struct ImportInfo {
     pub mask: u32,    // 比如 01 是uv, 11 是pos+uv
     pub index: usize, // 在V中的索引位置
 }
-
 
 pub type ImportHandler = Box<dyn Fn(&[f32]) -> Vec<f32> + Send + Sync>;
 
@@ -292,4 +301,3 @@ impl ImportRegistry {
         }
     }
 }
-

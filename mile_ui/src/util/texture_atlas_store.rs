@@ -9,7 +9,7 @@ use std::{
 
 use image::{GenericImage, ImageReader, RgbaImage};
 
-#[derive(Clone,Default)]
+#[derive(Clone, Default)]
 pub struct TextureAtlasSet {
     pub data: HashMap<u32, TextureAtlas>,
     pub curr_ui_texture_info_index: u32,

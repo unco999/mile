@@ -27,14 +27,14 @@ pub struct WGPUContext {
     pub global_uniform_buffer: Buffer,
     pub bindgroup: BindGroup,
     pub global_state: Arc<Mutex<GlobalState>>,
-    pub realtime_info:RealTimeInfo
+    pub realtime_info: RealTimeInfo,
 }
 
-#[derive(Default,Clone)]
-pub struct RealTimeInfo{
-    windows_width:u32,
-    windows_height:u32,
-    depth_view:Option<wgpu::TextureView>
+#[derive(Default, Clone)]
+pub struct RealTimeInfo {
+    windows_width: u32,
+    windows_height: u32,
+    depth_view: Option<wgpu::TextureView>,
 }
 
 #[derive(Debug)]
@@ -160,9 +160,13 @@ pub const VERTEX_LIST: &[Vertex] = &[
 ];
 
 fn create_depth_view(device: &wgpu::Device, size: PhysicalSize<u32>) -> wgpu::TextureView {
-    let depth = device.create_texture(&wgpu::TextureDescriptor{
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),
-        size: wgpu::Extent3d{ width: size.width.max(1), height: size.height.max(1), depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: size.width.max(1),
+            height: size.height.max(1),
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -186,7 +190,6 @@ impl WGPUContext {
         }))
         .expect("Failed to find an appropriate adapter");
 
- 
         let limits = adapter.limits();
 
         println!(
@@ -206,27 +209,26 @@ impl WGPUContext {
         }))
         .expect("Failed to create device");
 
-
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
 
-        let depth_view = create_depth_view(&device,size);
-        
+        let depth_view = create_depth_view(&device, size);
 
         let surface_config = surface
             .get_default_config(&adapter, width, height)
             .expect("Failed to get default surface config");
 
         let caps = surface.get_capabilities(&adapter);
-        let surface_format = caps.formats
+        let surface_format = caps
+            .formats
             .iter()
             .copied()
-            .find(|f| f.is_srgb())                  // 优先 sRGB
+            .find(|f| f.is_srgb()) // 优先 sRGB
             .unwrap_or(caps.formats[0]);
-        let present_mode = caps.present_modes[0];     // 也可挑 Fifo/AutoVsync 等
+        let present_mode = caps.present_modes[0]; // 也可挑 Fifo/AutoVsync 等
         let alpha_mode = caps.alpha_modes[0];
-        let (width,height) =  (window.inner_size().width,window.inner_size().height);
+        let (width, height) = (window.inner_size().width, window.inner_size().height);
         let mut config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -234,8 +236,8 @@ impl WGPUContext {
             height,
             present_mode,
             alpha_mode,
-            view_formats:vec![],
-            desired_maximum_frame_latency: 0,     // 若做 sRGB->linear 互通可填入
+            view_formats: vec![],
+            desired_maximum_frame_latency: 0, // 若做 sRGB->linear 互通可填入
         };
 
         surface.configure(&device, &config);
@@ -265,7 +267,11 @@ impl WGPUContext {
             global_uniform_buffer: buffer,
             bindgroup,
             global_state,
-            realtime_info: RealTimeInfo { windows_width: width, windows_height: height ,depth_view:Some(depth_view) },
+            realtime_info: RealTimeInfo {
+                windows_width: width,
+                windows_height: height,
+                depth_view: Some(depth_view),
+            },
         }
     }
 
@@ -334,9 +340,16 @@ impl WGPUContext {
                     },
                     depth_slice: None,
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment{
-                    view: &self.realtime_info.depth_view.as_ref().expect("没有创造深度图"),
-                    depth_ops: Some(wgpu::Operations{ load: wgpu::LoadOp::Clear(1.0), store: StoreOp::Discard}),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self
+                        .realtime_info
+                        .depth_view
+                        .as_ref()
+                        .expect("没有创造深度图"),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: StoreOp::Discard,
+                    }),
                     stencil_ops: None,
                 }),
                 ..Default::default()

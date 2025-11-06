@@ -63,7 +63,7 @@ impl App {
                 .iter()
                 .map(|(key,handle)| key.clone())
                 .collect();
-            let _ = runtime.refresh_panel_cache::<CounterData>(&keys);
+            let _ = runtime.refresh_panel_cache::<CounterData>(&keys, &ctx.device, &ctx.queue);
             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
         }
 
@@ -302,7 +302,7 @@ impl ApplicationHandler<AppEvent> for App {
                                    {
                                        let ctx = self.wgpu_context.as_ref().unwrap();
                                        let mut runtime = runtime_cell.borrow_mut();
-                                       let _ = runtime.refresh_panel_cache::<CounterData>(&[key]);
+                                       let _ = runtime.refresh_panel_cache::<CounterData>(&[key], &ctx.device, &ctx.queue);
                                        runtime.upload_panel_instances(&ctx.device, &ctx.queue);
                                    }
                                }

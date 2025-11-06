@@ -15,16 +15,16 @@ use wgpu::{
     util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
     wgc::device::queue,
 };
-pub mod util;
 pub mod event_bus;
 pub mod global;
 pub mod interface;
+pub mod util;
 
 pub mod prelude {
-    pub use crate::util::{*};
-    pub use crate::event_bus::{*};
-    pub use crate::global::{*};
-    pub use crate::interface::{*};
+    pub use crate::event_bus::*;
+    pub use crate::global::*;
+    pub use crate::interface::*;
+    pub use crate::util::*;
 }
 
 use lazy_static::lazy_static;
@@ -94,7 +94,6 @@ pub struct GpuDebug {
     last_print: Instant,      // 上一次打印时间
     print_interval: Duration, // 最小间隔
 }
-
 
 impl GpuDebugReadCallBack {
     pub fn print(name: &'static str, data: &GpuDebugReadCallBack) {

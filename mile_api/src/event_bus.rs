@@ -2,12 +2,18 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use flume::{Receiver, RecvError, RecvTimeoutError, Sender, TryRecvError, TrySendError};
 use std::{
-    any::{Any, TypeId}, cell::Cell, fmt, marker::PhantomData, ops::Deref, process::Output, sync::{
+    any::{Any, TypeId},
+    cell::Cell,
+    fmt,
+    marker::PhantomData,
+    ops::Deref,
+    process::Output,
+    sync::{
         Arc, OnceLock, Weak,
         atomic::{AtomicU64, Ordering},
-    }, time::Duration
+    },
+    time::Duration,
 };
-
 
 pub trait Event: Any + Send + Sync + 'static {}
 impl<T: Any + Send + Sync + 'static> Event for T {}
@@ -156,7 +162,11 @@ impl EventBus {
         self.inner
             .subscribers
             .get(&TypeId::of::<E>())
-            .map(|entry: dashmap::mapref::one::Ref<'_, TypeId, Arc<SubscriberList>>| entry.value().snapshot().len())
+            .map(
+                |entry: dashmap::mapref::one::Ref<'_, TypeId, Arc<SubscriberList>>| {
+                    entry.value().snapshot().len()
+                },
+            )
             .unwrap_or(0)
     }
 
