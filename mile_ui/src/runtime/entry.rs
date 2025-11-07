@@ -25,8 +25,8 @@ use super::{
 use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
     mui_prototype::{
-        install_runtime_event_bridge, registered_panel_keys, PanelBinding, PanelKey, PanelPayload,
-        PanelRecord, PanelSnapshot, PanelStateOverrides, UiState,
+        PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateOverrides,
+        UiState, install_runtime_event_bridge, registered_panel_keys,
     },
     runtime::_ty::{
         AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, TransformAnimFieldInfo,
@@ -34,7 +34,7 @@ use crate::{
     structs::{AnimOp, EasingMask, MouseState, PanelField},
     util::texture_atlas_store::{self, GpuUiTextureInfo, TextureAtlasStore, UiTextureInfo},
 };
-use bytemuck::{bytes_of, cast_slice, offset_of, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, bytes_of, cast_slice, offset_of};
 use mile_api::{
     event_bus::EventBus,
     global::{global_db, global_event_bus},
@@ -44,8 +44,8 @@ use mile_api::{
 use mile_db::{DbError, MileDb};
 use serde::de;
 use wgpu::{
-    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
     DepthBiasState, Device, Queue,
+    util::{BufferInitDescriptor, DeviceExt, DownloadBuffer},
 };
 
 /// Tracks the previous and current frame interaction state so transitions
@@ -134,17 +134,18 @@ pub struct TextureBindings {
     pub texture_count: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PanelStateCpu {
     pub overrides: PanelStateOverrides,
     pub texture: Option<UiTextureInfo>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PanelCpuDescriptor {
     pub key: PanelKey,
     pub default_state: Option<UiState>,
     pub current_state: UiState,
+    pub display_state: UiState,
     pub snapshot: PanelSnapshot,
     pub snapshot_texture: Option<UiTextureInfo>,
     pub states: HashMap<UiState, PanelStateCpu>,
@@ -168,6 +169,8 @@ pub struct MuiRuntime {
     pub global_db: &'static MileDb,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
+    panel_instances_dirty: bool,
+    transitioning_panels: HashMap<u32, f32>,
     animation_descriptor: GpuAnimationDes,
     animation_field_cache: HashMap<(u32, u32), u32>,
     pub trace: RefCell<GpuDebug>,
@@ -274,6 +277,8 @@ impl MuiRuntime {
             global_db: global_db(),
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
+            panel_instances_dirty: true,
+            transitioning_panels: HashMap::new(),
             animation_descriptor: GpuAnimationDes::default(),
             animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime")),
@@ -560,9 +565,19 @@ impl MuiRuntime {
             match table.get(key)? {
                 Some(mut record) => {
                     let pending = std::mem::take(&mut record.pending_animations);
-                    let descriptor =
+                    let mut descriptor =
                         self.build_cpu_descriptor::<TPayload>(key.clone(), record.clone());
-                    self.panel_cache.insert(key.clone(), descriptor.clone());
+                    if let Some(existing) = self.panel_cache.get(key) {
+                        descriptor.display_state = existing.display_state;
+                    }
+                    let needs_update = match self.panel_cache.get(key) {
+                        Some(existing) => existing != &descriptor,
+                        None => true,
+                    };
+                    if needs_update {
+                        self.panel_cache.insert(key.clone(), descriptor.clone());
+                        self.panel_instances_dirty = true;
+                    }
 
                     if !pending.is_empty() {
                         self.schedule_panel_animations(queue, &descriptor, pending);
@@ -572,7 +587,9 @@ impl MuiRuntime {
                     entry.commit()?;
                 }
                 None => {
-                    self.panel_cache.remove(key);
+                    if self.panel_cache.remove(key).is_some() {
+                        self.panel_instances_dirty = true;
+                    }
                 }
             }
         }
@@ -580,6 +597,9 @@ impl MuiRuntime {
     }
 
     pub fn upload_panel_instances(&mut self, device: &Device, queue: &Queue) {
+        if !self.panel_instances_dirty {
+            return;
+        }
         if self.texture_bindings.is_none() {
             let _ = self.rebuild_texture_bindings(device, queue);
         }
@@ -587,9 +607,19 @@ impl MuiRuntime {
         let mut descriptors: Vec<&PanelCpuDescriptor> = self.panel_cache.values().collect();
         descriptors.sort_by_key(|desc| desc.key.panel_id);
 
+        let previous_instances: HashMap<u32, Panel> = self
+            .panel_instances
+            .iter()
+            .copied()
+            .map(|panel| (panel.id, panel))
+            .collect();
+
         let panels: Vec<Panel> = descriptors
             .into_iter()
-            .map(|desc| self.descriptor_to_panel(desc))
+            .map(|desc| {
+                let fallback = previous_instances.get(&desc.key.panel_id);
+                self.descriptor_to_panel_with_base(desc, fallback)
+            })
             .collect();
 
         self.panel_instances = panels;
@@ -602,6 +632,7 @@ impl MuiRuntime {
         self.render
             .set_instance_range(QuadBatchKind::Static, 0..count);
         self.render.set_indirect_count(QuadBatchKind::Static, 0);
+        self.panel_instances_dirty = false;
     }
 
     pub fn event_poll(&mut self, _device: &Device, queue: &Queue) {
@@ -613,6 +644,7 @@ impl MuiRuntime {
         let mut guard = registry.lock().unwrap();
         for event in events {
             if let CpuPanelEvent::StateTransition(transition) = &event {
+                println!("transition {:?}", transition);
                 self.apply_state_transition(transition.clone(), queue);
             }
             guard.emit(&event);
@@ -632,44 +664,57 @@ impl MuiRuntime {
             return;
         };
 
-        let previous_panel = self
-            .panel_instances
-            .iter()
-            .find(|panel| panel.id == panel_id)
-            .copied();
-
-        if let Some(desc) = self.panel_cache.get_mut(&key) {
+        let target_descriptor = {
+            let Some(desc) = self.panel_cache.get_mut(&key) else {
+                return;
+            };
+            if desc.display_state == transition.new_state {
+                return;
+            }
             desc.current_state = transition.new_state;
-        }
-
-        let Some(desc) = self.panel_cache.get(&key) else {
-            return;
+            let mut clone = desc.clone();
+            clone.display_state = clone.current_state;
+            clone
         };
-        let target_panel = self.descriptor_to_panel(desc);
-
-        let Some(instance_index) = self
+        let (instance_index, previous_panel) = match self
             .panel_instances
             .iter()
-            .position(|panel| panel.id == panel_id)
-        else {
-            // Panel has not been uploaded yet; store the target for the next upload pass.
-            return;
+            .enumerate()
+            .find(|(_, panel)| panel.id == panel_id)
+        {
+            Some((idx, panel)) => (idx, *panel),
+            None => {
+                if let Some(desc) = self.panel_cache.get_mut(&key) {
+                    desc.display_state = desc.current_state;
+                }
+                return;
+            }
         };
 
-        let mut gpu_panel = target_panel;
-        if let Some(prev) = previous_panel {
-            gpu_panel.position = prev.position;
-            gpu_panel.size = prev.size;
-            gpu_panel.transparent = prev.transparent;
-            self.enqueue_style_transition(queue, &prev, &target_panel);
+        let target_panel =
+            self.descriptor_to_panel_with_base(&target_descriptor, Some(&previous_panel));
+
+        if let Some(duration) = self.enqueue_style_transition(queue, &previous_panel, &target_panel)
+        {
+            self.transitioning_panels.insert(panel_id, duration);
+        } else if let Some(desc) = self.panel_cache.get_mut(&key) {
+            desc.display_state = desc.current_state;
         }
 
-        self.panel_instances[instance_index] = target_panel;
-        self.write_panel(queue, instance_index as u32, &gpu_panel);
+        self.update_panel_state_field(instance_index as u32, transition.new_state.0, queue);
+        if let Some(instance) = self.panel_instances.get_mut(instance_index) {
+            instance.state = transition.new_state.0;
+        }
     }
 
-    fn enqueue_style_transition(&mut self, queue: &Queue, current: &Panel, target: &Panel) {
+    fn enqueue_style_transition(
+        &mut self,
+        queue: &Queue,
+        current: &Panel,
+        target: &Panel,
+    ) -> Option<f32> {
         const DURATION: f32 = 0.25;
+        let mut enqueued = false;
 
         if current.position != target.position {
             let info = TransformAnimFieldInfo {
@@ -686,6 +731,7 @@ impl MuiRuntime {
                 on_complete: 0,
             };
             self.enqueue_animation(queue, target.id, info);
+            enqueued = true;
         }
 
         if current.size != target.size {
@@ -703,6 +749,7 @@ impl MuiRuntime {
                 on_complete: 0,
             };
             self.enqueue_animation(queue, target.id, info);
+            enqueued = true;
         }
 
         if (current.transparent - target.transparent).abs() > f32::EPSILON {
@@ -720,7 +767,89 @@ impl MuiRuntime {
                 on_complete: 0,
             };
             self.enqueue_animation(queue, target.id, info);
+            enqueued = true;
         }
+
+        if current.color != target.color {
+            let info = TransformAnimFieldInfo {
+                field_id: (PanelField::COLOR_R
+                    | PanelField::COLOR_G
+                    | PanelField::COLOR_B
+                    | PanelField::COLOR_A)
+                    .bits(),
+                start_value: current.color.to_vec(),
+                target_value: target.color.to_vec(),
+                duration: DURATION,
+                easing: EasingMask::IN_OUT_QUAD,
+                op: AnimOp::SET,
+                hold: 1,
+                delay: 0.0,
+                loop_count: 0,
+                ping_pong: 0,
+                on_complete: 0,
+            };
+            self.enqueue_animation(queue, target.id, info);
+            enqueued = true;
+        }
+
+        if enqueued { Some(DURATION) } else { None }
+    }
+
+    fn update_animation_time(&mut self, delta_time: f32, queue: &Queue) {
+        if delta_time <= 0.0 {
+            return;
+        }
+        if self.animation_descriptor.animation_count == 0 {
+            return;
+        }
+        self.animation_descriptor.delta_time = delta_time;
+        self.animation_descriptor.total_time += delta_time;
+        self.animation_descriptor
+            .write_to_buffer(queue, &self.buffers.animation_descriptor);
+        self.compute.borrow_mut().mark_animation_dirty();
+    }
+
+    fn advance_panel_transitions(&mut self, delta_time: f32) {
+        if self.transitioning_panels.is_empty() {
+            return;
+        }
+
+        let mut finished = Vec::new();
+        for (panel_id, remaining) in self.transitioning_panels.iter_mut() {
+            if *remaining <= delta_time {
+                finished.push(*panel_id);
+            } else {
+                *remaining -= delta_time;
+            }
+        }
+
+        for panel_id in finished {
+            self.transitioning_panels.remove(&panel_id);
+            if let Some(desc) = self
+                .panel_cache
+                .values_mut()
+                .find(|desc| desc.key.panel_id == panel_id)
+            {
+                desc.display_state = desc.current_state;
+                self.panel_instances_dirty = true;
+            }
+        }
+    }
+
+    fn update_panel_state_field(&self, instance_index: u32, new_state: u32, queue: &Queue) {
+        let panel_offset = Self::panel_offset(instance_index);
+        let field_offset = offset_of!(Panel, state) as wgpu::BufferAddress;
+        dbg!(
+            "写入状态 {} => {} :{}",
+            panel_offset,
+            field_offset,
+            new_state
+        );
+        queue.write_buffer(
+            &self.buffers.instance,
+            panel_offset + field_offset,
+            bytemuck::bytes_of(&new_state),
+        );
     }
 
     pub fn panel_instances(&self) -> &[Panel] {
@@ -1038,6 +1167,7 @@ impl MuiRuntime {
             key,
             default_state,
             current_state,
+            display_state: current_state,
             snapshot,
             snapshot_texture,
             states: state_map,
@@ -1046,9 +1176,18 @@ impl MuiRuntime {
     }
 
     fn descriptor_to_panel(&self, desc: &PanelCpuDescriptor) -> Panel {
+        self.descriptor_to_panel_with_base(desc, None)
+    }
+
+    fn descriptor_to_panel_with_base(
+        &self,
+        desc: &PanelCpuDescriptor,
+        fallback: Option<&Panel>,
+    ) -> Panel {
         let state_cpu = desc
             .states
-            .get(&desc.current_state)
+            .get(&desc.display_state)
+            .or_else(|| desc.states.get(&desc.current_state))
             .or_else(|| desc.default_state.and_then(|id| desc.states.get(&id)))
             .or_else(|| desc.states.values().next());
 
@@ -1056,6 +1195,10 @@ impl MuiRuntime {
         let texture_info = state_cpu
             .and_then(|state| state.texture.as_ref())
             .or(desc.snapshot_texture.as_ref());
+
+        if let Some(base) = fallback {
+            return self.apply_overrides_with_base(desc, overrides, texture_info, base);
+        }
 
         let mut position = overrides
             .and_then(|o| o.position)
@@ -1149,6 +1292,93 @@ impl MuiRuntime {
             panel.border_radius = 0.0;
         }
         panel.pad_border = [0.0, 0.0];
+        panel
+    }
+
+    fn apply_overrides_with_base(
+        &self,
+        desc: &PanelCpuDescriptor,
+        overrides: Option<&PanelStateOverrides>,
+        texture_info: Option<&UiTextureInfo>,
+        base: &Panel,
+    ) -> Panel {
+        let mut panel = *base;
+        panel.id = desc.key.panel_id;
+        panel.state = desc.current_state.0;
+
+        if let Some(position) = overrides.and_then(|o| o.position) {
+            panel.position = position;
+        }
+        if let Some(offset) = overrides.and_then(|o| o.offset) {
+            panel.position[0] += offset[0];
+            panel.position[1] += offset[1];
+        }
+
+        if let Some(size) = overrides.and_then(|o| o.size) {
+            panel.size = size;
+        } else if overrides.and_then(|o| o.fit_to_texture).unwrap_or(false) {
+            if let Some(info) = texture_info {
+                panel.size = [
+                    info.uv_max[0] - info.uv_min[0],
+                    info.uv_max[1] - info.uv_min[1],
+                ];
+            }
+        }
+
+        if let Some(z) = overrides.and_then(|o| o.z_index) {
+            panel.z_index = z.max(0) as u32;
+        }
+        if let Some(pass) = overrides.and_then(|o| o.pass_through) {
+            panel.pass_through = pass;
+        }
+        if let Some(interaction) = overrides.and_then(|o| o.interaction) {
+            panel.interaction = interaction;
+        }
+        if let Some(event_mask) = overrides.and_then(|o| o.event_mask) {
+            panel.event_mask = event_mask;
+        }
+        if let Some(state_mask) = overrides.and_then(|o| o.state_mask) {
+            panel.state_mask = state_mask;
+        }
+        if let Some(collection_state) = overrides.and_then(|o| o.collection_state) {
+            panel.collection_state = collection_state;
+        }
+
+        if let Some(color) = overrides.and_then(|o| o.color) {
+            panel.color = color;
+        }
+        if let Some(border) = overrides.and_then(|o| o.border.clone()) {
+            panel.border_color = border.color;
+            panel.border_width = border.width;
+            panel.border_radius = border.radius;
+        }
+
+        if let Some(trans) = overrides
+            .and_then(|o| o.transparent)
+            .or_else(|| overrides.and_then(|o| o.color).map(|color| color[3]))
+        {
+            panel.transparent = trans;
+        }
+
+        if let Some(info) = texture_info {
+            let slot = self
+                .texture_slot_for_atlas(info.parent_index)
+                .unwrap_or(u32::MAX);
+            panel.texture_id = slot;
+            panel.uv_offset = [info.uv_min[0], info.uv_min[1]];
+            panel.uv_scale = [
+                info.uv_max[0] - info.uv_min[0],
+                info.uv_max[1] - info.uv_min[1],
+            ];
+        }
+
+        if let Some(vertex) = overrides.and_then(|o| o.vertex_shader_id) {
+            panel.vertex_shader_id = vertex;
+        }
+        if let Some(frag) = overrides.and_then(|o| o.fragment_shader_id) {
+            panel.fragment_shader_id = frag;
+        }
+
         panel
     }
 
@@ -1301,6 +1531,7 @@ impl MuiRuntime {
         self.state.frame_state.delta_time = delta_time;
         self.state.clear_frame();
         self.compute.borrow_mut().mark_interaction_dirty();
+        self.advance_panel_transitions(delta_time);
     }
 
     /// Submit a CPU event to both the per-frame queue and the global event bus.
@@ -1460,6 +1691,8 @@ impl MuiRuntime {
             offset_of!(GlobalUniform, frame) as wgpu::BufferAddress,
             &frame,
         );
+
+        self.update_animation_time(delta_time, queue);
     }
 
     /// Queue a write into the panel instance buffer by offset.
@@ -1567,6 +1800,11 @@ fn animation_spec_to_transform(
         AnimProperty::Position => ((PanelField::POSITION_X | PanelField::POSITION_Y).bits(), 2),
         AnimProperty::Size => ((PanelField::SIZE_X | PanelField::SIZE_Y).bits(), 2),
         AnimProperty::Opacity => (PanelField::TRANSPARENT.bits(), 1),
+        AnimProperty::Color => (
+            (PanelField::COLOR_R | PanelField::COLOR_G | PanelField::COLOR_B | PanelField::COLOR_A)
+                .bits(),
+            4,
+        ),
         _ => return None,
     };
 
@@ -1574,6 +1812,7 @@ fn animation_spec_to_transform(
         AnimTargetValue::Scalar(v) if value_len == 1 => vec![v],
         AnimTargetValue::Vec2(v) if value_len == 2 => v.to_vec(),
         AnimTargetValue::Vec4(v) if value_len == 2 => v[..2].to_vec(),
+        AnimTargetValue::Vec4(v) if value_len == 4 => v.to_vec(),
         _ => return None,
     };
 
@@ -1582,6 +1821,7 @@ fn animation_spec_to_transform(
             (AnimTargetValue::Scalar(v), 1) => vec![*v],
             (AnimTargetValue::Vec2(v), 2) => v.to_vec(),
             (AnimTargetValue::Vec4(v), 2) => v[..2].to_vec(),
+            (AnimTargetValue::Vec4(v), 4) => v.to_vec(),
             _ => return None,
         }
     } else if spec.from_current {
@@ -1610,6 +1850,7 @@ fn panel_property_as_vec(panel: &Panel, property: AnimProperty) -> Option<Vec<f3
         AnimProperty::Position => Some(panel.position.to_vec()),
         AnimProperty::Size => Some(panel.size.to_vec()),
         AnimProperty::Opacity => Some(vec![panel.transparent]),
+        AnimProperty::Color => Some(panel.color.to_vec()),
         _ => None,
     }
 }
@@ -1627,8 +1868,7 @@ fn easing_to_mask(easing: Easing) -> EasingMask {
     }
 }
 
-type PayloadRefreshFn =
-    fn(&mut MuiRuntime, &[PanelKey], &wgpu::Device, &wgpu::Queue);
+type PayloadRefreshFn = fn(&mut MuiRuntime, &[PanelKey], &wgpu::Device, &wgpu::Queue);
 
 fn payload_registry() -> &'static Mutex<HashMap<TypeId, PayloadRefreshFn>> {
     static REGISTRY: OnceLock<Mutex<HashMap<TypeId, PayloadRefreshFn>>> = OnceLock::new();

@@ -8,7 +8,6 @@ use wgpu::{
 };
 
 pub struct GpuComputePipeline {
-    // 缂撳啿鍖?
     pub node_buffer: Buffer,
     pub result_buffer: Buffer,
     import_buffer: Buffer,

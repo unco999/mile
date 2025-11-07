@@ -233,7 +233,7 @@ impl TextureAtlas {
 const PADDING: u32 = 2; // 每张图像间的像素间距，防止GPU采样溢出
 const DEFAULT_ATLAS_SIZE: u32 = 2048;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiTextureInfo {
     pub index: u32,
     pub parent_index: u32,

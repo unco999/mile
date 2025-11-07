@@ -436,6 +436,7 @@ pub struct AnimationComputeStage {
     bind_group1: wgpu::BindGroup,
     animation_count: u32,
     dirty: bool,
+    trace: GpuDebug,
 }
 
 impl AnimationComputeStage {
@@ -557,8 +558,15 @@ impl AnimationComputeStage {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
         });
-
-        let bind_group0 = Self::create_bind_group0(device, &layout0, buffers, global_uniform);
+        let mut trace = GpuDebug::new("animtion::compute");
+        trace.create_buffer(device);
+        let bind_group0 = Self::create_bind_group0(
+            device,
+            &layout0,
+            buffers,
+            global_uniform,
+            &trace.buffer.clone().unwrap(),
+        );
         let bind_group1 = Self::create_bind_group1(device, &layout1, buffers);
 
         Self {
@@ -569,6 +577,7 @@ impl AnimationComputeStage {
             bind_group1,
             animation_count: 0,
             dirty: false,
+            trace,
         }
     }
 
@@ -577,6 +586,7 @@ impl AnimationComputeStage {
         layout: &wgpu::BindGroupLayout,
         buffers: &BufferArena,
         global_uniform: &wgpu::Buffer,
+        trace_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::animation-bind-group-0"),
@@ -604,7 +614,7 @@ impl AnimationComputeStage {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: buffers.debug_buffer.as_entire_binding(),
+                    resource: trace_buffer.as_entire_binding(),
                 },
             ],
         })
@@ -637,7 +647,13 @@ impl AnimationComputeStage {
         buffers: &BufferArena,
         global_uniform: &wgpu::Buffer,
     ) {
-        self.bind_group0 = Self::create_bind_group0(device, &self.layout0, buffers, global_uniform);
+        self.bind_group0 = Self::create_bind_group0(
+            device,
+            &self.layout0,
+            buffers,
+            global_uniform,
+            &self.trace.buffer.as_ref().unwrap(),
+        );
         self.bind_group1 = Self::create_bind_group1(device, &self.layout1, buffers);
     }
 
@@ -680,6 +696,7 @@ impl AnimationComputeStage {
         _queue: &wgpu::Queue,
         _ctx: &FrameComputeContext<'_>,
     ) {
+        self.trace.debug(_device, _queue);
     }
 }
 

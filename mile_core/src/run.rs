@@ -1,5 +1,5 @@
 use mile_api::prelude::{
-    global_event_bus, Computeable, CpuGlobalUniform, GlobalUniform, Renderable,
+    Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
 };
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont},

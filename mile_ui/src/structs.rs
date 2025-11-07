@@ -148,11 +148,15 @@ bitflags::bitflags! {
         const UV_OFFSET_Y    = 0b0000_0010_0000; // index 5
         const UV_SCALE_X     = 0b0000_0100_0000; // index 6
         const UV_SCALE_Y     = 0b0000_1000_0000; // index 7
-        const TRANSPARENT    = 0b0001_0000_0000; // index 14
-        const AttchCollection = 0b0010_0000_0000; // index 14
-        const PREPOSITION_X  = 0b0100_0000_0000; // index 14
-        const PREPOSITION_Y  = 0b1000_0000_0000; // index 14
-        const ALL            = 0b1111_1111_1111; // index 14
+        const TRANSPARENT    = 0b0001_0000_0000; // index 8
+        const AttchCollection = 0b0010_0000_0000; // index 9
+        const PREPOSITION_X  = 0b0100_0000_0000; // index 10
+        const PREPOSITION_Y  = 0b1000_0000_0000; // index 11
+        const COLOR_R        = 0b0001_0000_0000_0000; // index 12
+        const COLOR_G        = 0b0010_0000_0000_0000; // index 13
+        const COLOR_B        = 0b0100_0000_0000_0000; // index 14
+        const COLOR_A        = 0b1000_0000_0000_0000; // index 15
+        const ALL            = 0b1111_1111_1111_1111;
         const Not            = 0b0000_0000_0000; // index 14
     }
 }

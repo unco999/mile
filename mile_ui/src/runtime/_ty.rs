@@ -1,4 +1,4 @@
-use bytemuck::{bytes_of, cast_slice, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
 
 use crate::structs::{AnimOp, EasingMask};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};

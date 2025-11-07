@@ -1376,7 +1376,7 @@ impl GpuUi {
 
                     if new_frame.click_id != u32::MAX {
                         hub.push(CpuPanelEvent::Click((
-                            new_frame.frame,
+                            new_frame.frame, 
                             UiInteractionScope {
                                 panel_id: new_frame.click_id,
                                 state: new_frame.trigger_panel_state,

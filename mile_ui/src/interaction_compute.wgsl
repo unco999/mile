@@ -188,13 +188,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let mouse_pressed = (global_uniform.mouse_state & MOUSE_LEFT_HELD) != 0u;
     let mouse_released = (global_uniform.mouse_state & MOUSE_LEFT_RELEASED) != 0u;
     let press_duration = global_uniform.press_duration;
+        
 
     if (!hovered) {
         return;
     }
 
-    debug_buffer.uints[5] = 9999;
-    debug_buffer.uints[6] = panel.interaction;
 
     // Hover claim
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {

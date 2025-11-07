@@ -100,7 +100,6 @@ fn runtime_event_hub() -> Option<Arc<UIEventHub>> {
 
 fn enqueue_state_transition(event: StateTransition) {
     if let Some(hub) = runtime_event_hub() {
-        dbg!("发送转换事件");
         hub.push(CpuPanelEvent::StateTransition(event));
     } else {
         pending_state_events().lock().unwrap().push(event);
@@ -1436,14 +1435,14 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                             .build(),
                     );
                 })
+                .transition_to(UiEventKind::Click, UiState(1))
                 .finish()
         })
         .state(UiState(1), |state| {
             state
                 .size(vec2(200.0, 100.0))
-                .position(vec2(433.0, 333.0))
-                .color(Vec4::new(1.0, 0.0, 0.8, 1.0))
-                .z_index(5)
+                .position(vec2(633.0, 333.0))
+                .color(Vec4::new(1.0, 0.8, 0.8, 1.0))
                 .border(BorderStyle {
                     color: [1.0, 0.0, 0.0, 0.0],
                     width: 5.0,
@@ -1454,9 +1453,10 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                     flow.payload().count += 1;
                     flow.set_state(UiState(2));
                 })
+                .transition_to(UiEventKind::Click, UiState(0))
                 .finish()
         })
-        .state(UiState(2), |state| {
+        .state(UiState(2), |state|{
             state
                 .position(vec2(0.0, 0.0))
                 .events()
