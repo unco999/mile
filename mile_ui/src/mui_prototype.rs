@@ -7,7 +7,10 @@ use crate::{
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         register_payload_refresh,
-        state::{PanelEventRegistry, UiInteractionScope},
+        state::{
+            CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
+            UIEventHub, UiInteractionScope,
+        },
     },
     structs::PanelInteraction,
 };
@@ -31,12 +34,18 @@ use std::{
 };
 
 static EVENT_REGISTRY: OnceLock<Arc<Mutex<PanelEventRegistry>>> = OnceLock::new();
+static EVENT_HUB: OnceLock<Arc<UIEventHub>> = OnceLock::new();
 static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>>> =
     OnceLock::new();
+static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::new();
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
 
 fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn pending_state_events() -> &'static Mutex<Vec<StateTransition>> {
+    PENDING_STATE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 fn panel_key_registry() -> &'static Mutex<HashMap<TypeId, HashSet<PanelKey>>> {
@@ -60,20 +69,41 @@ pub(crate) fn registered_panel_keys(type_id: TypeId) -> Vec<PanelKey> {
         .unwrap_or_default()
 }
 
-pub(crate) fn install_runtime_event_bridge(registry: Arc<Mutex<PanelEventRegistry>>) {
+pub(crate) fn install_runtime_event_bridge(
+    registry: Arc<Mutex<PanelEventRegistry>>,
+    event_hub: Arc<UIEventHub>,
+) {
     let stored = EVENT_REGISTRY.get_or_init(|| Arc::clone(&registry)).clone();
+    let hub = EVENT_HUB.get_or_init(|| Arc::clone(&event_hub)).clone();
+
     let mut pending = pending_registrations().lock().unwrap();
-    if pending.is_empty() {
-        return;
+    if !pending.is_empty() {
+        let mut guard = stored.lock().unwrap();
+        for task in pending.drain(..) {
+            task(&mut guard);
+        }
     }
-    let mut guard = stored.lock().unwrap();
-    for task in pending.drain(..) {
-        task(&mut guard);
+
+    let mut pending_events = pending_state_events().lock().unwrap();
+    for event in pending_events.drain(..) {
+        hub.push(CpuPanelEvent::StateTransition(event));
     }
 }
 
 fn runtime_event_registry() -> Option<Arc<Mutex<PanelEventRegistry>>> {
     EVENT_REGISTRY.get().cloned()
+}
+
+fn runtime_event_hub() -> Option<Arc<UIEventHub>> {
+    EVENT_HUB.get().cloned()
+}
+
+fn enqueue_state_transition(event: StateTransition) {
+    if let Some(hub) = runtime_event_hub() {
+        hub.push(CpuPanelEvent::StateTransition(event));
+    } else {
+        pending_state_events().lock().unwrap().push(event);
+    }
 }
 
 /// Unique key used to address a panel inside the DB/runtime.
@@ -580,7 +610,7 @@ struct PanelRuntime<TPayload: PanelPayload> {
     observer_guards: Vec<PanelListenerGuard<TPayload>>,
 }
 type EventFn<TPayload> =
-    dyn Fn(&PanelHandle<TPayload>, &PanelEventArgs<TPayload>) + Send + Sync + 'static;
+    dyn for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static;
 
 #[derive(Clone, Debug)]
 pub struct PanelEventArgs<TPayload: PanelPayload> {
@@ -588,6 +618,128 @@ pub struct PanelEventArgs<TPayload: PanelPayload> {
     pub state: UiState,
     pub event: UiEventKind,
     pub record_snapshot: PanelRecord<TPayload>,
+}
+
+pub struct EventFlow<'a, TPayload: PanelPayload> {
+    record: &'a mut PanelRecord<TPayload>,
+    args: &'a PanelEventArgs<TPayload>,
+    current_state: &'a mut UiState,
+    transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
+    override_state: Option<UiState>,
+}
+
+impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
+    fn new(
+        record: &'a mut PanelRecord<TPayload>,
+        args: &'a PanelEventArgs<TPayload>,
+        current_state: &'a mut UiState,
+        transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
+    ) -> Self {
+        Self {
+            record,
+            args,
+            current_state,
+            transitions,
+            override_state: None,
+        }
+    }
+
+    pub fn payload(&mut self) -> &mut TPayload {
+        &mut self.record.data
+    }
+
+    pub fn payload_ref(&self) -> &TPayload {
+        &self.record.data
+    }
+
+    pub fn push_animation(&mut self, animation: AnimationSpec) {
+        self.record.pending_animations.push(animation);
+    }
+
+    pub fn args(&self) -> &PanelEventArgs<TPayload> {
+        self.args
+    }
+
+    pub fn state(&self) -> UiState {
+        *self.current_state
+    }
+
+    pub fn set_state(&mut self, state: UiState) {
+        self.record.current_state = state;
+        *self.current_state = state;
+        self.override_state = Some(state);
+        let transition = build_state_transition_event(self.record, self.args, state);
+        enqueue_state_transition(transition);
+    }
+
+    pub fn transition(&mut self, event: UiEventKind) -> Option<UiState> {
+        let current = *self.current_state;
+        if let Some(next) = self
+            .transitions
+            .get(&current)
+            .and_then(|map| map.get(&event))
+            .copied()
+        {
+            self.set_state(next);
+            Some(next)
+        } else {
+            None
+        }
+    }
+
+    fn take_override(&mut self) -> Option<UiState> {
+        self.override_state.take()
+    }
+}
+
+fn overrides_for_state<'a, TPayload: PanelPayload>(
+    record: &'a PanelRecord<TPayload>,
+    state: UiState,
+) -> Option<&'a PanelStateOverrides> {
+    record
+        .states
+        .get(&state)
+        .or_else(|| record.default_state.and_then(|default| record.states.get(&default)))
+        .or_else(|| record.states.values().next())
+}
+
+fn state_config_from_overrides(overrides: Option<&PanelStateOverrides>) -> StateConfigDes {
+    let mut config = StateConfigDes::default();
+    if let Some(override_ref) = overrides {
+        if let Some(texture) = &override_ref.texture {
+            config.texture_id = Some(texture.clone());
+        }
+        if let Some(position) = override_ref.position {
+            config.pos = Some(Vec2::new(position[0], position[1]));
+        }
+        if let Some(size) = override_ref.size {
+            config.size = Some(Vec2::new(size[0], size[1]));
+        }
+        if let Some(mask_bits) = override_ref.interaction {
+            if let Some(mask) = PanelInteraction::from_bits(mask_bits) {
+                config
+                    .open_api
+                    .push(StateOpenCall::Interaction(mask));
+            }
+        }
+        config.is_open_frag = override_ref.fragment_shader_id.is_some();
+        config.is_open_vertex = override_ref.vertex_shader_id.is_some();
+    }
+    config
+}
+
+fn build_state_transition_event<TPayload: PanelPayload>(
+    record: &PanelRecord<TPayload>,
+    args: &PanelEventArgs<TPayload>,
+    state: UiState,
+) -> StateTransition {
+    let overrides = overrides_for_state(record, state);
+    let config = state_config_from_overrides(overrides);
+    StateTransition {
+        state_config_des: config,
+        new_state: state,
+        panel_id: args.panel_key.panel_id,
+    }
 }
 
 fn listeners_map<TPayload: PanelPayload>()
@@ -666,16 +818,29 @@ fn trigger_event_internal<TPayload: PanelPayload>(
         event,
         record_snapshot: snapshot,
     };
+
+    let mut applied_override = false;
     if let Some(handler) = callbacks.get(&event) {
-        handler(&runtime.handle, &args);
+        let handle = &runtime.handle;
+        let transitions = &runtime.transitions;
+        let current_state_ref = &mut runtime.current_state;
+        if let Err(err) = handle.mutate(|record| {
+            let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+            handler(&mut flow);
+            applied_override = flow.take_override().is_some();
+        }) {
+            eprintln!("event mutation failed: {err:?}");
+        }
     }
 
-    if let Some(next_state) = runtime
-        .transitions
-        .get(&state)
-        .and_then(|map| map.get(&event))
-    {
-        runtime.current_state = *next_state;
+    if !applied_override {
+        if let Some(next_state) = runtime
+            .transitions
+            .get(&state)
+            .and_then(|map| map.get(&event))
+        {
+            runtime.current_state = *next_state;
+        }
     }
 }
 
@@ -1020,15 +1185,9 @@ pub struct InteractionStageBuilder<TPayload: PanelPayload> {
 impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
     pub fn on_event<F>(mut self, event: UiEventKind, handler: F) -> Self
     where
-        F: Fn(&mut PanelRecord<TPayload>, &PanelEventArgs<TPayload>) + Send + Sync + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
     {
-        let event_fn: Arc<EventFn<TPayload>> = Arc::new(
-            move |handle: &PanelHandle<TPayload>, args: &PanelEventArgs<TPayload>| {
-                if let Err(err) = handle.mutate(|record| handler(record, args)) {
-                    eprintln!("event mutation failed: {err:?}");
-                }
-            },
-        );
+        let event_fn: Arc<EventFn<TPayload>> = Arc::new(handler);
         self.stage.callbacks.insert(event, event_fn);
         self.last_event = Some(event);
         self
@@ -1251,21 +1410,27 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 .z_index(5)
                 .fragment_shader(|a, b| wvec2(1.0, 1.0))
                 .events()
-                .on_event(UiEventKind::Click, |record, _| {
-                    println!("内部点击事件");
+                .on_event(UiEventKind::Click, |flow| {
+                    let data = flow.payload();
+                    data.count += 1;
+                    println!("内部点击事件 {}", data.count);
+                    flow.set_state(UiState(1));
                 })
                 .finish()
                 .state_transform_fade(0.2);
             state
                 .events()
-                .on_event(UiEventKind::Drag, |record, _args| {
-                    record.data.count += 1;
-                    record.pending_animations.push(
+                .on_event(UiEventKind::Drag, |flow| {
+                    {
+                        let data = flow.payload();
+                        data.count += 1;
+                        flow.set_state(UiState(1));
+                    }
+                    flow.push_animation(
                         AnimBuilder::new(AnimProperty::Size)
                             .to(vec2(3.0, 3.0))
                             .build(),
                     );
-                    println!(" {:?}", record.data.count);
                 })
                 .transition_to(UiEventKind::Click, UiState(1))
                 .finish()
@@ -1281,8 +1446,8 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                     radius: 1.0,
                 })
                 .events()
-                .on_event(UiEventKind::Click, |record, _args| {
-                    record.data.count += 1;
+                .on_event(UiEventKind::Click, |flow| {
+                    flow.payload().count += 1;
                 })
                 .transition_to(UiEventKind::Click, UiState(0))
                 .finish()

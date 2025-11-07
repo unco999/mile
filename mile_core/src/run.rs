@@ -137,8 +137,14 @@ impl App {
     }
 
     fn event_first(&mut self) {
-        let mut mui_runtime = self.mui_runtime.as_ref().unwrap().borrow_mut();
-        mui_runtime.event_poll();
+        let Some(ctx) = &self.wgpu_context else {
+            return;
+        };
+
+        if let Some(runtime_cell) = &self.mui_runtime {
+            let mut runtime = runtime_cell.borrow_mut();
+            runtime.event_poll(&ctx.device, &ctx.queue);
+        }
     }
 
     fn render(&mut self) {

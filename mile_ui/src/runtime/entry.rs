@@ -18,7 +18,9 @@ use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
     render::{QuadBatchKind, RenderPipelines},
-    state::{CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, UIEventHub},
+    state::{
+        CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
+    },
 };
 use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
@@ -254,7 +256,7 @@ impl MuiRuntime {
         let hub = state.event_hub.clone();
         let registry = state.panel_events.clone();
         let compute = ComputePipelines::new(device, &buffers, global_uniform.buffer(), hub.clone());
-        install_runtime_event_bridge(registry);
+        install_runtime_event_bridge(registry, hub.clone());
 
         Self {
             texture_atlas_store: TextureAtlasStore::default(),
@@ -602,7 +604,7 @@ impl MuiRuntime {
         self.render.set_indirect_count(QuadBatchKind::Static, 0);
     }
 
-    pub fn event_poll(&mut self) {
+    pub fn event_poll(&mut self, _device: &Device, queue: &Queue) {
         let events = self.event_hub().poll();
         if events.is_empty() {
             return;
@@ -610,7 +612,114 @@ impl MuiRuntime {
         let registry = self.register_panel_events();
         let mut guard = registry.lock().unwrap();
         for event in events {
+            if let CpuPanelEvent::StateTransition(transition) = &event {
+                self.apply_state_transition(transition.clone(), queue);
+            }
             guard.emit(&event);
+        }
+    }
+
+    fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
+        let panel_id = transition.panel_id;
+        let panel_key = self
+            .panel_cache
+            .keys()
+            .find(|key| key.panel_id == panel_id)
+            .cloned();
+
+        let Some(key) = panel_key else {
+            eprintln!("state transition for unknown panel {}", panel_id);
+            return;
+        };
+
+        let previous_panel = self
+            .panel_instances
+            .iter()
+            .find(|panel| panel.id == panel_id)
+            .copied();
+
+        if let Some(desc) = self.panel_cache.get_mut(&key) {
+            desc.current_state = transition.new_state;
+        }
+
+        let Some(desc) = self.panel_cache.get(&key) else {
+            return;
+        };
+        let target_panel = self.descriptor_to_panel(desc);
+
+        let Some(instance_index) = self
+            .panel_instances
+            .iter()
+            .position(|panel| panel.id == panel_id)
+        else {
+            // Panel has not been uploaded yet; store the target for the next upload pass.
+            return;
+        };
+
+        let mut gpu_panel = target_panel;
+        if let Some(prev) = previous_panel {
+            gpu_panel.position = prev.position;
+            gpu_panel.size = prev.size;
+            gpu_panel.transparent = prev.transparent;
+            self.enqueue_style_transition(queue, &prev, &target_panel);
+        }
+
+        self.panel_instances[instance_index] = target_panel;
+        self.write_panel(queue, instance_index as u32, &gpu_panel);
+    }
+
+    fn enqueue_style_transition(&mut self, queue: &Queue, current: &Panel, target: &Panel) {
+        const DURATION: f32 = 0.25;
+
+        if current.position != target.position {
+            let info = TransformAnimFieldInfo {
+                field_id: (PanelField::POSITION_X | PanelField::POSITION_Y).bits(),
+                start_value: current.position.to_vec(),
+                target_value: target.position.to_vec(),
+                duration: DURATION,
+                easing: EasingMask::IN_OUT_QUAD,
+                op: AnimOp::SET,
+                hold: 1,
+                delay: 0.0,
+                loop_count: 0,
+                ping_pong: 0,
+                on_complete: 0,
+            };
+            self.enqueue_animation(queue, target.id, info);
+        }
+
+        if current.size != target.size {
+            let info = TransformAnimFieldInfo {
+                field_id: (PanelField::SIZE_X | PanelField::SIZE_Y).bits(),
+                start_value: current.size.to_vec(),
+                target_value: target.size.to_vec(),
+                duration: DURATION,
+                easing: EasingMask::IN_OUT_QUAD,
+                op: AnimOp::SET,
+                hold: 1,
+                delay: 0.0,
+                loop_count: 0,
+                ping_pong: 0,
+                on_complete: 0,
+            };
+            self.enqueue_animation(queue, target.id, info);
+        }
+
+        if (current.transparent - target.transparent).abs() > f32::EPSILON {
+            let info = TransformAnimFieldInfo {
+                field_id: PanelField::TRANSPARENT.bits(),
+                start_value: vec![current.transparent],
+                target_value: vec![target.transparent],
+                duration: DURATION,
+                easing: EasingMask::IN_OUT_QUAD,
+                op: AnimOp::SET,
+                hold: 1,
+                delay: 0.0,
+                loop_count: 0,
+                ping_pong: 0,
+                on_complete: 0,
+            };
+            self.enqueue_animation(queue, target.id, info);
         }
     }
 
