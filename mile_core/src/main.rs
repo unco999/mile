@@ -16,7 +16,7 @@ fn main() {
     // GlobalState keeps GPU/device handles shared across threads.
 
     // App bundles hubs, fonts, rendering context, and timing info.
-    let mut app = App::new(global_state.clone());
+    let mut app = App::new();
 
     event_loop_main.run_app(&mut app).unwrap();
 }
