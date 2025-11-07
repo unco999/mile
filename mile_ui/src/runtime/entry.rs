@@ -26,7 +26,8 @@ use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
     mui_prototype::{
         PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateOverrides,
-        UiState, install_runtime_event_bridge, registered_panel_keys,
+        ShaderStage, UiState, install_runtime_event_bridge, registered_panel_keys,
+        take_pending_shader,
     },
     runtime::_ty::{
         AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, TransformAnimFieldInfo,
@@ -36,12 +37,16 @@ use crate::{
 };
 use bytemuck::{Pod, Zeroable, bytes_of, cast_slice, offset_of};
 use mile_api::{
-    event_bus::EventBus,
+    event_bus::{EventBus, EventStream},
     global::{global_db, global_event_bus},
     interface::{Computeable, GlobalUniform},
     prelude::{GpuDebug, GpuDebugReadCallBack, Renderable},
 };
 use mile_db::{DbError, MileDb};
+use mile_gpu_dsl::{
+    gpu_ast_core::event::KennelResultIdxEvent,
+    program_pipeline::render_binding::RenderBindingResources,
+};
 use serde::de;
 use wgpu::{
     DepthBiasState, Device, Queue,
@@ -165,8 +170,11 @@ pub struct MuiRuntime {
     pub render_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub render_bind_group: Option<wgpu::BindGroup>,
     pub render_surface_format: Option<wgpu::TextureFormat>,
+    pub kennel_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub kennel_bind_group: Option<wgpu::BindGroup>,
     pub global_event_bus: &'static EventBus,
     pub global_db: &'static MileDb,
+    shader_events: EventStream<KennelResultIdxEvent>,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
     panel_instances_dirty: bool,
@@ -260,6 +268,7 @@ impl MuiRuntime {
         let registry = state.panel_events.clone();
         let compute = ComputePipelines::new(device, &buffers, global_uniform.buffer(), hub.clone());
         install_runtime_event_bridge(registry, hub.clone());
+        let shader_events = global_event_bus().subscribe::<KennelResultIdxEvent>();
 
         Self {
             texture_atlas_store: TextureAtlasStore::default(),
@@ -267,6 +276,8 @@ impl MuiRuntime {
             render_bind_group_layout: None,
             render_bind_group: None,
             render_surface_format: None,
+             kennel_bind_group_layout: None,
+             kennel_bind_group: None,
             buffers,
             render,
             compute: RefCell::new(compute),
@@ -275,6 +286,7 @@ impl MuiRuntime {
             global_uniform,
             global_event_bus: global_event_bus(),
             global_db: global_db(),
+            shader_events,
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
             panel_instances_dirty: true,
@@ -396,6 +408,11 @@ impl MuiRuntime {
     #[inline]
     pub fn texture_bindings_mut(&mut self) -> Option<&mut TextureBindings> {
         self.texture_bindings.as_mut()
+    }
+
+    pub fn install_kennel_bindings(&mut self, resources: &RenderBindingResources) {
+        self.kennel_bind_group_layout = Some(resources.bind_group_layout.clone());
+        self.kennel_bind_group = Some(resources.bind_group.clone());
     }
 
     pub fn panel_descriptor(&self, key: &PanelKey) -> Option<&PanelCpuDescriptor> {
@@ -638,6 +655,7 @@ impl MuiRuntime {
     pub fn event_poll(&mut self, _device: &Device, queue: &Queue) {
         let events = self.event_hub().poll();
         if events.is_empty() {
+            self.process_shader_results(queue);
             return;
         }
         let registry = self.register_panel_events();
@@ -649,6 +667,8 @@ impl MuiRuntime {
             }
             guard.emit(&event);
         }
+        drop(guard);
+        self.process_shader_results(queue);
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -852,6 +872,70 @@ impl MuiRuntime {
         );
     }
 
+    fn process_shader_results(&mut self, queue: &Queue) {
+        while let Ok(event) = self.shader_events.try_recv() {
+            let event = event.into_arc();
+            self.apply_shader_result(&event, queue);
+        }
+    }
+
+    fn apply_shader_result(&mut self, event: &KennelResultIdxEvent, queue: &Queue) {
+        let Some((panel_key, state, stage)) = take_pending_shader(event.idx) else {
+            return;
+        };
+
+        let display_state_matches = {
+            let Some(descriptor) = self.panel_cache.get_mut(&panel_key) else {
+                eprintln!(
+                    "shader result for unknown panel {:?} (idx {})",
+                    panel_key, event.idx
+                );
+                return;
+            };
+
+            let Some(state_cpu) = descriptor.states.get_mut(&state) else {
+                eprintln!(
+                    "shader result for panel {:?} missing state {:?}",
+                    panel_key, state
+                );
+                return;
+            };
+
+            match stage {
+                ShaderStage::Fragment => {
+                    state_cpu.overrides.fragment_shader_id = Some(event.kennel_id)
+                }
+                ShaderStage::Vertex => state_cpu.overrides.vertex_shader_id = Some(event.kennel_id),
+            }
+
+            descriptor.display_state == state
+        };
+
+        if !display_state_matches {
+            return;
+        }
+
+        let Some(index) = self
+            .panel_instances
+            .iter()
+            .position(|panel| panel.id == panel_key.panel_id)
+        else {
+            self.panel_instances_dirty = true;
+            return;
+        };
+
+        {
+            let panel = &mut self.panel_instances[index];
+            match stage {
+                ShaderStage::Fragment => panel.fragment_shader_id = event.kennel_id,
+                ShaderStage::Vertex => panel.vertex_shader_id = event.kennel_id,
+            }
+        }
+
+        let panel = &self.panel_instances[index];
+        self.write_panel(queue, index as u32, panel);
+    }
+
     pub fn panel_instances(&self) -> &[Panel] {
         &self.panel_instances
     }
@@ -927,6 +1011,9 @@ impl MuiRuntime {
         let Some(texture_bindings) = self.texture_bindings.as_ref() else {
             return;
         };
+        let Some(kennel_layout) = self.kennel_bind_group_layout.as_ref() else {
+            return;
+        };
 
         let needs_pipeline = self
             .render
@@ -948,7 +1035,7 @@ impl MuiRuntime {
                 .expect("render bind layout available");
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("ui::pipeline-layout"),
-                bind_group_layouts: &[render_layout, &texture_bindings.layout],
+                bind_group_layouts: &[render_layout, &texture_bindings.layout, kennel_layout],
                 push_constant_ranges: &[],
             });
 
@@ -1117,6 +1204,9 @@ impl MuiRuntime {
         let Some(texture_bindings) = self.texture_bindings.as_ref() else {
             return;
         };
+        let Some(kennel_bind_group) = self.kennel_bind_group.as_ref() else {
+            return;
+        };
 
         let instance_count = self.panel_instances.len() as u32;
         if instance_count == 0 {
@@ -1127,7 +1217,7 @@ impl MuiRuntime {
             pass,
             render_bind_group,
             &texture_bindings.bind_group,
-            None,
+            Some(kennel_bind_group),
             &self.buffers.instance,
             &self.buffers.indirect_draws,
             0,

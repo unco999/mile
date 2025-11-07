@@ -20,7 +20,9 @@ use mile_api::{
     prelude::_ty::PanelId,
 };
 use mile_db::{DbError, TableBinding, TableHandle};
-use mile_gpu_dsl::core::{Expr, dsl::wvec2};
+use mile_gpu_dsl::{
+    core::{Expr, dsl::{wvec2, wvec4}}, dsl::rv, gpu_ast_core::event::{ExprTy, ExprWithIdxEvent}
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     any::{Any, TypeId, type_name},
@@ -39,6 +41,8 @@ static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegis
     OnceLock::new();
 static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::new();
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
+static PENDING_SHADERS: OnceLock<Mutex<HashMap<u32, PendingShaderRequest>>> = OnceLock::new();
+static NEXT_SHADER_IDX: AtomicU32 = AtomicU32::new(1);
 
 fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
@@ -50,6 +54,74 @@ fn pending_state_events() -> &'static Mutex<Vec<StateTransition>> {
 
 fn panel_key_registry() -> &'static Mutex<HashMap<TypeId, HashSet<PanelKey>>> {
     PANEL_KEY_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pending_shaders() -> &'static Mutex<HashMap<u32, PendingShaderRequest>> {
+    PENDING_SHADERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+struct PendingShaderRequest {
+    panel_key: PanelKey,
+    state: UiState,
+    stage: ShaderStage,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ShaderStage {
+    Fragment,
+    Vertex,
+}
+
+impl ShaderStage {
+    fn to_expr_ty(self) -> ExprTy {
+        match self {
+            ShaderStage::Fragment => ExprTy::Frag,
+            ShaderStage::Vertex => ExprTy::Vertex,
+        }
+    }
+}
+
+fn next_shader_idx() -> u32 {
+    NEXT_SHADER_IDX.fetch_add(1, Ordering::Relaxed)
+}
+
+fn register_pending_shader(idx: u32, key: &PanelKey, state: UiState, stage: ShaderStage) {
+    let mut guard = pending_shaders().lock().unwrap();
+    guard.insert(
+        idx,
+        PendingShaderRequest {
+            panel_key: key.clone(),
+            state,
+            stage,
+        },
+    );
+}
+
+fn submit_shader_request(
+    key: &PanelKey,
+    state: UiState,
+    shader: &Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static>,
+    stage: ShaderStage,
+) {
+    let scope = ShaderScope;
+    let expr = shader(&scope);
+    let idx = next_shader_idx();
+    register_pending_shader(idx, key, state, stage);
+    global_event_bus().publish(ExprWithIdxEvent {
+        idx,
+        expr,
+        _ty: stage.to_expr_ty(),
+    });
+}
+
+pub(crate) fn take_pending_shader(idx: u32) -> Option<(PanelKey, UiState, ShaderStage)> {
+    pending_shaders()
+        .lock()
+        .unwrap()
+        .remove(&idx)
+        .map(|request| (request.panel_key, request.state, request.stage))
 }
 
 pub(crate) fn register_panel_key<TPayload: PanelPayload>(key: &PanelKey) {
@@ -1104,9 +1176,17 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
 
     pub fn fragment_shader<F>(mut self, shader: F) -> Self
     where
-        F: Fn(&ShaderScope, PanelId) -> Expr + Send + Sync + 'static,
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
     {
         self.definition.frag_shader = Some(Arc::new(shader));
+        self
+    }
+
+    pub fn vertex_shader<F>(mut self, shader: F) -> Self
+    where
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
+    {
+        self.definition.vertex_shader = Some(Arc::new(shader));
         self
     }
 
@@ -1271,6 +1351,7 @@ fn build_stateful<TPayload: PanelPayload>(
     states: HashMap<UiState, PanelStateDefinition<TPayload>>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
 ) -> Result<PanelRuntimeHandle, DbError> {
+    let panel_key = handle.key.clone();
     let default = default_state
         .or_else(|| states.keys().copied().next())
         .expect("at least one state required");
@@ -1292,19 +1373,26 @@ fn build_stateful<TPayload: PanelPayload>(
     for (state_id, definition) in states {
         let PanelStateDefinition {
             overrides,
+            frag_shader,
+            vertex_shader,
             callbacks: state_callbacks,
             animations: _animations,
             groups: _groups,
             group_relations: _group_relations,
-            vertex_shader: _vertex_shader,
-            frag_shader: _frag_shader,
         } = definition;
+
+        if let Some(shader) = frag_shader.as_ref() {
+            submit_shader_request(&panel_key, state_id, shader, ShaderStage::Fragment);
+        }
+        if let Some(shader) = vertex_shader.as_ref() {
+            submit_shader_request(&panel_key, state_id, shader, ShaderStage::Vertex);
+        }
+
         transitions.insert(state_id, overrides.transitions.clone());
         callbacks.insert(state_id, state_callbacks);
     }
 
-    let key = handle.key.clone();
-    install_runtime_callbacks::<TPayload>(&key, &callbacks, &transitions);
+    install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
     let mut runtime = PanelRuntime {
         handle,
         current_state: default,
@@ -1313,9 +1401,9 @@ fn build_stateful<TPayload: PanelPayload>(
         observer_guards: Vec::new(),
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
-    register_runtime(key.clone(), runtime);
+    register_runtime(panel_key.clone(), runtime);
 
-    Ok(PanelRuntimeHandle { key })
+    Ok(PanelRuntimeHandle { key: panel_key })
 }
 
 fn build_stateless<TPayload: PanelPayload>(
@@ -1324,6 +1412,7 @@ fn build_stateless<TPayload: PanelPayload>(
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let state_id = UiState(0);
+    let panel_key = handle.key.clone();
 
     handle.mutate(|record| {
         record.default_state = Some(state_id);
@@ -1334,19 +1423,25 @@ fn build_stateless<TPayload: PanelPayload>(
 
     let PanelStateDefinition {
         overrides,
-        vertex_shader: _vertex_shader,
-        frag_shader: _frag_shader,
+        vertex_shader,
+        frag_shader,
         callbacks,
         animations: _animations,
         groups: _groups,
         group_relations: _group_relations,
     } = definition;
 
+    if let Some(shader) = frag_shader.as_ref() {
+        submit_shader_request(&panel_key, state_id, shader, ShaderStage::Fragment);
+    }
+    if let Some(shader) = vertex_shader.as_ref() {
+        submit_shader_request(&panel_key, state_id, shader, ShaderStage::Vertex);
+    }
+
     let transitions = HashMap::from([(state_id, overrides.transitions.clone())]);
     let callbacks = HashMap::from([(state_id, callbacks)]);
 
-    let key = handle.key.clone();
-    install_runtime_callbacks::<TPayload>(&key, &callbacks, &transitions);
+    install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
     let mut runtime = PanelRuntime {
         handle,
         current_state: state_id,
@@ -1355,13 +1450,13 @@ fn build_stateless<TPayload: PanelPayload>(
         observer_guards: Vec::new(),
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
-    register_runtime(key.clone(), runtime);
+    register_runtime(panel_key.clone(), runtime);
 
-    Ok(PanelRuntimeHandle { key })
+    Ok(PanelRuntimeHandle { key: panel_key })
 }
 
 /// Shader closure placeholder to maintain API parity.
-pub type FragClosure = Arc<dyn Fn(&ShaderScope, PanelId) -> Expr + Send + Sync + 'static>;
+pub type FragClosure = Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static>;
 pub type VertexClosure = FragClosure;
 
 #[derive(Default)]
@@ -1402,14 +1497,18 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 .group::<CounterHeader>()
                 .size(vec2(100.0, 100.0))
                 .position(vec2(333.0, 333.0))
-                .color(Vec4::new(1.0, 0.8, 0.8, 1.0))
                 .border(BorderStyle {
                     color: [1.0, 0.0, 0.0, 1.0],
                     width: 10.0,
                     radius: 0.0,
                 })
                 .z_index(5)
-                .fragment_shader(|a, b| wvec2(1.0, 1.0))
+                .fragment_shader(|_flow| {
+                    let r= rv("uv").x();
+                    let g= rv("uv").y();
+                    wvec4(r, g,1.0,1.0)
+                }
+                )
                 .events()
                 .on_event(
                     UiEventKind::Click,

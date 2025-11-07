@@ -13,12 +13,12 @@ pub mod event {
     pub struct ExprWithIdxEvent {
         pub idx: u32,
         pub expr: Expr,
-        pub _ty:ExprTy
+        pub _ty: ExprTy,
     }
 
-    pub enum ExprTy{
+    pub enum ExprTy {
         Frag,
-        Vertex
+        Vertex,
     }
 
     /**

@@ -7,7 +7,7 @@ use mile_font::{
 };
 use mile_gpu_dsl::prelude::{
     gpu_ast_compute_pipeline::ComputePipelineConfig,
-    kennel::{Kennel, KennelConfig},
+    kennel::{self, Kennel, KennelConfig},
 };
 use mile_graphics::structs::WGPUContext;
 use mile_ui::{
@@ -123,11 +123,16 @@ impl App {
             font.copy_store_texture_to_render_texture(&ctx.device, &ctx.queue);
         }
 
-        if let Some(kennel) = &self.kennel {
-            let mut kennel = kennel.borrow_mut();
+        if let Some(kennel_cell) = &self.kennel {
+            let mut kennel = kennel_cell.borrow_mut();
             kennel.compute(&ctx.device, &ctx.queue);
             kennel.debug_readback(&ctx.device, &ctx.queue);
             kennel.process_global_events(&ctx.queue, &ctx.device);
+            if let Some(runtime_cell) = &self.mui_runtime {
+                if let Some(resources) = kennel.render_binding_resources() {
+                    runtime_cell.borrow_mut().install_kennel_bindings(resources);
+                }
+            }
         }
 
         let mut mui_runtime = self.mui_runtime.as_ref().unwrap();
@@ -142,6 +147,11 @@ impl App {
         if let Some(runtime_cell) = &self.mui_runtime {
             let mut runtime = runtime_cell.borrow_mut();
             runtime.event_poll(&ctx.device, &ctx.queue);
+        }
+
+        if let Some(kennel_cell) = &self.kennel {
+            let mut kennel = kennel_cell.borrow_mut();
+            kennel.process_global_events(&ctx.queue, &ctx.device);
         }
     }
 
@@ -171,10 +181,19 @@ impl App {
             font.create_batch_enqueue_font_compute_cahce(&ctx.device);
         }
 
-        if let Some(runtime_cell) = &self.mui_runtime {
+        if let (Some(runtime_cell), Some(kennel_cell)) = (&self.mui_runtime, &self.kennel) {
             let mut runtime = runtime_cell.borrow_mut();
             runtime.read_all_texture();
             runtime.rebuild_texture_bindings(&ctx.device, &ctx.queue);
+
+            let mut kennel = kennel_cell.borrow_mut();
+            if kennel.render_binding_resources().is_none() {
+                kennel.reserve_render_layers(&ctx.device, 256);
+            }
+            if let Some(resources) = kennel.rebuild_render_bindings(&ctx.device, &ctx.queue) {
+                runtime.install_kennel_bindings(resources);
+            }
+
             runtime.ensure_render_pipeline(&ctx.device, &ctx.queue, ctx.config.format);
         }
     }

@@ -44,7 +44,7 @@ pub struct RegisteredProgram {
 /**
  * 此模块监听的总线
  */
-type KenelRgisterEventTuple = (ExprWithIdxEvent, KennelResultIdxEvent);
+type KenelRgisterEventTuple = (ExprWithIdxEvent,);
 
 pub struct Kennel {
     pipeline: ProgramPipeline,
@@ -220,7 +220,7 @@ impl Kennel {
         let result = self.register_program(&event.expr, &self._global_register_wgsl_map);
         println!("当前注册新面板情况 {:?}", result);
 
-        let layer_index = self.render_layers().len();
+        let layer_index = self.ordered_programs.len().saturating_sub(1);
         self.rebuild_render_bindings(device, queue);
 
         self._global_event_bus.publish(KennelResultIdxEvent {
@@ -237,12 +237,10 @@ impl Kennel {
     }
 
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
-        let (e1, e2) = self.mod_event_steams.try_recv();
-        if let Ok(evt1) = e1 {
-            // 处理 A 事件
-        }
-        if let Ok(evt2) = e2 {
-            // 处理 B 事件
+        let (expr_events,) = self.mod_event_steams.poll();
+        for delivery in expr_events {
+            let event = &*delivery;
+            self.enqueue_expr_with_idx(queue, device, event);
         }
     }
 

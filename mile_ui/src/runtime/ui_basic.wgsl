@@ -15,13 +15,13 @@ struct VertexInput {
     @location(10) event_mask: u32,
     @location(11) state_mask: u32,
     @location(12) transparent: f32,
-    @location(13) texture_slot: u32,
+    @location(13) texture_id: u32,
 
     @location(14) state: u32,
-    @location(15) pad0: u32,
-    @location(16) pad1: u32,
-    @location(17) pad2: u32,
-    @location(18) tint: vec4<f32>,
+    @location(15) collection_state: u32,
+    @location(16) fragment_shader_id: u32,
+    @location(17) vertex_shader_id: u32,
+    @location(18) color: vec4<f32>,
     @location(19) border_color: vec4<f32>,
     @location(20) border: vec2<f32>,
 };
@@ -57,34 +57,128 @@ struct GlobalUniform {
     pad_extra: vec2<f32>,
 };
 
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-    @location(1) texture_slot: u32,
-    @location(2) alpha: f32,
-    @location(3) tint: vec4<f32>,
-    @location(4) border_color: vec4<f32>,
-    @location(5) border: vec2<f32>,
-    @location(6) local_pos: vec2<f32>,
-    @location(7) instance_size: vec2<f32>,
-};
-
 struct GpuUiDebugReadCallBack {
     floats: array<f32, 32>,
     uints: array<u32, 32>,
 };
 
-@group(0) @binding(1) var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
+struct GpuUiTextureInfo {
+    index: u32,
+    parent_index: u32,
+    _pad: vec2<u32>,
+    uv_min: vec4<f32>,
+    uv_max: vec4<f32>,
+};
 
+struct RenderBindingComponent {
+    channel_type: u32,
+    source_index: u32,
+    component_index: u32,
+    source_component: u32,
+    factor_component: u32,
+    factor_inner_compute: u32,
+    factor_outer_compute: u32,
+    factor_unary: u32,
+    payload: vec4<f32>,
+};
+
+struct RenderExprNode {
+    op: u32,
+    arg0: u32,
+    arg1: u32,
+    arg2: u32,
+    data0: f32,
+    data1: f32,
+    pad0: f32,
+    pad1: f32,
+};
+
+struct RenderBindingLayer {
+    compute_start: u32,
+    compute_count: u32,
+    reserved0: u32,
+    reserved1: u32,
+    components: array<RenderBindingComponent, 4>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) texture_id: u32,
+    @location(2) transparent: f32,
+    @location(3) color: vec4<f32>,
+    @location(4) border_color: vec4<f32>,
+    @location(5) border: vec2<f32>,
+    @location(6) local_pos: vec2<f32>,
+    @location(7) instance_size: vec2<f32>,
+    @location(8) fragment_shader_id: u32,
+    @location(9) vertex_shader_id: u32,
+};
+
+const U32_MAX: u32 = 0xffffffffu;
+const MAX_RENDER_EXPR_NODES: u32 = 64u;
+
+const CHANNEL_CONSTANT: u32 = 0u;
+const CHANNEL_COMPUTE: u32 = 1u;
+const CHANNEL_RENDER_IMPORT: u32 = 2u;
+const CHANNEL_RENDER_COMPOSITE: u32 = 3u;
+const CHANNEL_RENDER_EXPR: u32 = 4u;
+
+const RENDER_EXPR_OP_CONSTANT: u32 = 0u;
+const RENDER_EXPR_OP_RENDER_IMPORT: u32 = 1u;
+const RENDER_EXPR_OP_COMPUTE_RESULT: u32 = 2u;
+const RENDER_EXPR_OP_UNARY_SIN: u32 = 3u;
+const RENDER_EXPR_OP_UNARY_COS: u32 = 4u;
+const RENDER_EXPR_OP_UNARY_TAN: u32 = 5u;
+const RENDER_EXPR_OP_UNARY_EXP: u32 = 6u;
+const RENDER_EXPR_OP_UNARY_LOG: u32 = 7u;
+const RENDER_EXPR_OP_UNARY_SQRT: u32 = 8u;
+const RENDER_EXPR_OP_UNARY_ABS: u32 = 9u;
+const RENDER_EXPR_OP_NEGATE: u32 = 10u;
+const RENDER_EXPR_OP_BINARY_ADD: u32 = 20u;
+const RENDER_EXPR_OP_BINARY_SUB: u32 = 21u;
+const RENDER_EXPR_OP_BINARY_MUL: u32 = 22u;
+const RENDER_EXPR_OP_BINARY_DIV: u32 = 23u;
+const RENDER_EXPR_OP_BINARY_MOD: u32 = 24u;
+const RENDER_EXPR_OP_BINARY_POW: u32 = 25u;
+const RENDER_EXPR_OP_BINARY_GT: u32 = 30u;
+const RENDER_EXPR_OP_BINARY_GE: u32 = 31u;
+const RENDER_EXPR_OP_BINARY_LT: u32 = 32u;
+const RENDER_EXPR_OP_BINARY_LE: u32 = 33u;
+const RENDER_EXPR_OP_BINARY_EQ: u32 = 34u;
+const RENDER_EXPR_OP_BINARY_NE: u32 = 35u;
+const RENDER_EXPR_OP_IF: u32 = 40u;
+
+const FACTOR_UNARY_NONE: u32 = 0u;
+const FACTOR_UNARY_SIN: u32 = 1u;
+const FACTOR_UNARY_COS: u32 = 2u;
+
+const RENDER_IMPORT_UV: u32 = 0x1u;
+const RENDER_IMPORT_COLOR: u32 = 0x2u;
 
 @group(0) @binding(0)
 var<storage, read> global_uniform: GlobalUniform;
+
+@group(0) @binding(1)
+var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 
 @group(1) @binding(0)
 var ui_textures: binding_array<texture_2d<f32>>;
 
 @group(1) @binding(1)
 var ui_samplers: binding_array<sampler>;
+
+@group(1) @binding(2)
+var<storage, read> sub_image_struct_array: array<GpuUiTextureInfo>;
+
+@group(2) @binding(0)
+var<storage, read> kennel_render_layers: array<RenderBindingLayer>;
+
+@group(2) @binding(1)
+var<storage, read> kennel_results_buffer: array<vec4<f32>>;
+
+@group(2) @binding(2)
+var<storage, read> render_expr_nodes: array<RenderExprNode>;
 
 fn to_clip_space(position: vec2<f32>) -> vec4<f32> {
     let screen = vec2<f32>(
@@ -98,28 +192,195 @@ fn to_clip_space(position: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(ndc, 0.0, 1.0);
 }
 
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-
-    let quad_pos = input.instance_pos + input.pos * input.instance_size;
-    out.clip_position = to_clip_space(quad_pos);
-    out.clip_position.z = f32(0.0);
-    out.uv = input.uv_offset + input.uv * input.uv_scale;
-    out.texture_slot = input.texture_slot;
-    out.alpha = input.transparent;
-    out.tint = input.tint;
-    out.border_color = input.border_color;
-    out.border = input.border;
-    out.local_pos = input.pos;
-    out.instance_size = input.instance_size;
-    return out;
+fn mode(a: f32, b: f32) -> f32 {
+    return a - b * floor(a / b);
 }
 
-fn mix_colors(base: vec4<f32>, overlay: vec4<f32>, mask: f32) -> vec4<f32> {
-    let blended_rgb = mix(base.rgb, overlay.rgb, mask * overlay.a);
-    let blended_a = mix(base.a, overlay.a, mask * overlay.a);
-    return vec4<f32>(blended_rgb, blended_a);
+fn apply_factor_unary(kind: u32, value: f32) -> f32 {
+    switch kind {
+        case FACTOR_UNARY_SIN: {
+            return sin(value);
+        }
+        case FACTOR_UNARY_COS: {
+            return cos(value);
+        }
+        default: {
+            return value;
+        }
+    }
+}
+
+fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
+    if (mask & RENDER_IMPORT_UV) != 0u {
+        let uv_ext = vec4<f32>(uv, 0.0, 1.0);
+        return uv_ext[component_index];
+    }
+    if (mask & RENDER_IMPORT_COLOR) != 0u {
+        return base_color[component_index];
+    }
+    return 0.0;
+}
+
+fn eval_render_expression(start: u32, len: u32, lane: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
+    if (len == 0u) {
+        return 0.0;
+    }
+
+    var values: array<f32, MAX_RENDER_EXPR_NODES>;
+    for (var idx: u32 = 0u; idx < len; idx = idx + 1u) {
+        let node = render_expr_nodes[start + idx];
+        switch node.op {
+            case RENDER_EXPR_OP_CONSTANT: {
+                values[idx] = node.data0;
+            }
+            case RENDER_EXPR_OP_RENDER_IMPORT: {
+                values[idx] = read_render_import(node.arg0, node.arg1, uv, base_color);
+            }
+            case RENDER_EXPR_OP_COMPUTE_RESULT: {
+                if (node.arg0 < arrayLength(&kennel_results_buffer)) {
+                    values[idx] = kennel_results_buffer[node.arg0][lane];
+                } else {
+                    values[idx] = 0.0;
+                }
+            }
+            case RENDER_EXPR_OP_UNARY_SIN: {
+                values[idx] = sin(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_COS: {
+                values[idx] = cos(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_TAN: {
+                values[idx] = tan(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_EXP: {
+                values[idx] = exp(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_LOG: {
+                values[idx] = log(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_SQRT: {
+                values[idx] = sqrt(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_UNARY_ABS: {
+                values[idx] = abs(values[node.arg0 - start]);
+            }
+            case RENDER_EXPR_OP_NEGATE: {
+                values[idx] = -values[node.arg0 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_ADD: {
+                values[idx] = values[node.arg0 - start] + values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_SUB: {
+                values[idx] = values[node.arg0 - start] - values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_MUL: {
+                values[idx] = values[node.arg0 - start] * values[node.arg1 - start];
+            }
+            case RENDER_EXPR_OP_BINARY_DIV: {
+                let right = values[node.arg1 - start];
+                values[idx] = select(0.0, values[node.arg0 - start] / right, abs(right) > 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_MOD: {
+                let right = values[node.arg1 - start];
+                values[idx] = select(0.0, mode(values[node.arg0 - start], right), abs(right) > 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_POW: {
+                values[idx] = pow(values[node.arg0 - start], values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_GT: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] > values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_GE: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] >= values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_LT: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] < values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_LE: {
+                values[idx] = select(0.0, 1.0, values[node.arg0 - start] <= values[node.arg1 - start]);
+            }
+            case RENDER_EXPR_OP_BINARY_EQ: {
+                values[idx] = select(0.0, 1.0, abs(values[node.arg0 - start] - values[node.arg1 - start]) < 1e-6);
+            }
+            case RENDER_EXPR_OP_BINARY_NE: {
+                values[idx] = select(1.0, 0.0, abs(values[node.arg0 - start] - values[node.arg1 - start]) < 1e-6);
+            }
+            case RENDER_EXPR_OP_IF: {
+                let cond = values[node.arg0 - start];
+                let then_val = values[node.arg1 - start];
+                let else_val = values[node.arg2 - start];
+                values[idx] = select(else_val, then_val, cond > 0.5);
+            }
+            default: {
+                values[idx] = 0.0;
+            }
+        }
+    }
+
+    return values[len - 1u];
+}
+
+fn evaluate_render_layer(layer_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> vec4<f32> {
+    if (layer_index == U32_MAX || layer_index >= arrayLength(&kennel_render_layers)) {
+        return vec4<f32>(0.0);
+    }
+
+    let layer = kennel_render_layers[layer_index];
+    var composed = vec4<f32>(0.0);
+
+    for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {
+        let comp = layer.components[lane];
+        switch comp.channel_type {
+            case CHANNEL_CONSTANT: {
+                composed[lane] = comp.payload.x;
+            }
+            case CHANNEL_COMPUTE: {
+                if (comp.source_index < arrayLength(&kennel_results_buffer)) {
+                    composed[lane] = kennel_results_buffer[comp.source_index][lane];
+                }
+            }
+            case CHANNEL_RENDER_IMPORT: {
+                let src_component = comp.source_component % 4u;
+                composed[lane] = read_render_import(comp.source_index, src_component, uv, base_color);
+            }
+            case CHANNEL_RENDER_COMPOSITE: {
+                let src_component = comp.source_component % 4u;
+                let base = read_render_import(comp.source_index, src_component, uv, base_color);
+                var inner = comp.payload.y;
+                if (comp.factor_component != U32_MAX) {
+                    let factor_base = read_render_import(comp.source_index, comp.factor_component, uv, base_color);
+                    inner = inner + factor_base * comp.payload.x;
+                }
+                if (comp.factor_inner_compute != U32_MAX
+                    && comp.factor_inner_compute < arrayLength(&kennel_results_buffer)) {
+                    let compute_val = kennel_results_buffer[comp.factor_inner_compute][lane];
+                    inner = inner + compute_val;
+                }
+                inner = apply_factor_unary(comp.factor_unary, inner);
+                var factor = inner * comp.payload.z;
+                if (comp.factor_outer_compute != U32_MAX
+                    && comp.factor_outer_compute < arrayLength(&kennel_results_buffer)) {
+                    let compute_val = kennel_results_buffer[comp.factor_outer_compute][lane];
+                    factor = factor * compute_val;
+                }
+                composed[lane] = base * factor + comp.payload.w;
+            }
+            case CHANNEL_RENDER_EXPR: {
+                composed[lane] = eval_render_expression(
+                    comp.source_index,
+                    comp.component_index,
+                    lane,
+                    uv,
+                    base_color,
+                );
+            }
+            default: {
+                composed[lane] = 0.0;
+            }
+        }
+    }
+
+    return composed;
 }
 
 fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {
@@ -129,40 +390,78 @@ fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
 }
 
+@vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+
+    var instance_pos = input.instance_pos;
+    var instance_size = input.instance_size;
+    let uv = input.uv_offset + input.uv * input.uv_scale;
+
+    if (input.vertex_shader_id != U32_MAX) {
+        let vertex_adjust = evaluate_render_layer(input.vertex_shader_id, uv, vec4<f32>(0.0));
+        instance_pos = instance_pos + vertex_adjust.xy;
+        instance_size = max(instance_size + vertex_adjust.zw, vec2<f32>(0.0));
+    }
+
+    let quad_pos = instance_pos + input.pos * instance_size;
+    out.clip_position = to_clip_space(quad_pos);
+    out.clip_position.z = f32(0.0);
+    out.uv = uv;
+    out.texture_id = input.texture_id;
+    out.transparent = input.transparent;
+    out.color = input.color;
+    out.border_color = input.border_color;
+    out.border = input.border;
+    out.local_pos = input.pos;
+    out.instance_size = instance_size;
+    out.fragment_shader_id = input.fragment_shader_id;
+    out.vertex_shader_id = input.vertex_shader_id;
+    return out;
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let slot = input.texture_slot;
-    var color = vec4<f32>(input.tint.rgb, input.tint.a);
-    var alpha = color.a * input.alpha;
-
     debug_buffer.floats[0] = global_uniform.mouse_pos.x;
     debug_buffer.floats[1] = global_uniform.mouse_pos.y;
     debug_buffer.floats[2] = 99999.0;
 
-    if (slot != 0xffffffffu) {
-        let sampled = textureSample(ui_textures[slot], ui_samplers[slot], input.uv);
-        color = vec4<f32>(sampled.rgb * input.tint.rgb, sampled.a * input.tint.a);
-        alpha = color.a * input.alpha;
+    var sampled = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    if (input.texture_id != U32_MAX) {
+        let info = sub_image_struct_array[input.texture_id];
+        let parent_index = info.parent_index;
+        let tex = ui_textures[parent_index];
+        let samp = ui_samplers[parent_index];
+
+        let uv_min = info.uv_min.xy;
+        let uv_max = info.uv_max.xy;
+        let atlas_uv = uv_min + (uv_max - uv_min) * input.uv;
+        sampled = textureSample(tex, samp, atlas_uv);
     }
+
+    var base_color = vec4<f32>(sampled.rgb * input.color.rgb, sampled.a * input.color.a);
+    base_color.a = base_color.a * input.transparent;
 
     let border_width = input.border.x;
     if (border_width > 0.0) {
-        let size_px = input.instance_size;
-        let half = size_px * 0.5;
+        let half_size = input.instance_size * 0.5;
         let radius = input.border.y;
-        let centered = (input.local_pos - vec2<f32>(0.5, 0.5)) * size_px;
-        let sdf = rounded_rect_sdf(centered, half, radius);
+        let centered = (input.local_pos - vec2<f32>(0.5, 0.5)) * input.instance_size;
+        let sdf = rounded_rect_sdf(centered, half_size, radius);
 
         if (sdf > 0.0) {
-            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        }
-
-        if (sdf >= -border_width) {
-            color = input.border_color;
-            alpha = input.border_color.a * input.alpha;
+            base_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        } else if (sdf >= -border_width) {
+            base_color = vec4<f32>(input.border_color.rgb, input.border_color.a * input.transparent);
         }
     }
 
-    return vec4<f32>(color.rgb, alpha);
-}
+    let kennel_color = evaluate_render_layer(input.fragment_shader_id, input.uv, base_color);
 
+    var final_color = base_color;
+    if any(kennel_color != vec4<f32>(0.0)) {
+        final_color = kennel_color;
+    }
+
+    return final_color;
+}
