@@ -6,17 +6,24 @@
 use std::{mem, ops::Range};
 
 use crate::runtime::_ty::{quad_index_bytes, quad_vertex_bytes};
+use serde::{Deserialize, Serialize};
 use wgpu::{
     IndexFormat,
     util::{BufferInitDescriptor, DeviceExt},
 };
 
 /// Enumeration of the panel batches we render each frame.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QuadBatchKind {
     Static,
     VertexAnimated,
     Overlay,
+}
+
+impl Default for QuadBatchKind {
+    fn default() -> Self {
+        QuadBatchKind::Static
+    }
 }
 
 /// Holds the render pipeline and instance range for a single batch.

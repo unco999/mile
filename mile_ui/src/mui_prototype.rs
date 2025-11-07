@@ -11,6 +11,7 @@ use crate::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
             UIEventHub, UiInteractionScope,
         },
+        QuadBatchKind,
     },
     structs::PanelInteraction,
 };
@@ -275,6 +276,8 @@ pub struct PanelSnapshot {
     pub fragment_shader_id: Option<u32>,
     #[serde(default)]
     pub vertex_shader_id: Option<u32>,
+    #[serde(default)]
+    pub quad_mod: QuadBatchKind,
 }
 
 impl Default for PanelSnapshot {
@@ -288,6 +291,7 @@ impl Default for PanelSnapshot {
             z_index: 0,
             fragment_shader_id: None,
             vertex_shader_id: None,
+            quad_mod: QuadBatchKind::Static,
         }
     }
 }
@@ -978,6 +982,7 @@ pub struct Mui<TPayload: PanelPayload> {
     handle: PanelHandle<TPayload>,
     mode: FlowMode<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
+    quad_mod: QuadBatchKind,
 }
 
 impl<TPayload: PanelPayload> Mui<TPayload> {
@@ -1002,6 +1007,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 states: HashMap::new(),
             },
             observers: Vec::new(),
+            quad_mod: QuadBatchKind::Static,
         })
     }
 
@@ -1021,6 +1027,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 state: PanelStateDefinition::default(),
             },
             observers: Vec::new(),
+            quad_mod: QuadBatchKind::Static,
         })
     }
 
@@ -1049,6 +1056,11 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         let listener =
             PanelDataObserver::<TPayload, TPayload, _, _>::new(|payload| Some(payload), handler);
         self.observers.push(listener);
+        self
+    }
+
+    pub fn quad_mod(mut self, quad_mod: QuadBatchKind) -> Self {
+        self.quad_mod = quad_mod;
         self
     }
 
@@ -1097,13 +1109,14 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
 
     pub fn build(self) -> Result<PanelRuntimeHandle, DbError> {
         let handle = self.handle;
+        let quad_mod = self.quad_mod;
         match self.mode {
             FlowMode::Stateful {
                 default_state,
                 states,
-            } => build_stateful::<TPayload>(handle, default_state, states, self.observers),
+            } => build_stateful::<TPayload>(handle, default_state, states, self.observers, quad_mod),
             FlowMode::Stateless { state } => {
-                build_stateless::<TPayload>(handle, state, self.observers)
+                build_stateless::<TPayload>(handle, state, self.observers, quad_mod)
             }
         }
     }
@@ -1350,6 +1363,7 @@ fn build_stateful<TPayload: PanelPayload>(
     default_state: Option<UiState>,
     states: HashMap<UiState, PanelStateDefinition<TPayload>>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
+    quad_mod: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let panel_key = handle.key.clone();
     let default = default_state
@@ -1360,6 +1374,7 @@ fn build_stateful<TPayload: PanelPayload>(
         record.default_state = Some(default);
         record.current_state = default;
         record.states.clear();
+        record.snapshot.quad_mod = quad_mod;
         for (state_id, definition) in &states {
             record
                 .states
@@ -1410,6 +1425,7 @@ fn build_stateless<TPayload: PanelPayload>(
     handle: PanelHandle<TPayload>,
     definition: PanelStateDefinition<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
+    quad_mod: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let state_id = UiState(0);
     let panel_key = handle.key.clone();
@@ -1418,6 +1434,7 @@ fn build_stateless<TPayload: PanelPayload>(
         record.default_state = Some(state_id);
         record.current_state = state_id;
         record.states.clear();
+        record.snapshot.quad_mod = quad_mod;
         record.states.insert(state_id, definition.overrides.clone());
     })?;
 

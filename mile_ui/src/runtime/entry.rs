@@ -155,6 +155,7 @@ pub struct PanelCpuDescriptor {
     pub snapshot_texture: Option<UiTextureInfo>,
     pub states: HashMap<UiState, PanelStateCpu>,
     pub type_id: TypeId,
+    pub quad_mod: QuadBatchKind,
 }
 
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
@@ -631,13 +632,25 @@ impl MuiRuntime {
             .map(|panel| (panel.id, panel))
             .collect();
 
-        let panels: Vec<Panel> = descriptors
-            .into_iter()
-            .map(|desc| {
+        let mut panels = Vec::with_capacity(descriptors.len());
+
+        const BATCH_ORDER: [QuadBatchKind; 3] = [
+            QuadBatchKind::Static,
+            QuadBatchKind::VertexAnimated,
+            QuadBatchKind::Overlay,
+        ];
+
+        for kind in BATCH_ORDER {
+            let start = panels.len() as u32;
+            for desc in descriptors.iter().filter(|desc| desc.quad_mod == kind) {
                 let fallback = previous_instances.get(&desc.key.panel_id);
-                self.descriptor_to_panel_with_base(desc, fallback)
-            })
-            .collect();
+                let panel = self.descriptor_to_panel_with_base(desc, fallback);
+                panels.push(panel);
+            }
+            let end = panels.len() as u32;
+            self.render.set_instance_range(kind, start..end);
+            self.render.set_indirect_count(kind, 0);
+        }
 
         self.panel_instances = panels;
 
@@ -645,10 +658,6 @@ impl MuiRuntime {
             self.write_panels(queue, 0, &self.panel_instances);
         }
 
-        let count = self.panel_instances.len() as u32;
-        self.render
-            .set_instance_range(QuadBatchKind::Static, 0..count);
-        self.render.set_indirect_count(QuadBatchKind::Static, 0);
         self.panel_instances_dirty = false;
     }
 
@@ -1253,6 +1262,8 @@ impl MuiRuntime {
             state_map.insert(state_id, PanelStateCpu { overrides, texture });
         }
 
+        let quad_mod = snapshot.quad_mod;
+
         PanelCpuDescriptor {
             key,
             default_state,
@@ -1262,6 +1273,7 @@ impl MuiRuntime {
             snapshot_texture,
             states: state_map,
             type_id: TypeId::of::<TPayload>(),
+            quad_mod,
         }
     }
 
