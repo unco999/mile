@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
+use mile_api::prelude::{ImportInfo, ImportRegistry};
+
 use crate::core::{BinaryOp, Expr, UnaryFunc};
-
-
 
 #[derive(Debug, Clone)]
 pub struct Matrix {
@@ -13,7 +13,11 @@ pub struct Matrix {
 
 impl Matrix {
     pub fn new(rows: usize, cols: usize) -> Self {
-        Self { rows, cols, data: vec![0.0; rows * cols] }
+        Self {
+            rows,
+            cols,
+            data: vec![0.0; rows * cols],
+        }
     }
     pub fn set(&mut self, r: usize, c: usize, v: f32) {
         self.data[r * self.cols + c] = v;
@@ -21,77 +25,6 @@ impl Matrix {
     pub fn row_slice(&self, r: usize) -> &[f32] {
         let start = r * self.cols;
         &self.data[start..start + self.cols]
-    }
-}
-
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ImportType {
-    Render(&'static str),    // 渲染管线导入，如UV、屏幕坐标等
-    Compute(&'static str),   // 计算管线导入，如缓存数据等
-}
-
-#[derive(Debug, Clone)]
-pub struct ImportInfo {
-    pub import_type: ImportType,
-    pub mask: u32,     // 比如 01 是uv, 11 是pos+uv
-    pub index: usize,  // 在V中的索引位置
-}
-
-pub struct ImportRegistry {
-    render_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
-    compute_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
-}
-
-pub type ImportHandler = Box<dyn Fn(&[f32]) -> Vec<f32> + Send + Sync>;
-
-impl ImportRegistry {
-    pub fn new() -> Self {
-        Self {
-            render_imports: HashMap::new(),
-            compute_imports: HashMap::new(),
-        }
-    }
-
-    // 注册渲染导入（如UV坐标）
-    pub fn register_render_import(&mut self, name: &str, mask: u32, handler: ImportHandler) {
-        self.render_imports.insert(name.to_string(), (mask, handler));
-    }
-
-    // 注册计算导入（如缓存数据）
-    pub fn register_compute_import(&mut self, name: &str, mask: u32, handler: ImportHandler) {
-        self.compute_imports.insert(name.to_string(), (mask, handler));
-    }
-
-    // 获取导入信息
-    pub fn get_import_info(&self, name: &'static str) -> Option<(ImportType, u32)> {
-        if let Some((mask, _)) = self.render_imports.get(name) {
-            Some((ImportType::Render(name), *mask))
-        } else if let Some((mask, _)) = self.compute_imports.get(name) {
-            Some((ImportType::Compute(name), *mask))
-        } else {
-            None
-        }
-    }
-
-    // 执行导入处理
-    pub fn execute_import(&self, import_type: &ImportType, input: &[f32]) -> Vec<f32> {
-        match import_type {
-            ImportType::Render(name) => {
-                if let Some((_, handler)) = self.render_imports.get(*name) {
-                    handler(input)
-                } else {
-                    vec![0.0; input.len()]
-                }
-            }
-            ImportType::Compute(name) => {
-                if let Some((_, handler)) = self.compute_imports.get(*name) {
-                    handler(input)
-                } else {
-                    vec![0.0; input.len()]
-                }
-            }
-        }
     }
 }
 
@@ -131,19 +64,16 @@ pub struct MatrixPlan {
     pub top_outputs: Vec<usize>,
     pub constant_values: Vec<(usize, f32)>,
     pub final_v_len: usize,
-    pub imports: Vec<ImportInfo>,           // 新增：所有导入节点信息
-    pub render_only_ops: Vec<usize>,        // 新增：只能在渲染管线中执行的操作索引
-    pub compute_only_ops: Vec<usize>,       // 新增：只能在计算管线中执行的操作索引
+    pub imports: Vec<ImportInfo>,     // 新增：所有导入节点信息
+    pub render_only_ops: Vec<usize>,  // 新增：只能在渲染管线中执行的操作索引
+    pub compute_only_ops: Vec<usize>, // 新增：只能在计算管线中执行的操作索引
 }
 
 /// 把 AST 编译成矩阵计划（selection matrices + ops）
 /// 原则：按自底向上遍历，遇到常量就把常量 append 到初始 v（并记录其 index），
 /// 每遇到一个操作，先确定当前 v 长度 cur_len（这是矩阵的列数），根据子节点索引创建选择矩阵，
 /// 然后为该 op 的 outputs 预留 out_start..out_start+rows-1（并 advance next_index）。
-pub fn compile_to_matrix_plan_with_imports(
-    expr: &Expr,
-    registry: &ImportRegistry,
-) -> MatrixPlan {
+pub fn compile_to_matrix_plan_with_imports(expr: &Expr, registry: &ImportRegistry) -> MatrixPlan {
     let mut matrices: Vec<Matrix> = Vec::new();
     let mut ops: Vec<MatOp> = Vec::new();
     let mut constant_values: Vec<(usize, f32)> = Vec::new();
@@ -172,7 +102,7 @@ pub fn compile_to_matrix_plan_with_imports(
                 // 处理渲染导入
                 let idx = *next_index;
                 *next_index += 1;
-                
+
                 if let Some((import_type, mask)) = registry.get_import_info(name) {
                     imports.push(ImportInfo {
                         import_type,
@@ -188,7 +118,7 @@ pub fn compile_to_matrix_plan_with_imports(
                 // 处理计算导入
                 let idx = *next_index;
                 *next_index += 1;
-                
+
                 if let Some((import_type, mask)) = registry.get_import_info(name) {
                     imports.push(ImportInfo {
                         import_type,
@@ -207,35 +137,160 @@ pub fn compile_to_matrix_plan_with_imports(
                 vec![idx]
             }
             Expr::Vec2(v) => {
-                let x = rec(&v.x, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let y = rec(&v.y, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+                let x = rec(
+                    &v.x,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let y = rec(
+                    &v.y,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
                 vec![x[0], y[0]]
             }
             Expr::Vec3(v) => {
-                let x = rec(&v.x, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let y = rec(&v.y, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let z = rec(&v.z, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+                let x = rec(
+                    &v.x,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let y = rec(
+                    &v.y,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let z = rec(
+                    &v.z,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
                 vec![x[0], y[0], z[0]]
             }
             Expr::Vec4(v) => {
-                let x = rec(&v.x, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let y = rec(&v.y, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let z = rec(&v.z, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let w = rec(&v.w, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+                let x = rec(
+                    &v.x,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let y = rec(
+                    &v.y,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let z = rec(
+                    &v.z,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let w = rec(
+                    &v.w,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
                 vec![x[0], y[0], z[0], w[0]]
             }
             Expr::BinaryOp(op, left, right) => {
                 if let BinaryOp::Index = op {
                     // 索引操作的特殊处理
-                    let l_idxs = rec(left, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                    let r_idxs = rec(right, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                    
+                    let l_idxs = rec(
+                        left,
+                        matrices,
+                        ops,
+                        constant_values,
+                        imports,
+                        render_only_ops,
+                        compute_only_ops,
+                        registry,
+                        next_index,
+                        current_op_index,
+                    );
+                    let r_idxs = rec(
+                        right,
+                        matrices,
+                        ops,
+                        constant_values,
+                        imports,
+                        render_only_ops,
+                        compute_only_ops,
+                        registry,
+                        next_index,
+                        current_op_index,
+                    );
+
                     if r_idxs.len() == 1 {
                         let index_idx = r_idxs[0];
-                        let index_val = if let Some((_, val)) = constant_values.iter().find(|(idx, _)| *idx == index_idx) {
+                        let index_val = if let Some((_, val)) =
+                            constant_values.iter().find(|(idx, _)| *idx == index_idx)
+                        {
                             *val as usize
-                        } else { 0 };
-                        
+                        } else {
+                            0
+                        };
+
                         if index_val < l_idxs.len() {
                             vec![l_idxs[index_val]]
                         } else {
@@ -246,8 +301,30 @@ pub fn compile_to_matrix_plan_with_imports(
                     }
                 } else {
                     // 普通二元操作
-                    let l_idxs = rec(left, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                    let r_idxs = rec(right, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+                    let l_idxs = rec(
+                        left,
+                        matrices,
+                        ops,
+                        constant_values,
+                        imports,
+                        render_only_ops,
+                        compute_only_ops,
+                        registry,
+                        next_index,
+                        current_op_index,
+                    );
+                    let r_idxs = rec(
+                        right,
+                        matrices,
+                        ops,
+                        constant_values,
+                        imports,
+                        render_only_ops,
+                        compute_only_ops,
+                        registry,
+                        next_index,
+                        current_op_index,
+                    );
 
                     let comps = l_idxs.len().max(r_idxs.len());
                     let mut outs = Vec::with_capacity(comps);
@@ -257,8 +334,16 @@ pub fn compile_to_matrix_plan_with_imports(
                     let mut right_mat = Matrix::new(comps, cur_cols);
 
                     for i in 0..comps {
-                        let a_idx = if i < l_idxs.len() { l_idxs[i] } else { l_idxs[0] };
-                        let b_idx = if i < r_idxs.len() { r_idxs[i] } else { r_idxs[0] };
+                        let a_idx = if i < l_idxs.len() {
+                            l_idxs[i]
+                        } else {
+                            l_idxs[0]
+                        };
+                        let b_idx = if i < r_idxs.len() {
+                            r_idxs[i]
+                        } else {
+                            r_idxs[0]
+                        };
                         left_mat.set(i, a_idx, 1.0);
                         right_mat.set(i, b_idx, 1.0);
                     }
@@ -272,12 +357,12 @@ pub fn compile_to_matrix_plan_with_imports(
                     *next_index += comps;
 
                     // 添加操作并增加操作索引
-                    ops.push(MatOp::BinaryMat { 
-                        op: op.clone(), 
-                        left_mat: left_mat_idx, 
-                        right_mat: right_mat_idx, 
-                        out_start, 
-                        rows: comps 
+                    ops.push(MatOp::BinaryMat {
+                        op: op.clone(),
+                        left_mat: left_mat_idx,
+                        right_mat: right_mat_idx,
+                        out_start,
+                        rows: comps,
                     });
                     *current_op_index += 1;
 
@@ -288,7 +373,18 @@ pub fn compile_to_matrix_plan_with_imports(
                 }
             }
             Expr::UnaryOp(func, sub) => {
-                let s_idxs = rec(sub, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+                let s_idxs = rec(
+                    sub,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
                 let comps = s_idxs.len();
                 let cur_cols = *next_index;
                 let mut mat = Matrix::new(comps, cur_cols);
@@ -300,21 +396,58 @@ pub fn compile_to_matrix_plan_with_imports(
                 matrices.push(mat);
                 let out_start = *next_index;
                 *next_index += comps;
-                
-                ops.push(MatOp::UnaryMat { 
-                    func: func.clone(), 
-                    mat: mat_idx, 
-                    out_start, 
-                    rows: comps 
+
+                ops.push(MatOp::UnaryMat {
+                    func: func.clone(),
+                    mat: mat_idx,
+                    out_start,
+                    rows: comps,
                 });
                 *current_op_index += 1;
-                
+
                 (0..comps).map(|i| out_start + i).collect()
             }
-            Expr::If { condition, then_branch, else_branch } => {
-                let c_idxs = rec(condition, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let t_idxs = rec(then_branch, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
-                let e_idxs = rec(else_branch, matrices, ops, constant_values, imports, render_only_ops, compute_only_ops, registry, next_index, current_op_index);
+            Expr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let c_idxs = rec(
+                    condition,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let t_idxs = rec(
+                    then_branch,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
+                let e_idxs = rec(
+                    else_branch,
+                    matrices,
+                    ops,
+                    constant_values,
+                    imports,
+                    render_only_ops,
+                    compute_only_ops,
+                    registry,
+                    next_index,
+                    current_op_index,
+                );
 
                 let comps = t_idxs.len().max(e_idxs.len());
                 let cur_cols = *next_index;
@@ -323,17 +456,32 @@ pub fn compile_to_matrix_plan_with_imports(
                 let mut else_mat = Matrix::new(comps, cur_cols);
 
                 for i in 0..comps {
-                    let c_pick = if i < c_idxs.len() { c_idxs[i] } else { c_idxs[0] };
-                    let t_pick = if i < t_idxs.len() { t_idxs[i] } else { t_idxs[0] };
-                    let e_pick = if i < e_idxs.len() { e_idxs[i] } else { e_idxs[0] };
+                    let c_pick = if i < c_idxs.len() {
+                        c_idxs[i]
+                    } else {
+                        c_idxs[0]
+                    };
+                    let t_pick = if i < t_idxs.len() {
+                        t_idxs[i]
+                    } else {
+                        t_idxs[0]
+                    };
+                    let e_pick = if i < e_idxs.len() {
+                        e_idxs[i]
+                    } else {
+                        e_idxs[0]
+                    };
                     cond_mat.set(i, c_pick, 1.0);
                     then_mat.set(i, t_pick, 1.0);
                     else_mat.set(i, e_pick, 1.0);
                 }
 
-                let cond_mat_idx = matrices.len(); matrices.push(cond_mat);
-                let then_mat_idx = matrices.len(); matrices.push(then_mat);
-                let else_mat_idx = matrices.len(); matrices.push(else_mat);
+                let cond_mat_idx = matrices.len();
+                matrices.push(cond_mat);
+                let then_mat_idx = matrices.len();
+                matrices.push(then_mat);
+                let else_mat_idx = matrices.len();
+                matrices.push(else_mat);
 
                 let out_start = *next_index;
                 *next_index += comps;
@@ -349,24 +497,23 @@ pub fn compile_to_matrix_plan_with_imports(
 
                 (0..comps).map(|i| out_start + i).collect()
             }
-            _ => vec![] // 处理其他表达式类型
+            _ => vec![], // 处理其他表达式类型
         }
     }
 
     let top_outputs = rec(
-        expr, 
-        &mut matrices, 
-        &mut ops, 
-        &mut constant_values, 
-        &mut imports, 
-        &mut render_only_ops, 
-        &mut compute_only_ops, 
-        registry, 
+        expr,
+        &mut matrices,
+        &mut ops,
+        &mut constant_values,
+        &mut imports,
+        &mut render_only_ops,
+        &mut compute_only_ops,
+        registry,
         &mut next_index,
-        &mut current_op_index
+        &mut current_op_index,
     );
     let final_v_len = next_index;
-
 
     MatrixPlan {
         matrices,
@@ -397,11 +544,13 @@ fn mat_mul(A: &Matrix, B: &Mat2D) -> Mat2D {
 
     // naive triple loop; good enough for moderate sizes; can be optimized later
     for r in 0..rows {
-        let a_row = &A.data[r * A.cols .. r * A.cols + A.cols];
+        let a_row = &A.data[r * A.cols..r * A.cols + A.cols];
         let crow = &mut C[r];
         for k in 0..inner {
             let a = a_row[k];
-            if a == 0.0 { continue; }
+            if a == 0.0 {
+                continue;
+            }
             let brow = &B[k]; // B's row k has length cols
             for c in 0..cols {
                 crow[c] += a * brow[c];
@@ -414,7 +563,9 @@ fn mat_mul(A: &Matrix, B: &Mat2D) -> Mat2D {
 /// elementwise binary op on two matrices of same shape (rows x cols)
 fn mat_elemwise_binary(a: &Mat2D, b: &Mat2D, op: &BinaryOp) -> Mat2D {
     let rows = a.len();
-    if rows == 0 { return vec![]; }
+    if rows == 0 {
+        return vec![];
+    }
     let cols = a[0].len();
     let mut out = vec![vec![0.0; cols]; rows];
     for r in 0..rows {
@@ -428,12 +579,48 @@ fn mat_elemwise_binary(a: &Mat2D, b: &Mat2D, op: &BinaryOp) -> Mat2D {
                 BinaryOp::Divide => av / bv,
                 BinaryOp::Modulo => av % bv,
                 BinaryOp::Pow => av.powf(bv),
-                BinaryOp::GreaterThan => if av > bv { 1.0 } else { 0.0 },
-                BinaryOp::GreaterEqual => if av >= bv { 1.0 } else { 0.0 },
-                BinaryOp::LessThan => if av < bv { 1.0 } else { 0.0 },
-                BinaryOp::LessEqual => if av <= bv { 1.0 } else { 0.0 },
-                BinaryOp::Equal => if (av - bv).abs() < std::f32::EPSILON { 1.0 } else { 0.0 },
-                BinaryOp::NotEqual => if (av - bv).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 },
+                BinaryOp::GreaterThan => {
+                    if av > bv {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinaryOp::GreaterEqual => {
+                    if av >= bv {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinaryOp::LessThan => {
+                    if av < bv {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinaryOp::LessEqual => {
+                    if av <= bv {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinaryOp::Equal => {
+                    if (av - bv).abs() < std::f32::EPSILON {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinaryOp::NotEqual => {
+                    if (av - bv).abs() >= std::f32::EPSILON {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
                 BinaryOp::Index => av,
             };
         }
@@ -444,7 +631,9 @@ fn mat_elemwise_binary(a: &Mat2D, b: &Mat2D, op: &BinaryOp) -> Mat2D {
 /// elementwise unary op on matrix
 fn mat_elemwise_unary(a: &Mat2D, func: &UnaryFunc) -> Mat2D {
     let rows = a.len();
-    if rows == 0 { return vec![]; }
+    if rows == 0 {
+        return vec![];
+    }
     let cols = a[0].len();
     let mut out = vec![vec![0.0; cols]; rows];
     for r in 0..rows {
@@ -467,7 +656,9 @@ fn mat_elemwise_unary(a: &Mat2D, func: &UnaryFunc) -> Mat2D {
 /// elementwise comparison > 0 => mask (0 or 1)
 fn mat_greater_zero(a: &Mat2D) -> Mat2D {
     let rows = a.len();
-    if rows == 0 { return vec![]; }
+    if rows == 0 {
+        return vec![];
+    }
     let cols = a[0].len();
     let mut out = vec![vec![0.0; cols]; rows];
     for r in 0..rows {
@@ -481,7 +672,9 @@ fn mat_greater_zero(a: &Mat2D) -> Mat2D {
 /// elementwise blend: mask * A + (1-mask) * B ; mask should be same shape
 fn mat_blend(mask: &Mat2D, a: &Mat2D, b: &Mat2D) -> Mat2D {
     let rows = mask.len();
-    if rows == 0 { return vec![]; }
+    if rows == 0 {
+        return vec![];
+    }
     let cols = mask[0].len();
     let mut out = vec![vec![0.0; cols]; rows];
     for r in 0..rows {
@@ -496,7 +689,9 @@ fn mat_blend(mask: &Mat2D, a: &Mat2D, b: &Mat2D) -> Mat2D {
 /// WRITE rows_mat (rows x cols) into V at row offset out_start
 fn write_rows_to_V(V: &mut Mat2D, rows_mat: &Mat2D, out_start: usize) {
     let rows = rows_mat.len();
-    if rows == 0 { return; }
+    if rows == 0 {
+        return;
+    }
     let cols = rows_mat[0].len();
     for r in 0..rows {
         let dst_r = out_start + r;
@@ -506,7 +701,9 @@ fn write_rows_to_V(V: &mut Mat2D, rows_mat: &Mat2D, out_start: usize) {
 
 /// 批量矩阵流水线模拟：一次性对所有 lane 做矩阵运算（无 per-lane branch）
 pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
-    if inputs.is_empty() { return vec![]; }
+    if inputs.is_empty() {
+        return vec![];
+    }
     let cols = inputs[0].len(); // vector_len (L)
     let rows = plan.final_v_len; // final_v_len
     // 构造 V (rows x cols)
@@ -518,25 +715,44 @@ pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec
     // }
     // fill constants
     for (idx, val) in &plan.constant_values {
-        for c in 0..cols { V[*idx][c] = *val; }
+        for c in 0..cols {
+            V[*idx][c] = *val;
+        }
     }
     // intermediate rows already zero
 
     // 执行 ops：每个 op 用对应的选择矩阵乘 V 得到 rows_mat (rows_op x cols)
     for op in &plan.ops {
         match op {
-            MatOp::BinaryMat { op: bop, left_mat, right_mat, out_start, rows: op_rows } => {
-                let left_selected = mat_mul(&plan.matrices[*left_mat], &V);   // op_rows x cols
+            MatOp::BinaryMat {
+                op: bop,
+                left_mat,
+                right_mat,
+                out_start,
+                rows: op_rows,
+            } => {
+                let left_selected = mat_mul(&plan.matrices[*left_mat], &V); // op_rows x cols
                 let right_selected = mat_mul(&plan.matrices[*right_mat], &V); // op_rows x cols
                 let result = mat_elemwise_binary(&left_selected, &right_selected, bop);
                 write_rows_to_V(&mut V, &result, *out_start);
             }
-            MatOp::UnaryMat { func, mat, out_start, rows: op_rows } => {
+            MatOp::UnaryMat {
+                func,
+                mat,
+                out_start,
+                rows: op_rows,
+            } => {
                 let sel = mat_mul(&plan.matrices[*mat], &V); // op_rows x cols
                 let res = mat_elemwise_unary(&sel, func);
                 write_rows_to_V(&mut V, &res, *out_start);
             }
-            MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows: op_rows } => {
+            MatOp::CondBlendMat {
+                cond_mat,
+                then_mat,
+                else_mat,
+                out_start,
+                rows: op_rows,
+            } => {
                 let cond_sel = mat_mul(&plan.matrices[*cond_mat], &V); // rows x cols
                 // 生成 mask（0/1），这里采用 >0 判定；如果需要不同阈值可改
                 let mask = mat_greater_zero(&cond_sel);
@@ -549,7 +765,10 @@ pub fn simulate_matrix_plan_batch(plan: &MatrixPlan, inputs: &[Vec<f32>]) -> Vec
     }
 
     // 从 V 取出 top_outputs 行，返回为 Vec<Vec<f32>> 每个为 length cols
-    plan.top_outputs.iter().map(|&ridx| V[ridx].clone()).collect()
+    plan.top_outputs
+        .iter()
+        .map(|&ridx| V[ridx].clone())
+        .collect()
 }
 
 /// 通用的逐元素变换函数类型
@@ -557,10 +776,10 @@ type ElemwiseFn = Box<dyn Fn(&[&Mat2D]) -> Mat2D>;
 
 /// 通用的矩阵操作描述符
 struct GenericMatOp {
-    input_mats: Vec<usize>,    // 输入选择矩阵的索引
-    output_start: usize,       // 输出在V中的起始位置
-    rows: usize,               // 操作的行数
-    transform: ElemwiseFn,     // 逐元素变换函数
+    input_mats: Vec<usize>, // 输入选择矩阵的索引
+    output_start: usize,    // 输出在V中的起始位置
+    rows: usize,            // 操作的行数
+    transform: ElemwiseFn,  // 逐元素变换函数
 }
 
 /// 批量模拟的通用版本
@@ -574,7 +793,9 @@ pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan) -> Vec<Vec<f32>> {
     //     V[i].copy_from_slice(&inputs[i]);
     // }
     for (idx, val) in &plan.constant_values {
-        for c in 0..cols { V[*idx][c] = *val; }
+        for c in 0..cols {
+            V[*idx][c] = *val;
+        }
     }
 
     // 将原始操作转换为通用操作
@@ -583,51 +804,70 @@ pub fn simulate_matrix_plan_batch_generic(plan: &MatrixPlan) -> Vec<Vec<f32>> {
     // 统一执行所有通用操作
     for op in &generic_ops {
         // 1. 输入选择：用选择矩阵从V中提取输入数据
-        let selected_inputs: Vec<Mat2D> = op.input_mats.iter()
+        let selected_inputs: Vec<Mat2D> = op
+            .input_mats
+            .iter()
             .map(|&mat_idx| mat_mul(&plan.matrices[mat_idx], &V))
             .collect();
-        
+
         // 2. 逐元素变换：对每个lane执行相同的变换
         let refs: Vec<&Mat2D> = selected_inputs.iter().collect();
         let result = (op.transform)(&refs);
-        
+
         // 3. 结果写回：将结果写入V的指定位置
         write_rows_to_V(&mut V, &result, op.output_start);
     }
 
-    plan.top_outputs.iter().map(|&ridx| V[ridx].clone()).collect()
+    plan.top_outputs
+        .iter()
+        .map(|&ridx| V[ridx].clone())
+        .collect()
 }
-
 
 /// 将特定操作转换为通用操作
 fn convert_to_generic_ops(ops: &[MatOp]) -> Vec<GenericMatOp> {
-    ops.iter().map(|op| match op {
-        MatOp::BinaryMat { op: bop, left_mat, right_mat, out_start, rows } => {
-            let op_clone = bop.clone();
-            GenericMatOp {
-                input_mats: vec![*left_mat, *right_mat],
-                output_start: *out_start,
-                rows: *rows,
-                transform: Box::new(move |inputs| {
-                    let left = inputs[0];
-                    let right = inputs[1];
-                    mat_elemwise_binary(left, right, &op_clone)
-                }),
+    ops.iter()
+        .map(|op| match op {
+            MatOp::BinaryMat {
+                op: bop,
+                left_mat,
+                right_mat,
+                out_start,
+                rows,
+            } => {
+                let op_clone = bop.clone();
+                GenericMatOp {
+                    input_mats: vec![*left_mat, *right_mat],
+                    output_start: *out_start,
+                    rows: *rows,
+                    transform: Box::new(move |inputs| {
+                        let left = inputs[0];
+                        let right = inputs[1];
+                        mat_elemwise_binary(left, right, &op_clone)
+                    }),
+                }
             }
-        },
-        MatOp::UnaryMat { func, mat, out_start, rows } => {
-            let func_clone = func.clone();
-            GenericMatOp {
-                input_mats: vec![*mat],
-                output_start: *out_start,
-                rows: *rows,
-                transform: Box::new(move |inputs| {
-                    mat_elemwise_unary(inputs[0], &func_clone)
-                }),
+            MatOp::UnaryMat {
+                func,
+                mat,
+                out_start,
+                rows,
+            } => {
+                let func_clone = func.clone();
+                GenericMatOp {
+                    input_mats: vec![*mat],
+                    output_start: *out_start,
+                    rows: *rows,
+                    transform: Box::new(move |inputs| mat_elemwise_unary(inputs[0], &func_clone)),
+                }
             }
-        },
-        MatOp::CondBlendMat { cond_mat, then_mat, else_mat, out_start, rows } => {
-            GenericMatOp {
+            MatOp::CondBlendMat {
+                cond_mat,
+                then_mat,
+                else_mat,
+                out_start,
+                rows,
+            } => GenericMatOp {
                 input_mats: vec![*cond_mat, *then_mat, *else_mat],
                 output_start: *out_start,
                 rows: *rows,
@@ -638,7 +878,7 @@ fn convert_to_generic_ops(ops: &[MatOp]) -> Vec<GenericMatOp> {
                     let mask = mat_greater_zero(cond);
                     mat_blend(&mask, then, else_)
                 }),
-            }
-        },
-    }).collect()
+            },
+        })
+        .collect()
 }

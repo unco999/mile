@@ -1,12 +1,18 @@
 use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use bytemuck::{Zeroable, cast_slice};
-use mile_api::{prelude::*, *};
+use mile_api::prelude::*;
 use wgpu::{Device, util::DownloadBuffer};
 
 use crate::prelude::{
-    gpu_ast::*, gpu_ast_compute_pipeline::ComputePipelineConfig, manager::*, op::*,
-    render_binding::*, render_layer::*, *,
+    event::{ExprWithIdxEvent, KennelResultIdxEvent},
+    gpu_ast::*,
+    gpu_ast_compute_pipeline::ComputePipelineConfig,
+    manager::*,
+    op::*,
+    render_binding::*,
+    render_layer::*,
+    *,
 };
 
 /// Kennel 初始化配置
@@ -35,6 +41,11 @@ pub struct RegisteredProgram {
     pub info: ProgramSlotInfo,
 }
 
+/**
+ * 此模块监听的总线
+ */
+type KenelRgisterEventTuple = (ExprWithIdxEvent,);
+
 pub struct Kennel {
     pipeline: ProgramPipeline,
     programs: HashMap<u32, RegisteredProgram>,
@@ -44,7 +55,9 @@ pub struct Kennel {
     render_binding_resources: Option<RenderBindingResources>,
     render_binding_capacity: usize,
     _global_uniform: Rc<CpuGlobalUniform>,
-    _global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>,
+    _global_register_wgsl_map: &'static ImportRegistry,
+    _global_event_bus: &'static EventBus,
+    mod_event_steams: ModEventStream<KenelRgisterEventTuple>,
 }
 
 impl Kennel {
@@ -53,7 +66,6 @@ impl Kennel {
         queue: &wgpu::Queue,
         global_uniform: Rc<CpuGlobalUniform>,
         config: KennelConfig,
-        _global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, u32>>>,
     ) -> Self {
         let tick_interval = config.readback_interval_secs.max(1);
         let pipeline = ProgramPipeline::new(
@@ -64,6 +76,7 @@ impl Kennel {
         );
 
         Self {
+            mod_event_steams: ModEventStream::<KenelRgisterEventTuple>::new(global_event_bus()),
             pipeline,
             programs: HashMap::new(),
             ordered_programs: Vec::new(),
@@ -72,7 +85,8 @@ impl Kennel {
             render_binding_resources: None,
             render_binding_capacity: 0,
             _global_uniform: global_uniform,
-            _global_hub,
+            _global_register_wgsl_map: global_wgsl_register(),
+            _global_event_bus: global_event_bus(),
         }
     }
 
@@ -195,34 +209,38 @@ impl Kennel {
         }
     }
 
+    pub fn enqueue_expr_with_idx(
+        &mut self,
+        queue: &wgpu::Queue,
+        device: &Device,
+        event: &ExprWithIdxEvent,
+    ) {
+        let panel_id = event.idx;
+
+        let result = self.register_program(&event.expr, &self._global_register_wgsl_map);
+        println!("当前注册新面板情况 {:?}", result);
+
+        let layer_index = self.ordered_programs.len().saturating_sub(1);
+        self.rebuild_render_bindings(device, queue);
+
+        self._global_event_bus.publish(KennelResultIdxEvent {
+            kennel_id: layer_index as u32,
+            idx: event.idx,
+        });
+        // self._global_hub
+        //     .push(ModuleEvent::KennelPushResultReadDes(ModuleParmas {
+        //         module_name: "Kennel",
+        //         idx: layer_index as u32,
+        //         data: layer_index as u32,
+        //         _ty: ModuleEventType::Frag.bits(),
+        //     }));
+    }
+
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
-        for ev in self._global_hub.poll() {
-            match ev {
-                ModuleEvent::KennelPush(parmas) => {
-                    let panel_id = parmas.idx;
-
-                    let mut registry = ImportRegistry::new();
-
-                    // 注册必要的导入
-                    registry.register_compute_import("time", 0b0001, Box::new(|_| vec![0.0]));
-                    registry.register_render_import("uv", 1, Box::new(|_| vec![0.0]));
-                    registry.register_render_import("color", 2, Box::new(|_| vec![0.0]));
-
-                    let result = self.register_program(&parmas.data, &registry);
-                    println!("当前注册新面板情况 {:?}", result);
-
-                    let layer_index = self.render_layers().len();
-                    self.rebuild_render_bindings(device, queue);
-                    self._global_hub
-                        .push(ModuleEvent::KennelPushResultReadDes(ModuleParmas {
-                            module_name: "Kennel",
-                            idx: layer_index as u32,
-                            data: layer_index as u32,
-                            _ty: ModuleEventType::Frag.bits(),
-                        }));
-                }
-                _ => {}
-            }
+        let (expr_events,) = self.mod_event_steams.poll();
+        for delivery in expr_events {
+            let event = &*delivery;
+            self.enqueue_expr_with_idx(queue, device, event);
         }
     }
 

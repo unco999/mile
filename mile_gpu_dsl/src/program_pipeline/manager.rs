@@ -1,7 +1,10 @@
 use std::ops::Range;
 
-use crate::prelude::{gpu_ast::{*},op::{*}, gpu_ast_compute_pipeline::*, gpu_program::*, render_layer::*, *};
+use mile_api::prelude::ImportRegistry;
 
+use crate::prelude::{
+    gpu_ast::*, gpu_ast_compute_pipeline::*, gpu_program::*, op::*, render_layer::*, *,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProgramHandle(pub u32);

@@ -4,14 +4,6 @@ use image::{DynamicImage, GenericImage, GenericImageView, ImageReader, RgbaImage
 use std::{collections::HashMap, path::Path};
 use wgpu::{BufferAddress, TextureFormat, util::DeviceExt};
 
-use crate::mui::Panel;
-
-pub trait GpuPanelAttach: Pod + Zeroable + Send + Sync + 'static {
-    /// 生成该 Panel 的扩展数据
-    fn generate_for_panel(&self, idx: u32, panel: &Panel) -> Self;
-}
-
-
 /**
  * UI组件与组件之间的通信面板;
  */
@@ -22,30 +14,10 @@ pub struct UiMessage<Target, Payload> {
 
 impl<Target, Payload> UiMessage<Target, Payload> {
     pub fn new(payload: Payload) -> Self {
-        Self { payload, _marker: std::marker::PhantomData }
-    }
-}
-pub struct PanelAttachContext<E: GpuPanelAttach> {
-    panels: Vec<Panel>,
-    exts: Vec<E>, // 每种扩展类型都是同一具体类型
-}
-
-impl<E: GpuPanelAttach> PanelAttachContext<E> {
-    pub fn create_merged_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
-        let mut merged_data = Vec::with_capacity(self.panels.len());
-
-        for (i, panel) in self.panels.iter().enumerate() {
-            for ext in &self.exts {
-                let data = ext.generate_for_panel(i as u32, panel);
-                merged_data.push(data);
-            }
+        Self {
+            payload,
+            _marker: std::marker::PhantomData,
         }
-
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("GpuPanelMergedBuffer"),
-            contents: bytemuck::cast_slice(&merged_data),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        })
     }
 }
 
@@ -72,6 +44,8 @@ bitflags! {
 
 bitflags! {
     /// Interaction Mask
+    ///
+    #[derive(Debug,Clone)]
     pub struct PanelInteraction: u32 {
         const DEFUALT = 0b00000000;
         const VISIBLE    = 0b00000001;
@@ -174,11 +148,15 @@ bitflags::bitflags! {
         const UV_OFFSET_Y    = 0b0000_0010_0000; // index 5
         const UV_SCALE_X     = 0b0000_0100_0000; // index 6
         const UV_SCALE_Y     = 0b0000_1000_0000; // index 7
-        const TRANSPARENT    = 0b0001_0000_0000; // index 14
-        const AttchCollection = 0b0010_0000_0000; // index 14
-        const PREPOSITION_X  = 0b0100_0000_0000; // index 14
-        const PREPOSITION_Y  = 0b1000_0000_0000; // index 14
-        const ALL            = 0b1111_1111_1111; // index 14
+        const TRANSPARENT    = 0b0001_0000_0000; // index 8
+        const AttchCollection = 0b0010_0000_0000; // index 9
+        const PREPOSITION_X  = 0b0100_0000_0000; // index 10
+        const PREPOSITION_Y  = 0b1000_0000_0000; // index 11
+        const COLOR_R        = 0b0001_0000_0000_0000; // index 12
+        const COLOR_G        = 0b0010_0000_0000_0000; // index 13
+        const COLOR_B        = 0b0100_0000_0000_0000; // index 14
+        const COLOR_A        = 0b1000_0000_0000_0000; // index 15
+        const ALL            = 0b1111_1111_1111_1111;
         const Not            = 0b0000_0000_0000; // index 14
     }
 }
@@ -540,263 +518,9 @@ pub struct UiRelationGpuBuffers {
 // }
 // }
 
-#[derive(Clone, Debug)]
-pub struct UiTextureInfo {
-    pub index: u32,
-    pub parent_index: u32,
-    pub uv_min: [f32; 2],
-    pub uv_max: [f32; 2],
-    pub path: String,
-}
-
-impl UiTextureInfo {
-    pub fn to_gpu_struct(&self) -> GpuUiTextureInfo {
-        GpuUiTextureInfo {
-            index: self.index,
-            uv_min: [self.uv_min[0], self.uv_min[1], 0.0, 0.0],
-            uv_max: [self.uv_max[0], self.uv_max[1], 0.0, 0.0],
-            parent_index: self.parent_index,
-            _pad: [0u32; 2],
-        }
-    }
-}
-
 /// 集合间关系
 #[derive(Debug, Clone)]
 pub struct Relation {
     pub source_collection: u32, // 来源集合ID
     pub target_collection: u32, // 目标集合ID
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
-pub struct GpuUiTextureInfo {
-    pub index: u32,        // 4
-    pub parent_index: u32, // 4
-    pub _pad: [u32; 2],    // 8
-    pub uv_min: [f32; 4],  // 16 (vec2 + padding)
-    pub uv_max: [f32; 4],  // 16 (vec2 + padding)
-}
-
-#[derive(Clone)]
-pub struct TextureAtlasSet {
-    pub data: HashMap<u32, TextureAtlas>,
-    pub curr_ui_texture_info_index: u32,
-    pub path_to_index: HashMap<String, ImageRawInfo>,
-}
-#[derive(Clone)]
-pub struct ImageRawInfo {
-    pub index: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-#[derive(Clone)]
-/// 动态纹理图集
-///
-pub struct TextureAtlas {
-    pub width: u32,
-    pub height: u32,
-    pub data: RgbaImage, // CPU 大图
-    pub map: HashMap<String, UiTextureInfo>,
-    pub next_x: u32,
-    pub next_y: u32,
-    pub row_height: u32,
-    pub texture: Option<wgpu::Texture>,
-    pub texture_view: Option<wgpu::TextureView>,
-    pub sampler: Option<wgpu::Sampler>,
-    pub index: u32,
-}
-
-impl TextureAtlasSet {
-    pub fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-            curr_ui_texture_info_index: 0,
-            path_to_index: HashMap::new(),
-        }
-    }
-
-    pub fn get_path_by_index(&self, index: u32) -> Option<String> {
-        self.path_to_index.iter().find_map(|(k, v)| {
-            if v.index == index {
-                Some(k.clone())
-            } else {
-                None
-            }
-        })
-    }
-
-    /// 根据路径获取索引（若不存在则返回 None）
-    pub fn get_index_by_path(&self, path: &str) -> Option<ImageRawInfo> {
-        self.path_to_index.get(path).cloned()
-    }
-
-    /// 添加小图到指定 atlas（如果 atlas_id 不存在则创建）
-    pub fn add_texture(
-        &mut self,
-        atlas_id: u32,
-        name: &str,
-        img: &RgbaImage,
-        atlas_width: u32,
-        atlas_height: u32,
-    ) {
-        let atlas = self
-            .data
-            .entry(atlas_id)
-            .or_insert_with(|| TextureAtlas::new(atlas_width, atlas_height));
-        self.curr_ui_texture_info_index += 1;
-        atlas.add_sub_image(name, img, self.curr_ui_texture_info_index);
-    }
-}
-
-impl TextureAtlas {
-    /// 创建空 Atlas
-    pub fn new(width: u32, height: u32) -> Self {
-        Self {
-            width,
-            height,
-            data: RgbaImage::new(width, height),
-            map: HashMap::new(),
-            next_x: 0,
-            next_y: 0,
-            row_height: 0,
-            texture: None,
-            texture_view: None,
-            sampler: None,
-            index: 0,
-        }
-    }
-
-    pub fn add_sub_image(
-        &mut self,
-        path: &str, // ✅ 新增参数
-        img: &RgbaImage,
-        index: u32,
-    ) -> Option<UiTextureInfo> {
-        let img_width = img.width();
-        let img_height = img.height();
-
-        // 检查是否换行
-        if self.next_x + img_width > self.width {
-            self.next_x = 0;
-            self.next_y += self.row_height;
-            self.row_height = 0;
-        }
-
-        // 超出 Atlas 大小
-        if self.next_y + img_height > self.height {
-            return None;
-        }
-
-        // 复制小图到大图
-        self.data.copy_from(img, self.next_x, self.next_y).unwrap();
-
-        // 更新行高
-        if img_height > self.row_height {
-            self.row_height = img_height;
-        }
-
-        // 计算 UV
-        let uv_min = [
-            self.next_x as f32 / self.width as f32,
-            self.next_y as f32 / self.height as f32,
-        ];
-        let uv_max = [
-            (self.next_x + img_width) as f32 / self.width as f32,
-            (self.next_y + img_height) as f32 / self.height as f32,
-        ];
-
-        // 生成 UiTextureInfo
-        let info = UiTextureInfo {
-            index: self.map.len() as u32,
-            uv_min,
-            uv_max,
-            path: path.to_string(), // ✅ 保存路径
-            parent_index: self.index,
-        };
-
-        // 提取文件名作为 key（或直接用路径）
-        let key = Path::new(path)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
-
-        self.map.insert(key, info.clone());
-
-        // 移动下一个插入位置
-        self.next_x += img_width;
-
-        Some(info)
-    }
-    /// 上传大图到 GPU
-    ///
-
-    pub fn upload_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        // 1️⃣ 创建 GPU 纹理
-        let size = wgpu::Extent3d {
-            width: self.width,
-            height: self.height,
-            depth_or_array_layers: 1,
-        };
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("UI Atlas Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        // 2️⃣ 创建 TexelCopyTextureInfo
-        let copy_texture = wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        };
-
-        // 3️⃣ 创建 TexelCopyBufferLayout
-        let buffer_layout = wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4 * self.width), // RGBA8 每行字节数
-            rows_per_image: Some(self.height),
-        };
-
-        // 4️⃣ Extent3d
-        let extent = wgpu::Extent3d {
-            width: self.width,
-            height: self.height,
-            depth_or_array_layers: 1,
-        };
-
-        // 5️⃣ 上传数据到 GPU
-        queue.write_texture(copy_texture, &self.data, buffer_layout, extent);
-
-        // 6️⃣ 创建纹理视图和采样器
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("UI Atlas Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        // 7️⃣ 保存到结构体
-        self.texture = Some(texture);
-        self.texture_view = Some(view);
-        self.sampler = Some(sampler);
-    }
-
-    /// 获取小图 UV
-    pub fn get(&self, name: &str) -> Option<&UiTextureInfo> {
-        self.map.get(name)
-    }
 }

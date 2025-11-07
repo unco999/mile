@@ -1,79 +1,108 @@
 use std::ops::{Add, Div, Mul, Sub};
 
 pub mod dsl {
-    use super::{Expr, UnaryFunc, BinaryOp, Vec2, Vec3, Vec4};
+    use super::{BinaryOp, Expr, UnaryFunc, Vec2, Vec3, Vec4};
 
     pub fn var(name: &'static str) -> Expr {
         Expr::RenderImport(name)
     }
 
-   pub fn lit<X: Into<Expr>>(v: X) -> Expr {
-    v.into()
-}
-
-pub fn wvec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
-    Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
-}
-
-pub fn wvec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
-    Expr::Vec3(Vec3::new(Box::new(x.into()), Box::new(y.into()), Box::new(z.into())))
-}
-
-pub fn wvec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(a: A, b: B, c: C, d: D) -> Expr {
-    Expr::Vec4(Vec4::new(Box::new(a.into()), Box::new(b.into()), Box::new(c.into()), Box::new(d.into())))
-}
-
-// ---------- unary functions ----------
-
-pub fn sin<E: Into<Expr>>(e: E) -> Expr {
-    Expr::UnaryOp(UnaryFunc::Sin, Box::new(e.into()))
-}
-
-pub fn cos<E: Into<Expr>>(e: E) -> Expr {
-    Expr::UnaryOp(UnaryFunc::Cos, Box::new(e.into()))
-}
-
-pub fn sqrt<E: Into<Expr>>(e: E) -> Expr {
-    Expr::UnaryOp(UnaryFunc::Sqrt, Box::new(e.into()))
-}
-
-pub struct IF;
-// ---------- binary functions ----------
-
-impl IF{
-    pub fn eq<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-         Expr::BinaryOp(BinaryOp::Equal, Box::new(a.into()), Box::new(b.into()))
+    pub fn lit<X: Into<Expr>>(v: X) -> Expr {
+        v.into()
     }
 
-    pub fn ne<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-        Expr::BinaryOp(BinaryOp::NotEqual, Box::new(a.into()), Box::new(b.into()))
+    pub fn wvec2<X: Into<Expr>, Y: Into<Expr>>(x: X, y: Y) -> Expr {
+        Expr::Vec2(Vec2::new(Box::new(x.into()), Box::new(y.into())))
     }
 
-    pub fn gt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-        Expr::BinaryOp(BinaryOp::GreaterThan, Box::new(a.into()), Box::new(b.into()))
+    pub fn wvec3<X: Into<Expr>, Y: Into<Expr>, Z: Into<Expr>>(x: X, y: Y, z: Z) -> Expr {
+        Expr::Vec3(Vec3::new(
+            Box::new(x.into()),
+            Box::new(y.into()),
+            Box::new(z.into()),
+        ))
     }
 
-    pub fn lt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-        Expr::BinaryOp(BinaryOp::LessThan, Box::new(a.into()), Box::new(b.into()))
+    pub fn wvec4<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>, D: Into<Expr>>(
+        a: A,
+        b: B,
+        c: C,
+        d: D,
+    ) -> Expr {
+        Expr::Vec4(Vec4::new(
+            Box::new(a.into()),
+            Box::new(b.into()),
+            Box::new(c.into()),
+            Box::new(d.into()),
+        ))
     }
 
-    pub fn ge<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-        Expr::BinaryOp(BinaryOp::GreaterThan, Box::new(a.into()), Box::new(b.into()))
+    // ---------- unary functions ----------
+
+    pub fn sin<E: Into<Expr>>(e: E) -> Expr {
+        Expr::UnaryOp(UnaryFunc::Sin, Box::new(e.into()))
     }
 
-    pub fn le<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-        Expr::BinaryOp(BinaryOp::LessEqual, Box::new(a.into()), Box::new(b.into()))
+    pub fn cos<E: Into<Expr>>(e: E) -> Expr {
+        Expr::UnaryOp(UnaryFunc::Cos, Box::new(e.into()))
     }
 
-    pub fn of<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(cond: C, then_v: T, else_v: E) -> Expr {
-        Expr::If { condition: Box::new(cond.into()), then_branch: Box::new(then_v.into()), else_branch: Box::new(else_v.into()) }
+    pub fn sqrt<E: Into<Expr>>(e: E) -> Expr {
+        Expr::UnaryOp(UnaryFunc::Sqrt, Box::new(e.into()))
     }
 
-}
+    pub struct IF;
+    // ---------- binary functions ----------
 
-pub fn modulo<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
-    Expr::BinaryOp(BinaryOp::Modulo, Box::new(a.into()), Box::new(b.into()))
-}
+    impl IF {
+        pub fn eq<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(BinaryOp::Equal, Box::new(a.into()), Box::new(b.into()))
+        }
+
+        pub fn ne<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(BinaryOp::NotEqual, Box::new(a.into()), Box::new(b.into()))
+        }
+
+        pub fn gt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(
+                BinaryOp::GreaterThan,
+                Box::new(a.into()),
+                Box::new(b.into()),
+            )
+        }
+
+        pub fn lt<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(BinaryOp::LessThan, Box::new(a.into()), Box::new(b.into()))
+        }
+
+        pub fn ge<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(
+                BinaryOp::GreaterThan,
+                Box::new(a.into()),
+                Box::new(b.into()),
+            )
+        }
+
+        pub fn le<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+            Expr::BinaryOp(BinaryOp::LessEqual, Box::new(a.into()), Box::new(b.into()))
+        }
+
+        pub fn of<C: Into<Expr>, T: Into<Expr>, E: Into<Expr>>(
+            cond: C,
+            then_v: T,
+            else_v: E,
+        ) -> Expr {
+            Expr::If {
+                condition: Box::new(cond.into()),
+                then_branch: Box::new(then_v.into()),
+                else_branch: Box::new(else_v.into()),
+            }
+        }
+    }
+
+    pub fn modulo<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
+        Expr::BinaryOp(BinaryOp::Modulo, Box::new(a.into()), Box::new(b.into()))
+    }
 }
 
 // 向量结构体定义 - 使用 Box 打破循环
@@ -102,7 +131,7 @@ impl Vec2 {
     pub fn new(x: Box<Expr>, y: Box<Expr>) -> Self {
         Self { x, y }
     }
-    
+
     pub fn eval(&self) -> Option<(f32, f32)> {
         match (&*self.x, &*self.y) {
             (Expr::Constant(a), Expr::Constant(b)) => Some((*a, *b)),
@@ -115,7 +144,7 @@ impl Vec3 {
     pub fn new(x: Box<Expr>, y: Box<Expr>, z: Box<Expr>) -> Self {
         Self { x, y, z }
     }
-    
+
     pub fn eval(&self) -> Option<(f32, f32, f32)> {
         match (&*self.x, &*self.y, &*self.z) {
             (Expr::Constant(a), Expr::Constant(b), Expr::Constant(c)) => Some((*a, *b, *c)),
@@ -128,7 +157,7 @@ impl Vec4 {
     pub fn new(x: Box<Expr>, y: Box<Expr>, z: Box<Expr>, w: Box<Expr>) -> Self {
         Self { x, y, z, w }
     }
-    
+
     pub fn eval(&self) -> Option<(f32, f32, f32, f32)> {
         match (&*self.x, &*self.y, &*self.z, &*self.w) {
             (Expr::Constant(a), Expr::Constant(b), Expr::Constant(c), Expr::Constant(d)) => {
@@ -153,7 +182,7 @@ pub enum BinaryOp {
     LessEqual,
     Equal,
     NotEqual,
-    Index
+    Index,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,39 +237,37 @@ impl Add for Expr {
 
     fn add(self, rhs: Expr) -> Expr {
         match (self, rhs) {
-            (Expr::Vec2(lhs), Expr::Vec2(rhs)) => {
-                Expr::Vec2(Vec2::new(
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
-                ))
-            }
-            (Expr::Vec3(lhs), Expr::Vec3(rhs)) => {
-                Expr::Vec3(Vec3::new(
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.z, rhs.z)),
-                ))
-            }
-            (Expr::Vec4(lhs), Expr::Vec4(rhs)) => {
-                Expr::Vec4(Vec4::new(
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.z, rhs.z)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.w, rhs.w)),
-                ))
-            }
-            (Expr::Vec2(vec), scalar) => {
-                Expr::Vec2(Vec2::new(
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, vec.x, Box::new(scalar.clone()))),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, vec.y, Box::new(scalar))),
-                ))
-            }
-            (scalar, Expr::Vec2(vec)) => {
-                Expr::Vec2(Vec2::new(
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, Box::new(scalar.clone()), vec.x)),
-                    Box::new(Expr::BinaryOp(BinaryOp::Add, Box::new(scalar), vec.y)),
-                ))
-            }
+            (Expr::Vec2(lhs), Expr::Vec2(rhs)) => Expr::Vec2(Vec2::new(
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
+            )),
+            (Expr::Vec3(lhs), Expr::Vec3(rhs)) => Expr::Vec3(Vec3::new(
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.z, rhs.z)),
+            )),
+            (Expr::Vec4(lhs), Expr::Vec4(rhs)) => Expr::Vec4(Vec4::new(
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.x, rhs.x)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.y, rhs.y)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.z, rhs.z)),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, lhs.w, rhs.w)),
+            )),
+            (Expr::Vec2(vec), scalar) => Expr::Vec2(Vec2::new(
+                Box::new(Expr::BinaryOp(
+                    BinaryOp::Add,
+                    vec.x,
+                    Box::new(scalar.clone()),
+                )),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, vec.y, Box::new(scalar))),
+            )),
+            (scalar, Expr::Vec2(vec)) => Expr::Vec2(Vec2::new(
+                Box::new(Expr::BinaryOp(
+                    BinaryOp::Add,
+                    Box::new(scalar.clone()),
+                    vec.x,
+                )),
+                Box::new(Expr::BinaryOp(BinaryOp::Add, Box::new(scalar), vec.y)),
+            )),
             (l, r) => Expr::BinaryOp(BinaryOp::Add, Box::new(l), Box::new(r)),
         }
     }
@@ -270,10 +297,27 @@ impl Div for Expr {
 // Kernel 定义保持不变
 #[derive(Debug, Clone)]
 pub enum Kernel {
-    InjectConstant { value: f32, out: usize },
-    ElementwiseBinary { op: BinaryOp, a: usize, b: usize, out: usize },
-    ElementwiseUnary { func: UnaryFunc, a: usize, out: usize },
-    CondBlend { cond: usize, then_buf: usize, else_buf: usize, out: usize },
+    InjectConstant {
+        value: f32,
+        out: usize,
+    },
+    ElementwiseBinary {
+        op: BinaryOp,
+        a: usize,
+        b: usize,
+        out: usize,
+    },
+    ElementwiseUnary {
+        func: UnaryFunc,
+        a: usize,
+        out: usize,
+    },
+    CondBlend {
+        cond: usize,
+        then_buf: usize,
+        else_buf: usize,
+        out: usize,
+    },
 }
 
 // GPUGraph 支持多个输出
@@ -292,12 +336,17 @@ impl GPUGraph {
         }
 
         let mut buffers = inputs.to_vec();
-        
+
         // 修正：考虑输出缓冲区的最大索引，而不仅仅是kernels的输出
         let max_output_index = self.output_buffers.iter().max().copied().unwrap_or(0);
-        let max_kernel_out = self.kernels.iter().map(|k| k.output_index()).max().unwrap_or(0);
+        let max_kernel_out = self
+            .kernels
+            .iter()
+            .map(|k| k.output_index())
+            .max()
+            .unwrap_or(0);
         let max_needed = max_output_index.max(max_kernel_out);
-        
+
         buffers.resize(max_needed + 1, vec![0.0; inputs[0].len()]);
 
         for kernel in &self.kernels {
@@ -315,24 +364,48 @@ impl GPUGraph {
                             BinaryOp::Modulo => buffers[*a][i] % buffers[*b][i],
                             BinaryOp::Pow => buffers[*a][i].powf(buffers[*b][i]),
                             BinaryOp::GreaterThan => {
-                                if buffers[*a][i] > buffers[*b][i] { 1.0 } else { 0.0 }
+                                if buffers[*a][i] > buffers[*b][i] {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                             BinaryOp::GreaterEqual => {
-                                if buffers[*a][i] >= buffers[*b][i] { 1.0 } else { 0.0 }
+                                if buffers[*a][i] >= buffers[*b][i] {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                             BinaryOp::LessThan => {
-                                if buffers[*a][i] < buffers[*b][i] { 1.0 } else { 0.0 }
+                                if buffers[*a][i] < buffers[*b][i] {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                             BinaryOp::LessEqual => {
-                                if buffers[*a][i] <= buffers[*b][i] { 1.0 } else { 0.0 }
+                                if buffers[*a][i] <= buffers[*b][i] {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                             BinaryOp::Equal => {
-                                if (buffers[*a][i] - buffers[*b][i]).abs() < std::f32::EPSILON { 1.0 } else { 0.0 }
+                                if (buffers[*a][i] - buffers[*b][i]).abs() < std::f32::EPSILON {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
                             BinaryOp::NotEqual => {
-                                if (buffers[*a][i] - buffers[*b][i]).abs() >= std::f32::EPSILON { 1.0 } else { 0.0 }
+                                if (buffers[*a][i] - buffers[*b][i]).abs() >= std::f32::EPSILON {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
                             }
-                            _=>0.0
+                            _ => 0.0,
                         };
                     }
                 }
@@ -364,7 +437,8 @@ impl GPUGraph {
         }
 
         // 返回所有输出buffer的内容
-        self.output_buffers.iter()
+        self.output_buffers
+            .iter()
             .map(|&idx| buffers[idx].clone())
             .collect()
     }
@@ -384,5 +458,3 @@ impl HasOutputIndex for Kernel {
         }
     }
 }
-
-

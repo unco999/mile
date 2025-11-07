@@ -27,6 +27,8 @@ struct FontGlyphDes {
     glyph_left_side_bearing: i32,
 };
 
+
+
 struct GpuUiDebugReadCallBack {
     floats: array<f32,32>,
     uints: array<u32,32>,
@@ -70,11 +72,7 @@ fn transform_point(raw_point: vec2<f32>, desc: FontGlyphDes) -> vec2<f32> {
     let ascent = f32(desc.ascent);
     let descent = f32(desc.descent);
     
-    // 调试：确认我们理解正确
-    if (desc.start_idx == 0u) {
-        debug_buffer.floats[14] = raw_point.x;
-        debug_buffer.floats[15] = raw_point.y;
-    }
+
     
     // 计算字形的实际宽度和高度
     let bbox_width = x_max - x_min;
@@ -231,15 +229,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let px_local = vec2<f32>(f32(local_x), f32(local_y));
     let px_global = vec2<i32>(i32(local_x), i32(local_y));
 
-    // 调试信息
-    if (local_x == 0u && local_y == 0u) {
-        debug_buffer.floats[0] = f32(desc.x_min);
-        debug_buffer.floats[1] = f32(desc.y_min);
-        debug_buffer.floats[2] = f32(desc.x_max);
-        debug_buffer.floats[3] = f32(desc.y_max);
-        debug_buffer.floats[4] = f32(desc.ascent);
-        debug_buffer.floats[5] = f32(desc.descent);
-    }
+
 
     var min_dist: f32 = 1000.0;
     var current_point = vec2<f32>(0.0);

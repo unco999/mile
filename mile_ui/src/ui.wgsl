@@ -335,13 +335,12 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     let screen_size_f = vec2<f32>(global_uniform.screen_size);
 
-    // 灞€閮ㄩ《鐐?[-0.5,0.5] �?鍍忕礌鍗曚綅
-    let scaled_pos = input.pos * input.instance_size; // instance_size = 鍍忕礌瀹介�?
 
-    // 椤剁偣鍍忕礌鍧愭�?= 闈㈡澘涓績 + 灞€閮ㄥ亸绉?
+    let scaled_pos = input.pos * input.instance_size; // 
+
     let pixel_pos = input.instance_pos + scaled_pos;
 
-    // 杞崲鍒?NDC [-1,1]
+
     let ndc = vec2<f32>(
         (pixel_pos.x / screen_size_f.x) * 2.0 - 1.0,
         1.0 - (pixel_pos.y / screen_size_f.y) * 2.0

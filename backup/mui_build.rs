@@ -1,7 +1,7 @@
 
 use flume::Sender;
 use glam::{Vec2, vec2, vec4};
-use mile_api::{ModuleEventType, ModuleParmas, prelude::global_event_bus};
+use mile_api::{ModuleEventType, ModuleParmas, *};
 use mile_gpu_dsl::{core::dsl::{sin, wvec4}, prelude::*};
 use std::{
     any::Any,
@@ -14,9 +14,15 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use crate::prelude::*;
+use crate::{prelude::*, runtime::{CpuPanelEvent, NetWorkTransition}};
+use crate::runtime::_ty::TransformAnimFieldInfo;
 
-use crate::{mui::{CpuPanelEvent, GpuUi, NetWorkTransition, Panel, UiInteractionScope}, structs::{PanelEvent, PanelInteraction}};
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+pub struct UiInteractionScope {
+    pub panel_id: u32,
+    pub state: u32,
+}
+
 
 pub type StateId = u32;
 
@@ -77,7 +83,7 @@ where
     fn set_collection(mut self, id: u32) -> Self {
         let mui = self.mui;
         {
-            let mut configs = mui.pending_net_work.state_net_work.borrow_mut();
+            let mut configs: std::cell::RefMut<'_, HashMap<u32, StateNetWorkConfig>> = mui.pending_net_work.state_net_work.borrow_mut();
             let state_network_config = configs.get_mut(&self.state_id).unwrap();
             state_network_config.insert_collection = Some(id);
         }
@@ -168,6 +174,7 @@ impl From<Call> for PanelInteraction {
         }
     }
 }
+
 
 ///
 pub struct StateConfig<T> {
@@ -730,14 +737,14 @@ where
                         _ty: (ModuleEventType::Push | ModuleEventType::Vertex).bits(),
                     }));
                 });
-                ui.panel_interaction_trigger
-                    .vertex_callbacks
-                    .entry(UiInteractionScope {
-                        panel_id: curr_id,
-                        state,
-                    })
-                    .or_insert_with(Vec::new)
-                    .push(wrap);
+                // ui.panel_interaction_trigger
+                //     .vertex_callbacks
+                //     .entry(UiInteractionScope {
+                //         panel_id: curr_id,
+                //         state,
+                //     })
+                //     .or_insert_with(Vec::new)
+                //     .push(wrap);
             }
 
             // 现在安全地注册回调
@@ -779,14 +786,14 @@ where
 
             self.net_work_build(curr_id);
 
-            let _ = ui
-                .event_hub
-                .sender
-                .send(CpuPanelEvent::StateTransition(StateTransition {
-                    state_config_des: transfrom_config_des,
-                    new_state: self.default_state,
-                    panel_id: self.panel_id,
-                }));
+            // let _ = ui
+            //     .event_hub
+            //     .sender
+            //     .send(CpuPanelEvent::StateTransition(StateTransition {
+            //         state_config_des: transfrom_config_des,
+            //         new_state: self.default_state,
+            //         panel_id: self.panel_id,
+            //     }));
         }
     }
 }
@@ -890,11 +897,11 @@ where
                     }
 
                     if let Some(next) = next_config {
-                        let _ = emit.send(CpuPanelEvent::StateTransition(StateTransition {
-                            state_config_des: next.clone(),
-                            new_state: *uistate,
-                            panel_id,
-                        }));
+                        // let _ = emit.send(CpuPanelEvent::StateTransition(StateTransition {
+                        //     state_config_des: next.clone(),
+                        //     new_state: *uistate,
+                        //     panel_id,
+                        // }));
                     }
                 }
             });

@@ -1,0 +1,839 @@
+0001 | //! High level UI runtime orchestrator.
+0001 | //!
+0001 | //! This module exposes `MuiRuntime`, a lightweight façade that ties together the new
+0001 | //! runtime building blocks (buffer arena, render batches, CPU state) while also wiring
+0001 | //! in the global event bus and UI database.  The goal is to offer a centralized entry
+0001 | //! point that gradually replaces the gigantic `GpuUi` struct in `mui.rs`.
+0001 | 
+0001 | 
+0001 |     structs::MouseState,
+0001 |     event_bus::EventBus,
+0001 | use serde::de;
+0001 | 
+0001 | /// Tracks the previous and current frame interaction state so transitions
+0001 | /// (e.g. click release, hover enter) can be processed without relying on GPU readback.
+0001 | #[derive(Debug, Default, Clone)]
+0001 |     pub previous: FrameSnapshot,
+0001 |     pub current: FrameSnapshot,
+0001 | 
+0001 | #[derive(Debug, Default, Clone)]
+0001 |     pub click_panel: Option<u32>,
+0001 |     pub hover_panel: Option<u32>,
+0001 |     pub frame_index: u32,
+0001 | 
+0001 |         self.previous = self.current.clone();
+0001 |         self.current.frame_index = frame_index;
+0001 | 
+0001 | /// Maintains the CPU copy of `GlobalUniform` together with its GPU buffer.
+0001 |     cpu: GlobalUniform,
+0001 |     buffer: wgpu::Buffer,
+0001 | 
+0001 |         let cpu = GlobalUniform::default();
+0001 |             label: Some("ui::global-uniform"),
+0001 |             contents: bytes_of(&cpu),
+0001 |             usage: wgpu::BufferUsages::STORAGE
+0001 |                 | wgpu::BufferUsages::COPY_DST
+0001 |                 | wgpu::BufferUsages::COPY_SRC,
+0001 | 
+0001 |     #[inline]
+0001 |         &self.buffer
+0001 | 
+0001 |     #[inline]
+0001 |         &self.cpu
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.cpu
+0001 | 
+0001 |     fn write_field<T>(&mut self, queue: &Queue, offset: wgpu::BufferAddress, value: &T)
+0001 |     where
+0001 |         T: bytemuck::Pod,
+0001 |         queue.write_buffer(&self.buffer, offset, bytes_of(value));
+0001 | 
+0001 | 
+0001 | #[derive(Default)]
+0001 |     pub atlas_ids: Vec<u32>,
+0001 |     pub views: Vec<wgpu::TextureView>,
+0001 |     pub samplers: Vec<wgpu::Sampler>,
+0001 |     pub infos: Vec<GpuUiTextureInfo>,
+0001 | 
+0001 |         !self.views.is_empty() && !self.samplers.is_empty() && !self.infos.is_empty()
+0001 | 
+0001 |     pub layout: wgpu::BindGroupLayout,
+0001 |     pub bind_group: wgpu::BindGroup,
+0001 |     pub info_buffer: wgpu::Buffer,
+0001 |     pub atlas_ids: Vec<u32>,
+0001 |     pub texture_count: u32,
+0001 | 
+0001 | #[derive(Clone, Debug)]
+0001 |     pub overrides: PanelStateOverrides,
+0001 |     pub texture: Option<UiTextureInfo>,
+0001 | 
+0001 | #[derive(Clone, Debug)]
+0001 |     pub key: PanelKey,
+0001 |     pub default_state: Option<UiState>,
+0001 |     pub current_state: UiState,
+0001 |     pub snapshot: PanelSnapshot,
+0001 |     pub snapshot_texture: Option<UiTextureInfo>,
+0001 |     pub states: HashMap<UiState, PanelStateCpu>,
+0001 | 
+0001 | 
+0001 | 
+0001 | /// Central runtime orchestrator that will eventually replace `GpuUi`.
+0001 |     pub buffers: BufferArena,
+0001 |     pub render: RenderPipelines,
+0001 |     pub compute: RefCell<ComputePipelines>,
+0001 |     pub state: RuntimeState,
+0001 |     pub frame_history: FrameHistory,
+0001 |     pub global_uniform: GlobalUniformState,
+0001 |     pub texture_atlas_store: TextureAtlasStore,
+0001 |     pub texture_bindings: Option<TextureBindings>,
+0001 |     pub render_bind_group_layout: Option<wgpu::BindGroupLayout>,
+0001 |     pub render_bind_group: Option<wgpu::BindGroup>,
+0001 |     pub render_surface_format: Option<wgpu::TextureFormat>,
+0001 |     pub global_event_bus: &'static EventBus,
+0001 |     pub global_db: &'static MileDb,
+0001 |     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
+0001 |     pub panel_instances: Vec<Panel>,
+0001 |     pub trace:RefCell<GpuDebug>
+0001 | 
+0001 |     fn render<'a>(
+0001 |         &self,
+0001 |         device: &wgpu::Device,
+0001 |         queue: &wgpu::Queue,
+0001 |         frame_view: &wgpu::TextureView,
+0001 |         mut pass: &mut wgpu::RenderPass<'a>,
+0001 |         self.encode_panels(&mut pass);
+0001 | 
+0001 |          let mut trace = self.trace.borrow_mut();
+0001 |          trace.debug(device, queue);
+0001 | 
+0001 |         let screen = self.global_uniform.cpu_mut();
+0001 |         screen.screen_size = [size.width, size.height];
+0001 |         let state_offset = offset_of!(GlobalUniform, screen_size) as wgpu::BufferAddress;
+0001 |         queue.write_buffer(
+0001 |             &self.global_uniform.buffer,
+0001 |             state_offset,
+0001 |             bytemuck::bytes_of(&[size.width, size.height]),
+0001 |         );
+0001 |     
+0001 | 
+0001 |         let buffers = self.buffer_views();
+0001 |             queue: None,
+0001 |             frame_index: self.state.frame_state.frame_index,
+0001 |             panel_count: self.panel_instances.len() as u32,
+0001 |         self.compute.borrow_mut().encode_all(pass, &buffers, &ctx);
+0001 | 
+0001 |             queue: Some(queue),
+0001 |             frame_index: self.state.frame_state.frame_index,
+0001 |             panel_count: self.panel_instances.len() as u32,
+0001 |         self.compute
+0001 |             .borrow_mut()
+0001 |             .readback_all(device, queue, &ctx);
+0001 | 
+0001 |         self.compute.borrow().is_any_dirty()
+0001 | 
+0001 |     const PANEL_STRIDE: wgpu::BufferAddress =
+0001 |         std::mem::size_of::<Panel>() as wgpu::BufferAddress;
+0001 |     
+0001 |     pub fn write_global_buffer<T:Pod + Zeroable>(
+0001 |         &self,
+0001 |         queue: &Queue,
+0001 |         offset:wgpu::BufferAddress,
+0001 |         value:T
+0001 |         queue.write_buffer(&self.global_uniform.buffer, offset, bytemuck::bytes_of(&value));
+0001 | 
+0001 |     /// Construct a new runtime using the supplied GPU device.
+0001 |     pub fn new(
+0001 |         device: &Device,
+0001 |         arena_cfg: BufferArenaConfig,
+0001 |         let buffers = BufferArena::new(device, &arena_cfg);
+0001 |         let render = RenderPipelines::new(device);
+0001 |         let global_uniform = GlobalUniformState::new(device);
+0001 |         let mut state = RuntimeState::default();
+0001 |         let compute = ComputePipelines::new(
+0001 |             device,
+0001 |             &buffers,
+0001 |             global_uniform.buffer(),
+0001 |             state.event_hub.clone(),
+0001 |         );
+0001 | 
+0001 |             texture_atlas_store: TextureAtlasStore::default(),
+0001 |             texture_bindings: None,
+0001 |             render_bind_group_layout: None,
+0001 |             render_bind_group: None,
+0001 |             render_surface_format: None,
+0001 |             buffers,
+0001 |             render,
+0001 |             compute: RefCell::new(compute),
+0001 |             state,
+0001 |             frame_history: FrameHistory::default(),
+0001 |             global_uniform,
+0001 |             global_event_bus: global_event_bus(),
+0001 |             global_db: global_db(),
+0001 |             panel_cache: HashMap::new(),
+0001 |             panel_instances: Vec::new(),
+0001 |             trace: RefCell::new(GpuDebug::new("mui_runtime")),
+0001 | 
+0001 |     /**
+0001 |      * 调用图片材质总合成入�?     */
+0001 |         self.texture_atlas_store.read_all_image();
+0001 | 
+0001 |     #[inline]
+0001 |         &self.buffers
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.buffers
+0001 | 
+0001 |     #[inline]
+0001 |         &self.render
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.render
+0001 | 
+0001 |     #[inline]
+0001 |         &self.state
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.state
+0001 | 
+0001 |     #[inline]
+0001 |         &self.global_uniform
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.global_uniform
+0001 | 
+0001 |     #[inline]
+0001 |         &self.texture_atlas_store
+0001 | 
+0001 |     #[inline]
+0001 |         &mut self.texture_atlas_store
+0001 | 
+0001 |     /// Load a single texture asset into the atlas store and return metadata.
+0001 |     pub fn load_texture<P: AsRef<std::path::Path>>(
+0001 |         &mut self,
+0001 |         path: P,
+0001 |         self.texture_atlas_store.read_img(path.as_ref())
+0001 | 
+0001 |         self.texture_atlas_store.upload_all_to_gpu(device, queue);
+0001 | 
+0001 |         let mut views = Vec::new();
+0001 |         let mut samplers = Vec::new();
+0001 |         let mut atlas_ids = Vec::new();
+0001 |         let mut slot_map = HashMap::new();
+0001 | 
+0001 |                     let slot = views.len() as u32;
+0001 |                     slot_map.insert(atlas.index, slot);
+0001 |                     atlas_ids.push(atlas_id);
+0001 |                     views.push(view.clone());
+0001 |                     samplers.push(sampler.clone());
+0001 | 
+0001 |         let infos = self
+0001 |             .texture_atlas_store
+0001 |             .build_gpu_texture_infos_with_slots(&slot_map);
+0001 | 
+0001 |             atlas_ids,
+0001 |             views,
+0001 |             samplers,
+0001 |             infos,
+0001 | 
+0001 |     #[inline]
+0001 |         self.texture_atlas_store.texture_count()
+0001 | 
+0001 |     #[inline]
+0001 |         self.texture_bindings.as_ref()
+0001 | 
+0001 |     #[inline]
+0001 |         self.texture_bindings.as_mut()
+0001 | 
+0001 |         self.panel_cache.get(key)
+0001 | 
+0001 |         self.render_bind_group.as_ref()
+0001 | 
+0001 |     #[inline]
+0001 |         self.buffers.staging_guard()
+0001 | 
+0001 |     #[inline]
+0001 |         Self::PANEL_STRIDE
+0001 | 
+0001 |     #[inline]
+0001 |         (index as wgpu::BufferAddress) * Self::PANEL_STRIDE
+0001 | 
+0001 |         let offset = Self::panel_offset(index);
+0001 |         queue.write_buffer(&self.buffers.instance, offset, bytes_of(panel));
+0001 |         self.compute.borrow_mut().mark_interaction_dirty();
+0001 | 
+0001 |             return;
+0001 |         let offset = Self::panel_offset(start_index);
+0001 |         queue.write_buffer(&self.buffers.instance, offset, cast_slice(panels));
+0001 |         self.compute.borrow_mut().mark_interaction_dirty();
+0001 | 
+0001 |         self.buffers.ensure_capacity(cfg);
+0001 | 
+0001 |         let data = self.texture_gpu_data();
+0001 |             return None;
+0001 | 
+0001 |         let view_count = data.views.len() as u32;
+0001 |         let sampler_count = data.samplers.len() as u32;
+0001 |         let texture_count = data.infos.len() as u32;
+0001 | 
+0001 |             label: Some("ui::texture-infos"),
+0001 |             contents: bytemuck::cast_slice(&data.infos),
+0001 |             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+0001 | 
+0001 |             label: Some("ui::texture-bindings"),
+0001 |             entries: &[
+0001 |                     binding: 0,
+0001 |                     visibility: wgpu::ShaderStages::FRAGMENT,
+0001 |                         view_dimension: wgpu::TextureViewDimension::D2,
+0001 |                         multisampled: false,
+0001 |                     count: NonZeroU32::new(view_count),
+0001 |                     binding: 1,
+0001 |                     visibility: wgpu::ShaderStages::FRAGMENT,
+0001 |                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+0001 |                     count: NonZeroU32::new(sampler_count),
+0001 |                     binding: 2,
+0001 |                     visibility: wgpu::ShaderStages::FRAGMENT,
+0001 |                         has_dynamic_offset: false,
+0001 |                         min_binding_size: None,
+0001 |                     count: None,
+0001 |             ],
+0001 | 
+0001 |         let texture_refs: Vec<&wgpu::TextureView> = data.views.iter().collect();
+0001 |         let sampler_refs: Vec<&wgpu::Sampler> = data.samplers.iter().collect();
+0001 | 
+0001 |             label: Some("ui::texture-bindings"),
+0001 |             layout: &layout,
+0001 |             entries: &[
+0001 |                     binding: 0,
+0001 |                     resource: wgpu::BindingResource::TextureViewArray(&texture_refs),
+0001 |                     binding: 1,
+0001 |                     resource: wgpu::BindingResource::SamplerArray(&sampler_refs),
+0001 |                     binding: 2,
+0001 |                     resource: info_buffer.as_entire_binding(),
+0001 |             ],
+0001 | 
+0001 |             layout,
+0001 |             bind_group,
+0001 |             info_buffer,
+0001 |             atlas_ids: data.atlas_ids,
+0001 |             texture_count,
+0001 | 
+0001 |     pub fn rebuild_texture_bindings(
+0001 |         &mut self,
+0001 |         device: &Device,
+0001 |         queue: &Queue,
+0001 |         self.upload_textures_to_gpu(device, queue);
+0001 |         let bindings = self.prepare_texture_bindings(device);
+0001 |         self.texture_bindings = bindings;
+0001 |         self.texture_bindings.as_ref()
+0001 | 
+0001 |     pub fn refresh_panel_cache<TPayload: PanelPayload>(
+0001 |         &mut self,
+0001 |         keys: &[PanelKey],
+0001 |         let table = self.global_db.bind_table::<PanelBinding<TPayload>>()?;
+0001 |                     let descriptor = self.build_cpu_descriptor::<TPayload>(key.clone(), record);
+0001 |                     self.panel_cache.insert(key.clone(), descriptor);
+0001 |                     self.panel_cache.remove(key);
+0001 |         Ok(())
+0001 | 
+0001 |             let _ = self.rebuild_texture_bindings(device, queue);
+0001 | 
+0001 |         let mut descriptors: Vec<&PanelCpuDescriptor> = self.panel_cache.values().collect();
+0001 |         descriptors.sort_by_key(|desc| desc.key.panel_id);
+0001 | 
+0001 |         let panels: Vec<Panel> = descriptors
+0001 |             .into_iter()
+0001 |             .map(|desc| self.descriptor_to_panel(desc))
+0001 |             .collect();
+0001 | 
+0001 |         self.panel_instances = panels;
+0001 | 
+0001 |             self.write_panels(queue, 0, &self.panel_instances);
+0001 | 
+0001 |         let count = self.panel_instances.len() as u32;
+0001 |         self.render
+0001 |             .set_instance_range(QuadBatchKind::Static, 0..count);
+0001 |         self.render
+0001 |             .set_indirect_count(QuadBatchKind::Static, 0);
+0001 | 
+0001 |         &self.panel_instances
+0001 | 
+0001 |     pub fn ensure_render_pipeline(
+0001 |         &mut self,
+0001 |         device: &Device,
+0001 |         queue: &Queue,
+0001 |         surface_format: wgpu::TextureFormat,
+0001 |             let _ = self.rebuild_texture_bindings(device, queue);
+0001 | 
+0001 |                 label: Some("ui::render-bind-layout"),
+0001 |                 entries: &[
+0001 |                     binding: 0,
+0001 |                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+0001 |                         has_dynamic_offset: false,
+0001 |                         min_binding_size: None,
+0001 |                     count: None,
+0001 |                     binding: 1,
+0001 |                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+0001 |                         has_dynamic_offset: false,
+0001 |                         min_binding_size: None,
+0001 |                     count: None,
+0001 |             self.render_bind_group_layout = Some(layout);
+0001 | 
+0001 |         let mut trace = self.trace.borrow_mut();
+0001 |         trace.create_buffer(device);
+0001 | 
+0001 |             let layout = self
+0001 |                 .render_bind_group_layout
+0001 |                 .as_ref()
+0001 |                 .expect("render bind layout available");
+0001 |                 label: Some("ui::render-bind-group"),
+0001 |                 layout,
+0001 |                     binding: 0,
+0001 |                     resource: self.global_uniform.buffer().as_entire_binding(),
+0001 |                     binding: 1,
+0001 |                     resource: trace.buffer.as_ref().expect("没有绑定trace-buffer").as_entire_binding(),
+0001 |                 ],
+0001 |             self.render_bind_group = Some(bind_group);
+0001 | 
+0001 |             return;
+0001 | 
+0001 |         let needs_pipeline = self
+0001 |             .render
+0001 |             .batches
+0001 |             .get(QuadBatchKind::Static)
+0001 |             .pipeline
+0001 |             .is_none()
+0001 |             || self.render_surface_format != Some(surface_format);
+0001 | 
+0001 |                 label: Some("ui::basic-shader"),
+0001 |                 source: wgpu::ShaderSource::Wgsl(
+0001 |                     include_str!("ui_basic.wgsl").into(),
+0001 |                 ),
+0001 | 
+0001 |             let render_layout = self
+0001 |                 .render_bind_group_layout
+0001 |                 .as_ref()
+0001 |                 .expect("render bind layout available");
+0001 |                 label: Some("ui::pipeline-layout"),
+0001 |                 bind_group_layouts: &[render_layout, &texture_bindings.layout],
+0001 |                 push_constant_ranges: &[],
+0001 | 
+0001 |             let vertex_layouts = [
+0001 |                     array_stride: 16,
+0001 |                     step_mode: wgpu::VertexStepMode::Vertex,
+0001 |                     attributes: &[
+0001 |                             offset: 0,
+0001 |                             shader_location: 0,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                             offset: 8,
+0001 |                             shader_location: 1,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                     ],
+0001 |                     array_stride: std::mem::size_of::<Panel>() as u64,
+0001 |                     step_mode: wgpu::VertexStepMode::Instance,
+0001 |                     attributes: &[
+0001 |                             offset: 0,
+0001 |                             shader_location: 2,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                             offset: 8,
+0001 |                             shader_location: 3,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                             offset: 16,
+0001 |                             shader_location: 4,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                             offset: 24,
+0001 |                             shader_location: 5,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                             offset: 32,
+0001 |                             shader_location: 6,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 36,
+0001 |                             shader_location: 7,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 40,
+0001 |                             shader_location: 8,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 44,
+0001 |                             shader_location: 9,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 48,
+0001 |                             shader_location: 10,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 52,
+0001 |                             shader_location: 11,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 56,
+0001 |                             shader_location: 12,
+0001 |                             format: wgpu::VertexFormat::Float32,
+0001 |                             offset: 60,
+0001 |                             shader_location: 13,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 64,
+0001 |                             shader_location: 14,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 68,
+0001 |                             shader_location: 15,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 72,
+0001 |                             shader_location: 16,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 76,
+0001 |                             shader_location: 17,
+0001 |                             format: wgpu::VertexFormat::Uint32,
+0001 |                             offset: 80,
+0001 |                             shader_location: 18,
+0001 |                             format: wgpu::VertexFormat::Float32x4,
+0001 |                             offset: 96,
+0001 |                             shader_location: 19,
+0001 |                             format: wgpu::VertexFormat::Float32x4,
+0001 |                             offset: 112,
+0001 |                             shader_location: 20,
+0001 |                             format: wgpu::VertexFormat::Float32x2,
+0001 |                     ],
+0001 |             ];
+0001 | 
+0001 |                 label: Some("ui::render-pipeline"),
+0001 |                 layout: Some(&pipeline_layout),
+0001 |                     module: &shader,
+0001 |                     entry_point: Some("vs_main"),
+0001 |                     buffers: &vertex_layouts,
+0001 |                     compilation_options: Default::default(),
+0001 |                     module: &shader,
+0001 |                     entry_point: Some("fs_main"),
+0001 |                         format: surface_format,
+0001 |                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+0001 |                         write_mask: wgpu::ColorWrites::ALL,
+0001 |                     compilation_options: Default::default(),
+0001 |                 primitive: wgpu::PrimitiveState::default(),
+0001 |                     format: wgpu::TextureFormat::Depth32Float, // �?必须�?render pass �?depth_view 格式一�?
+0001 |                     depth_write_enabled: true,
+0001 |                     depth_compare: wgpu::CompareFunction::Less,
+0001 |                     stencil: wgpu::StencilState::default(),
+0001 |                     bias: DepthBiasState::default(),
+0001 | 
+0001 |                 multisample: wgpu::MultisampleState::default(),
+0001 |                 multiview: None,
+0001 |                 cache: None,
+0001 | 
+0001 |             self.render.set_pipeline(QuadBatchKind::Static, pipeline);
+0001 |             self.render_surface_format = Some(surface_format);
+0001 | 
+0001 |             return;
+0001 |             return;
+0001 |         
+0001 |         let instance_count = self.panel_instances.len() as u32;
+0001 |             return;
+0001 | 
+0001 |         self.render.encode_main(
+0001 |             pass,
+0001 |             render_bind_group,
+0001 |             &texture_bindings.bind_group,
+0001 |             None,
+0001 |             &self.buffers.instance,
+0001 |             &self.buffers.indirect_draws,
+0001 |             0,
+0001 |             6,
+0001 |             instance_count,
+0001 |         );
+0001 | 
+0001 |     fn build_cpu_descriptor<TPayload: PanelPayload>(
+0001 |         &mut self,
+0001 |         key: PanelKey,
+0001 |         record: PanelRecord<TPayload>,
+0001 |             default_state,
+0001 |             states,
+0001 |             current_state,
+0001 |             snapshot,
+0001 |             ..
+0001 | 
+0001 |         let snapshot_texture = snapshot
+0001 |             .texture
+0001 |             .as_ref()
+0001 |             .and_then(|name| self.ensure_texture_loaded(name));
+0001 | 
+0001 |         let mut state_map = HashMap::with_capacity(states.len());
+0001 |             let texture = overrides
+0001 |                 .texture
+0001 |                 .as_ref()
+0001 |                 .and_then(|name| self.ensure_texture_loaded(name));
+0001 |             state_map.insert(
+0001 |                 state_id,
+0001 |                     overrides,
+0001 |                     texture,
+0001 |             );
+0001 | 
+0001 |             key,
+0001 |             default_state,
+0001 |             current_state,
+0001 |             snapshot,
+0001 |             snapshot_texture,
+0001 |             states: state_map,
+0001 | 
+0001 |         let state_cpu = desc
+0001 |             .states
+0001 |             .get(&desc.current_state)
+0001 |             .or_else(|| desc.default_state.and_then(|id| desc.states.get(&id)))
+0001 |             .or_else(|| desc.states.values().next());
+0001 | 
+0001 |         let overrides = state_cpu.map(|state| &state.overrides);
+0001 |         let texture_info = state_cpu
+0001 |             .and_then(|state| state.texture.as_ref())
+0001 |             .or(desc.snapshot_texture.as_ref());
+0001 | 
+0001 |         let mut position = overrides
+0001 |             .and_then(|o| o.position)
+0001 |             .unwrap_or(desc.snapshot.position);
+0001 |             position[0] += offset[0];
+0001 |             position[1] += offset[1];
+0001 | 
+0001 |         let mut size = overrides.and_then(|o| o.size);
+0001 |             if overrides
+0001 |                 .and_then(|o| o.fit_to_texture)
+0001 |                 .unwrap_or(false)
+0001 |                         size = Some([raw.width as f32, raw.height as f32]);
+0001 |         let size = size.unwrap_or([100.0, 100.0]);
+0001 | 
+0001 |         let z_value = overrides
+0001 |             .and_then(|o| o.z_index)
+0001 |             .unwrap_or(desc.snapshot.z_index)
+0001 |             .max(0) as u32;
+0001 | 
+0001 |         let pass_through = overrides.and_then(|o| o.pass_through).unwrap_or(0);
+0001 |         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
+0001 |         let event_mask = overrides.and_then(|o| o.event_mask).unwrap_or(0);
+0001 |         let state_mask = overrides.and_then(|o| o.state_mask).unwrap_or(0);
+0001 |         let collection_state = overrides
+0001 |             .and_then(|o| o.collection_state)
+0001 |             .unwrap_or(0);
+0001 |         let kennel_des_id = overrides
+0001 |             .and_then(|o| o.kennel_des_id)
+0001 |             .unwrap_or(0);
+0001 | 
+0001 |         let transparent = overrides
+0001 |             .and_then(|o| o.transparent)
+0001 |             .or_else(|| overrides.and_then(|o| o.color).map(|color| color[3]))
+0001 |             .unwrap_or(desc.snapshot.color[3]);
+0001 | 
+0001 |                 let slot = self
+0001 |                     .texture_slot_for_atlas(info.parent_index)
+0001 |                     .unwrap_or(u32::MAX);
+0001 |                 (
+0001 |                     [info.uv_min[0], info.uv_min[1]],
+0001 |                     [
+0001 |                         info.uv_max[0] - info.uv_min[0],
+0001 |                         info.uv_max[1] - info.uv_min[1],
+0001 |                     ],
+0001 |                     slot,
+0001 |                 )
+0001 |             None => ([0.0, 0.0], [1.0, 1.0], u32::MAX),
+0001 | 
+0001 |         let mut panel = Panel::default();
+0001 |         panel.id = desc.key.panel_id;
+0001 |         panel.position = position;
+0001 |         panel.size = size;
+0001 |         panel.uv_offset = uv_offset;
+0001 |         panel.uv_scale = uv_scale;
+0001 |         panel.z_index = z_value;
+0001 |         panel.pass_through = pass_through;
+0001 |         panel.interaction = interaction;
+0001 |         panel.event_mask = event_mask;
+0001 |         panel.state = desc.current_state.0;
+0001 |         panel.state_mask = state_mask;
+0001 |         panel.transparent = transparent;
+0001 |         panel.texture_id = texture_id;
+0001 |         panel.collection_state = collection_state;
+0001 |         panel.kennel_des_id = kennel_des_id;
+0001 | 
+0001 |         let color = overrides
+0001 |             .and_then(|o| o.color)
+0001 |             .unwrap_or(desc.snapshot.color);
+0001 |         panel.color = color;
+0001 | 
+0001 |             panel.border_color = border.color;
+0001 |             panel.border_width = border.width;
+0001 |             panel.border_radius = border.radius;
+0001 |             panel.border_color = [0.0, 0.0, 0.0, 0.0];
+0001 |             panel.border_width = 0.0;
+0001 |             panel.border_radius = 0.0;
+0001 |         panel.pad_border = [0.0, 0.0];
+0001 |         panel
+0001 | 
+0001 |             return None;
+0001 | 
+0001 |             return Some(info.clone());
+0001 | 
+0001 |         let mut candidates: Vec<PathBuf> = Vec::new();
+0001 |         candidates.push(PathBuf::from(texture_name));
+0001 |         candidates.push(PathBuf::from("texture").join(texture_name));
+0001 | 
+0001 |                     return Some(info);
+0001 |                     eprintln!(
+0001 |                         path
+0001 |                     );
+0001 |                     return None;
+0001 | 
+0001 |         None
+0001 | 
+0001 |             bindings
+0001 |                 .atlas_ids
+0001 |                 .iter()
+0001 |                 .position(|&id| id == atlas_index)
+0001 |                 .map(|idx| idx as u32)
+0001 | 
+0001 |     /// Expose the global database to callers that need to read/write persistent UI data.
+0001 |         self.global_db
+0001 | 
+0001 |     /// Expose the shared event bus so higher level systems can publish events without
+0001 |     /// creating additional handles.
+0001 |         self.global_event_bus
+0001 | 
+0001 |     /// Record frame timing information and clear transient CPU-side queues.
+0001 |         self.frame_history.advance(frame_index);
+0001 |         self.state.frame_state.frame_index = frame_index;
+0001 |         self.state.frame_state.delta_time = delta_time;
+0001 |         self.state.clear_frame();
+0001 |         self.compute.borrow_mut().mark_interaction_dirty();
+0001 | 
+0001 |     /// Submit a CPU event to both the per-frame queue and the global event bus.
+0001 |         self.state.push_event(event.clone());
+0001 |         self.global_event_bus.publish(event);
+0001 | 
+0001 |     /// Register a callback for a specific interaction scope.
+0001 |         &mut self.state.panel_events
+0001 | 
+0001 |     #[inline]
+0001 |         &self.state.event_hub
+0001 | 
+0001 |     #[inline]
+0001 |         &self.state.cpu_events
+0001 | 
+0001 |     
+0001 |     pub fn copy_interaction_swap_frame(
+0001 |         &mut self,
+0001 |         device: &Device,
+0001 |         queue: &Queue,
+0001 |         frame_buffer: &wgpu::Buffer,
+0001 |         frame: u32,
+0001 |         let frame_size = std::mem::size_of::<GpuInteractionFrame>() as wgpu::BufferAddress;
+0001 | 
+0001 |             label: Some("ui::interaction-frame-swap"),
+0001 | 
+0001 |             label: Some("ui::interaction-temp"),
+0001 |             size: frame_size,
+0001 |             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+0001 |             mapped_at_creation: false,
+0001 | 
+0001 | 
+0001 |             label: Some("ui::interaction-curr"),
+0001 |             contents: cast_slice(&[self.curr]),
+0001 |             usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+0001 | 
+0001 |         encoder.copy_buffer_to_buffer(frame_buffer, frame_size, &temp_buffer, 0, frame_size);
+0001 |         encoder.copy_buffer_to_buffer(&temp_buffer, 0, frame_buffer, 0, frame_size);
+0001 |         encoder.copy_buffer_to_buffer(&new_curr_buffer, 0, frame_buffer, frame_size, frame_size);
+0001 | 
+0001 |         queue.submit(Some(encoder.finish()));
+0001 |     
+0001 |             let global = self.global_uniform.cpu_mut();
+0001 |             global.mouse_state = mouse_state.bits();
+0001 |             let offset = offset_of!(GlobalUniform, mouse_state) as wgpu::BufferAddress;
+0001 |             queue.write_buffer(
+0001 |                 &self.global_uniform.buffer,
+0001 |                 offset,
+0001 |                 bytemuck::bytes_of(&self.global_uniform.cpu.mouse_state),
+0001 |             );
+0001 | 
+0001 |         let frame_index = self.state.frame_state.frame_index;
+0001 |         let delta_time = self.state.frame_state.delta_time;
+0001 | 
+0001 |         let uniform = &mut self.global_uniform;
+0001 | 
+0001 | 
+0001 | 
+0001 |         // Mirror the legacy `Mui` frame ticking: keep dt/time/frame alive on both CPU & GPU.
+0001 |         uniform.cpu_mut().dt = delta_time;
+0001 |         let dt = uniform.cpu().dt;
+0001 |         uniform.write_field(
+0001 |             queue,
+0001 |             offset_of!(GlobalUniform, dt) as wgpu::BufferAddress,
+0001 |             &dt,
+0001 |         );
+0001 | 
+0001 |         uniform.cpu_mut().time += delta_time;
+0001 |         let time = uniform.cpu().time;
+0001 |         uniform.write_field(
+0001 |             queue,
+0001 |             offset_of!(GlobalUniform, time) as wgpu::BufferAddress,
+0001 |             &time,
+0001 |         );
+0001 | 
+0001 |         uniform.cpu_mut().frame = frame_index;
+0001 |         let frame = uniform.cpu().frame;
+0001 |         uniform.write_field(
+0001 |             queue,
+0001 |             offset_of!(GlobalUniform, frame) as wgpu::BufferAddress,
+0001 |             &frame,
+0001 |         );
+0001 | 
+0001 |     /// Queue a write into the panel instance buffer by offset.
+0001 |     pub fn write_panel_bytes(
+0001 |         &self,
+0001 |         queue: &Queue,
+0001 |         panel_offset_bytes: wgpu::BufferAddress,
+0001 |         data: &[u8],
+0001 |         queue.write_buffer(&self.buffers.instance, panel_offset_bytes, data);
+0001 | 
+0001 |     /// Reads back the GPU interaction buffer so the CPU can inspect the latest
+0001 |     /// frame pair and enqueue panel events without waiting on future frames.
+0001 |         // DownloadBuffer::read_buffer(
+0001 |         //     device,
+0001 |         //     queue,
+0001 |         //     &self
+0001 |         //         .interaction_pipeline_cache
+0001 |         //         .gpu_Interaction_buffer
+0001 |         //         .as_ref()
+0001 |         //         .unwrap()
+0001 |         //         .slice(..),
+0001 |         //             let bytes = downloadBuffer;
+0001 | 
+0001 |         //             // cast bytes -> &[MyStruct]
+0001 |         //             let data: &[GpuInteractionFrame] = bytemuck::cast_slice(&bytes);
+0001 | 
+0001 |         //             let old_frame = data[0];
+0001 |         //             let new_frame = data[1];
+0001 | 
+0001 | 
+0001 |         //                 // hub.push(CpuPanelEvent::Click((
+0001 |         //                 //     new_frame.frame,
+0001 |         //                 //         panel_id: new_frame.click_id,
+0001 |         //                 //         state: new_frame.trigger_panel_state,
+0001 |         //                 // )));
+0001 |         //                 // hub.push(CpuPanelEvent::Drag((
+0001 |         //                 //     new_frame.frame,
+0001 |         //                 //         panel_id: new_frame.drag_id,
+0001 |         //                 //         state: new_frame.trigger_panel_state,
+0001 |         //                 // )));
+0001 | 
+0001 |         //                 // hub.push(CpuPanelEvent::Hover((
+0001 |         //                 //     new_frame.frame,
+0001 |         //                 //         panel_id: new_frame.hover_id,
+0001 |         //                 //         state: new_frame.trigger_panel_state,
+0001 |         //                 // )));
+0001 | 
+0001 |         //                 println!(
+0001 |         //                     old_frame.hover_id, old_frame.trigger_panel_state
+0001 |         //                 );
+0001 |         //                 // hub.push(CpuPanelEvent::OUT((
+0001 |         //                 //     new_frame.frame,
+0001 |         //                 //         panel_id: old_frame.hover_id,
+0001 |         //                 //         state: old_frame.trigger_panel_state,
+0001 |         //                 // )));
+0001 | 
+0001 |         //             //     hub.push(CpuPanelEvent::Hover((new_frame.frame, new_frame.hover_id)));
+0001 |         // );
+0001 | 
+0001 |     /// Convenience wrapper updating the render batch bookkeeping.
+0001 |         self.render.set_instance_range(kind, range);
+0001 | 
+0001 |     /// Update the indirect draw count for a render batch.
+0001 |         self.render.set_indirect_count(kind, count);

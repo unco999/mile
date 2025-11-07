@@ -18,7 +18,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
         vec2<f32>(3.0, -1.0),
         vec2<f32>(-1.0, 3.0),
     );
-    out.position = vec4<f32>(pos[vertex_index], 0.0, 1.0);
+    out.position = vec4<f32>(pos[vertex_index], 0.99, 1.0);
 
     // UV 坐标映射到 [0,1]
     out.uv = (out.position.xy + vec2<f32>(1.0, 1.0)) * 0.5;

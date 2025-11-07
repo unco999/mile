@@ -12,3 +12,5 @@ bitflags = "2.9.4"
 lazy_static = "1.5.0"
 dashmap = "6.1.0"
 arc-swap = "1.6"
+mile_db = { path = "../mile_db"}
+field-offset = "0.3"

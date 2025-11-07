@@ -3,24 +3,17 @@ use flume::{Receiver, Sender};
 use glam::{Vec2, vec2};
 use image::{Frame, ImageReader, RgbaImage, imageops::overlay};
 use itertools::Itertools;
+
 use mile_api::{
-    CpuGlobalUniform, GlobalEventHub, GlobalUniform, GpuDebug, KennelReadDesPool, LayerID,
-    ModuleEvent, ModuleEventType, ModuleParmas, Renderable, prelude::{EventStream, global_event_bus},
+    prelude::{EventStream, GlobalUniform},
+    util::WGPU,
 };
 use mile_gpu_dsl::{core::Expr, prelude::kennel::Kennel};
 use mile_graphics::structs::{GlobalState, GlobalStateRecord, GlobalStateType};
 use std::{
-    any::Any,
-    cell::RefCell,
-    collections::{self, HashMap},
-    default, fs,
-    hash::Hash,
-    num::{NonZeroU32, NonZeroU64},
-    path::Path,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    u32,
+    any::Any, cell::RefCell, collections::{self, HashMap}, default, fs, hash::Hash, marker::PhantomData, num::{NonZeroU32, NonZeroU64}, path::Path, rc::Rc, sync::{Arc, Mutex}, u32
 };
+
 
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
@@ -32,9 +25,11 @@ use wgpu::{
 };
 use winit::window::Window;
 
-
-use crate::prelude::*;
-
+use crate::{
+    mui_prototype::UiState,
+    prelude::*,
+    runtime::{StateConfigDes, StateNetWorkConfigDes, WgslResult},
+};
 
 const PADDING: u32 = 2; // 每张图像间的像素间距，防止GPU采样溢出
 const DEFAULT_ATLAS_SIZE: u32 = 2048;
@@ -48,163 +43,6 @@ struct Vertex {
     uv: [f32; 2],
 }
 
-#[derive(Debug, Clone)]
-pub enum CpuPanelEvent {
-    OUT((FRAME, UiInteractionScope)),
-    Hover((FRAME, UiInteractionScope)),
-    Click((FRAME, UiInteractionScope)),
-    StateTransition(StateTransition),
-    Drag((FRAME, UiInteractionScope)),
-    NetWorkTransition(NetWorkTransition),
-    TotalUpdate(FRAME),
-    SwapInteractionFrame(FRAME),
-    WgslResult(WgslResult),
-    SpecielAnim((u32, TransformAnimFieldInfo)),
-    Frag((FRAME, UiInteractionScope)),
-    Vertex((FRAME, UiInteractionScope)),
-}
-
-#[derive(Debug, Clone)]
-pub struct StateTransition {
-    pub state_config_des: StateConfigDes,
-    pub new_state: UiState,
-    pub panel_id: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct NetWorkTransition {
-    pub state_config_des: StateNetWorkConfigDes,
-    pub curr_state: UiState,
-    pub panel_id: u32,
-}
-
-pub type FRAME = u32;
-
-// 通用回调类型，数据流类型被擦除为 dyn Any
-pub type ClickCallback = Box<dyn FnMut(u32)>;
-pub type DragCallback = Box<dyn FnMut(u32)>;
-pub type HoverCallback = Box<dyn FnMut(u32)>;
-pub type EntryCallBack = Box<dyn FnMut(u32)>;
-pub type OutCallBack = Box<dyn FnMut(u32)>;
-pub type EntryFragBack = Box<dyn FnMut(u32)>;
-pub type EntryVertexBack = Box<dyn FnMut(u32)>;
-
-#[derive(Default)]
-pub struct PanelInteractionTrigger {
-    pub click_callbacks: HashMap<UiInteractionScope, Vec<ClickCallback>>,
-    pub drag_callbacks: HashMap<UiInteractionScope, Vec<DragCallback>>,
-    pub hover_callbacks: HashMap<UiInteractionScope, Vec<HoverCallback>>,
-    pub entry_callbacks: HashMap<UiInteractionScope, Vec<EntryCallBack>>,
-    pub out_callbacks: HashMap<UiInteractionScope, Vec<OutCallBack>>,
-    pub frag_callbacks: HashMap<UiInteractionScope, Vec<EntryFragBack>>,
-    pub vertex_callbacks: HashMap<UiInteractionScope, Vec<EntryVertexBack>>,
-}
-
-#[derive(PartialEq, Eq, Hash, Debug, Clone)]
-pub struct UiInteractionScope {
-    pub panel_id: u32,
-    pub state: u32,
-}
-
-#[derive(Clone)]
-pub struct UIEventHub {
-    pub sender: Sender<CpuPanelEvent>,
-    pub receiver: Receiver<CpuPanelEvent>,
-    pub pre_hover_panel_id: Option<u32>,
-}
-
-impl UIEventHub {
-    pub fn new() -> Self {
-        let (sender, receiver) = flume::unbounded();
-        Self {
-            sender,
-            receiver,
-            pre_hover_panel_id: None,
-        }
-    }
-
-    pub fn push(&self, event: CpuPanelEvent) {
-        let _ = self.sender.send(event);
-    }
-
-    pub fn poll(&self) -> Vec<CpuPanelEvent> {
-        let mut events = Vec::new();
-        while let Ok(ev) = self.receiver.try_recv() {
-            events.push(ev);
-        }
-        events
-    }
-}
-
-// Quad 顶点数据（屏幕空间，-0.5 ~ 0.5）
-const QUAD_VERTICES: &[Vertex] = &[
-    Vertex {
-        pos: [-0.5, -0.5],
-        uv: [0.0, 1.0],
-    },
-    Vertex {
-        pos: [0.5, -0.5],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        pos: [0.5, 0.5],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        pos: [-0.5, 0.5],
-        uv: [0.0, 0.0],
-    },
-];
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct DrawIndexedIndirect {
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable, Debug)]
-pub struct GlobalUiState {
-    // Mouse position
-    pub mouse_pos: [f32; 2], // 8 bytes
-
-    // Mouse button state mask
-    pub mouse_state: u32, // 4 bytes
-    pub _pad0: u32,       // 4 bytes padding 对齐
-
-    // Hover panel ID
-    pub hover_id: u32,      // 4 bytes, atomic
-    pub hover_blocked: u32, // 4 bytes, atomic
-
-    // Padding for alignment before hover_pos
-    pub _pad1: [u32; 2], // 8 bytes
-
-    // Hover position
-    pub hover_pos: [f32; 2], // 8 bytes
-
-    // Current depth under mouse
-    pub current_depth: u32, // 4 bytes
-    pub _pad2: u32,         // 4 bytes padding
-
-    // Clicked panel ID (最后一次点击)
-    pub click_id: u32,      // 4 bytes
-    pub click_blocked: u32, // 4 bytes
-
-    // Drag panel ID
-    pub drag_id: u32,      // 4 bytes
-    pub drag_blocked: u32, // 4 bytes
-
-    // History panel ID
-    pub history_id: u32, // 4 bytes
-    pub _pad3: u32,      // 4 bytes padding
-
-    // Final padding to 64 bytes
-    pub _pad4: [u32; 2], // 8 bytes
-}
 
 const QUAD_INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
 
@@ -481,7 +319,7 @@ pub struct GlobalLayout {
 }
 
 pub struct GpuUi {
-    pub event_stream:EventStream<EventTest>,
+    pub event_stream: EventStream<EventTest>,
     pub kennel: Arc<RefCell<Kennel>>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -511,9 +349,6 @@ pub struct GpuUi {
     pub global_layout: Option<GlobalLayout>,
     pub custom_wgsl: Box<[CustomWgsl; 1024]>,
     pub custom_wgsl_buffer: wgpu::Buffer,
-    pub ui_kennel_des: KennelReadDesPool<PANEL_ID>,
-    pub global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
-    gpu_debug: RefCell<GpuDebug>,
     indirects_len: u32,
 }
 
@@ -776,6 +611,18 @@ impl GpuAnimationDes {
 }
 
 impl GpuUi {
+/// 写入“整个字段”：F 必须是 Pod
+    pub fn write_field<S, F: bytemuck::Pod>(
+        queue: &wgpu::Queue,
+        buffer: &wgpu::Buffer,
+        field: field_offset::FieldOffset<S, F>,
+        value: &F,
+    ) {
+        let offset = field.get_byte_offset() as wgpu::BufferAddress;
+        debug_assert_eq!(offset % 4, 0); // wgpu 写入偏移建议 4 字节对齐
+        queue.write_buffer(buffer, offset, bytemuck::bytes_of(value));
+    }
+
     pub fn set_frag_slot(
         &mut self,
         panel_id: usize,
@@ -833,157 +680,155 @@ impl GpuUi {
         );
     }
 
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        global_state: Arc<Mutex<GlobalState>>,
-        cpu_global_uniform: Rc<CpuGlobalUniform>,
-        window: &winit::window::Window,
-        global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
-        kennel: Arc<RefCell<Kennel>>,
-    ) -> Self {
+    // pub fn new(
+    //     device: &wgpu::Device,
+    //     format: wgpu::TextureFormat,
+    //     global_state: Arc<Mutex<GlobalState>>,
+    //     cpu_global_uniform: Rc<CpuGlobalUniform>,
+    //     window: &winit::window::Window,
+    //     global_hub: Arc<GlobalEventHub<ModuleEvent<Expr, LayerID>>>,
+    //     kennel: Arc<RefCell<Kennel>>,
+    // ) -> Self {
+    //     let event_stream = global_event_bus().subscribe::<EventTest>();
 
-        let event_stream = global_event_bus().subscribe::<EventTest>();
+    //     println!(
+    //         "size = {}, align = {}",
+    //         std::mem::size_of::<Panel>(),
+    //         std::mem::align_of::<Panel>()
+    //     );
+    //     // 顶点 buffer
+    //     let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //         label: Some("UI Quad Vertex Buffer"),
+    //         contents: bytemuck::cast_slice(QUAD_VERTICES),
+    //         usage: wgpu::BufferUsages::VERTEX,
+    //     });
 
-        println!(
-            "size = {}, align = {}",
-            std::mem::size_of::<Panel>(),
-            std::mem::align_of::<Panel>()
-        );
-        // 顶点 buffer
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Quad Vertex Buffer"),
-            contents: bytemuck::cast_slice(QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+    //     let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    //         label: Some("UI Quad Index Buffer"),
+    //         contents: bytemuck::cast_slice(QUAD_INDICES),
+    //         usage: wgpu::BufferUsages::INDEX,
+    //     });
 
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Quad Index Buffer"),
-            contents: bytemuck::cast_slice(QUAD_INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+    //     // 默认一个 instance
+    //     let instances = [];
+    //     let max_instances = 1000;
+    //     let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("UI Instance Buffer"),
+    //         size: (max_instances * std::mem::size_of::<Panel>()) as wgpu::BufferAddress,
+    //         usage: wgpu::BufferUsages::VERTEX
+    //             | wgpu::BufferUsages::STORAGE
+    //             | wgpu::BufferUsages::COPY_DST,
+    //         mapped_at_creation: false,
+    //     });
 
-        // 默认一个 instance
-        let instances = [];
-        let max_instances = 1000;
-        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("UI Instance Buffer"),
-            size: (max_instances * std::mem::size_of::<Panel>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+    //     let global_shared_struct = GlobalUiState {
+    //         mouse_pos: [0.0, 0.0],
+    //         hover_id: u32::MAX,
+    //         hover_blocked: 0,
+    //         _pad0: 0,
+    //         hover_pos: [0.0f32; 2],
+    //         _pad1: [0u32; 2],
+    //         current_depth: 0,
+    //         _pad2: 0,
+    //         history_id: u32::MAX,
+    //         _pad3: 0,
+    //         _pad4: [0u32; 2],
+    //         mouse_state: MouseState::DEFAULT.bits(),
+    //         click_id: u32::MAX,
+    //         click_blocked: 0,
+    //         drag_id: u32::MAX,
+    //         drag_blocked: 0,
+    //     };
 
-        let global_shared_struct = GlobalUiState {
-            mouse_pos: [0.0, 0.0],
-            hover_id: u32::MAX,
-            hover_blocked: 0,
-            _pad0: 0,
-            hover_pos: [0.0f32; 2],
-            _pad1: [0u32; 2],
-            current_depth: 0,
-            _pad2: 0,
-            history_id: u32::MAX,
-            _pad3: 0,
-            _pad4: [0u32; 2],
-            mouse_state: MouseState::DEFAULT.bits(),
-            click_id: u32::MAX,
-            click_blocked: 0,
-            drag_id: u32::MAX,
-            drag_blocked: 0,
-        };
+    //     let shared_buffer = device.create_buffer_init(&BufferInitDescriptor {
+    //         label: Some("Shared State"),
+    //         usage: wgpu::BufferUsages::UNIFORM
+    //             | wgpu::BufferUsages::STORAGE
+    //             | wgpu::BufferUsages::COPY_DST, // CPU 写入
+    //         contents: bytemuck::bytes_of(&global_shared_struct),
+    //     });
 
-        let shared_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Shared State"),
-            usage: wgpu::BufferUsages::UNIFORM
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST, // CPU 写入
-            contents: bytemuck::bytes_of(&global_shared_struct),
-        });
+    //     let max_layers = 32; // 或根据你的 UI 层数需求
 
-        let max_layers = 32; // 或根据你的 UI 层数需求
+    //     let indirects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("Indirect Draw Buffer"),
+    //         size: (max_layers * std::mem::size_of::<DrawIndexedIndirect>()) as u64,
+    //         usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+    //         mapped_at_creation: false,
+    //     });
 
-        let indirects_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Indirect Draw Buffer"),
-            size: (max_layers * std::mem::size_of::<DrawIndexedIndirect>()) as u64,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+    //     let size = window.inner_size(); // 返回 PhysicalSize<u32>
+    //     let width = size.width;
+    //     let height = size.height;
 
-        let size = window.inner_size(); // 返回 PhysicalSize<u32>
-        let width = size.width;
-        let height = size.height;
+    //     println!("目前的gpu w:{} h:{}", width, height);
 
-        println!("目前的gpu w:{} h:{}", width, height);
+    //     let max_animtion = 1024; // 或根据你的 UI 层数需求
 
-        let max_animtion = 1024; // 或根据你的 UI 层数需求
+    //     let wgsl_structs = Box::new(
+    //         [CustomWgsl {
+    //             frag: [[1.0f32; 4]; 16],
+    //             vertex: Default::default(),
+    //         }; 1024],
+    //     );
 
-        let wgsl_structs = Box::new(
-            [CustomWgsl {
-                frag: [[1.0f32; 4]; 16],
-                vertex: Default::default(),
-            }; 1024],
-        );
+    //     let wgsl_buffer = device.create_buffer_init(&BufferInitDescriptor {
+    //         label: Some("Shared State"),
+    //         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, // CPU 写入
+    //         contents: bytemuck::cast_slice(&*wgsl_structs),
+    //     });
 
-        let wgsl_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Shared State"),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, // CPU 写入
-            contents: bytemuck::cast_slice(&*wgsl_structs),
-        });
+    //     let mut gpu_debug = GpuDebug::new("mile_ui");
+    //     gpu_debug.create_buffer(device);
 
-        let mut gpu_debug = GpuDebug::new("mile_ui");
-        gpu_debug.create_buffer(device);
-
-        Self {
-            event_stream,
-            global_hub,
-            kennel,
-            ui_kennel_des: KennelReadDesPool::default(),
-            gpu_debug: RefCell::new(gpu_debug),
-            custom_wgsl: wgsl_structs,
-            custom_wgsl_buffer: wgsl_buffer,
-            global_layout: Some(GlobalLayout {
-                global_unitform_struct: cpu_global_uniform.get_struct(),
-                global_unitform_buffer: cpu_global_uniform.get_buffer(),
-                shared_structs: global_shared_struct,
-                shared_buffer: shared_buffer,
-            }),
-            new_work_store: None,
-            ui_panel_extra_buffer: None,
-            global_state,
-            vertex_buffer,
-            index_buffer,
-            instance_buffer,
-            num_indices: QUAD_INDICES.len() as u32,
-            num_instances: instances.len() as u32,
-            pipeline: None,
-            ui_texture_bind_group: None,
-            indirects_len: 0,
-            indirects_buffer,
-            render_bind_group: None,
-            instances: instances.to_vec(),
-            compute_bind_group_layout: None,
-            compute_pipeline: None,
-            compute_bind_group: None,
-            instance_pool_index: 0,
-            event_hub: Arc::new(UIEventHub::new()),
-            surface: GpuUi::create_surface(device, format),
-            ui_texture_map: TextureAtlasSet::new(),
-            render_bind_group_layout: None,
-            texture_bind_group_layout: None,
-            animation_pipe_line_cahce: AnimationPipelineCache::default(),
-            interaction_pipeline_cache: InteractionPipelineCache::default(),
-            panel_interaction_trigger: PanelInteractionTrigger::default(),
-        }
-    }
+    //     Self {
+    //         event_stream,
+    //         global_hub,
+    //         kennel,
+    //         ui_kennel_des: KennelReadDesPool::default(),
+    //         gpu_debug: RefCell::new(gpu_debug),
+    //         custom_wgsl: wgsl_structs,
+    //         custom_wgsl_buffer: wgsl_buffer,
+    //         global_layout: Some(GlobalLayout {
+    //             global_unitform_struct: cpu_global_uniform.get_struct(),
+    //             global_unitform_buffer: cpu_global_uniform.get_buffer(),
+    //             shared_structs: global_shared_struct,
+    //             shared_buffer: shared_buffer,
+    //         }),
+    //         new_work_store: None,
+    //         ui_panel_extra_buffer: None,
+    //         global_state,
+    //         vertex_buffer,
+    //         index_buffer,
+    //         instance_buffer,
+    //         num_indices: QUAD_INDICES.len() as u32,
+    //         num_instances: instances.len() as u32,
+    //         pipeline: None,
+    //         ui_texture_bind_group: None,
+    //         indirects_len: 0,
+    //         indirects_buffer,
+    //         render_bind_group: None,
+    //         instances: instances.to_vec(),
+    //         compute_bind_group_layout: None,
+    //         compute_pipeline: None,
+    //         compute_bind_group: None,
+    //         instance_pool_index: 0,
+    //         event_hub: Arc::new(UIEventHub::new()),
+    //         surface: GpuUi::create_surface(device, format),
+    //         ui_texture_map: TextureAtlasSet::new(),
+    //         render_bind_group_layout: None,
+    //         texture_bind_group_layout: None,
+    //         animation_pipe_line_cahce: AnimationPipelineCache::default(),
+    //         interaction_pipeline_cache: InteractionPipelineCache::default(),
+    //         panel_interaction_trigger: PanelInteractionTrigger::default(),
+    //     }
+    // }
 
     /**
      * Panel 内存偏移对显存偏移的唯一创造函数  所有的附加信息 全部在这里创造
      * 只要compute idx 访问  可以通过这个idx 访问这个gpu数据结构里 任意的新增加附加信息
      *
      */
-    pub fn panel_extras_gpu_data(&mut self, device: &wgpu::Device) {}
 
     pub fn update_dt(&mut self, dt: f32, queue: &wgpu::Queue) {
         let global = self.global_layout.as_mut().unwrap();
@@ -1046,444 +891,444 @@ impl GpuUi {
         }
     }
 
-    pub fn create_interaction_compute_pipeline(&mut self, device: &wgpu::Device) {
-        let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Interaction Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("interaction_compute.wgsl").into()),
-        });
+    // pub fn create_interaction_compute_pipeline(&mut self, device: &wgpu::Device) {
+    //     let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    //         label: Some("Interaction Compute Shader"),
+    //         source: wgpu::ShaderSource::Wgsl(include_str!("interaction_compute.wgsl").into()),
+    //     });
 
-        self.interaction_pipeline_cache.interaction_struct = Some(InteractionFrameCache {
-            pre: InteractionFrame::default(),
-            curr: InteractionFrame::default(),
-        });
+    //     self.interaction_pipeline_cache.interaction_struct = Some(InteractionFrameCache {
+    //         pre: InteractionFrame::default(),
+    //         curr: InteractionFrame::default(),
+    //     });
 
-        let gpu_interaction_struct = self
-            .interaction_pipeline_cache
-            .interaction_struct
-            .as_ref()
-            .unwrap()
-            .to_gpu();
+    //     let gpu_interaction_struct = self
+    //         .interaction_pipeline_cache
+    //         .interaction_struct
+    //         .as_ref()
+    //         .unwrap()
+    //         .to_gpu();
 
-        self.interaction_pipeline_cache.gpu_interaction_struct = Some(gpu_interaction_struct);
+    //     self.interaction_pipeline_cache.gpu_interaction_struct = Some(gpu_interaction_struct);
 
-        let mut interaction_frame_buffer = gpu_interaction_struct.to_buffer_vec(device);
+    //     let mut interaction_frame_buffer = gpu_interaction_struct.to_buffer_vec(device);
 
-        self.interaction_pipeline_cache.gpu_Interaction_buffer =
-            Some(interaction_frame_buffer.clone());
+    //     self.interaction_pipeline_cache.gpu_Interaction_buffer =
+    //         Some(interaction_frame_buffer.clone());
 
-        let Interaction_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Compute Bind Group Layout"),
-                entries: &[
-                    // 0️⃣ instance buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 1️⃣ shared buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 2️⃣ global uniform
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 3️⃣ animation buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+    //     let Interaction_bind_group_layout =
+    //         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    //             label: Some("Compute Bind Group Layout"),
+    //             entries: &[
+    //                 // 0️⃣ instance buffer
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 0,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //                 // 1️⃣ shared buffer
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 1,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //                 // 2️⃣ global uniform
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 2,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //                 // 3️⃣ animation buffer
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 3,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 4,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //             ],
+    //         });
 
-        let Interaction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Compute Bind Group"),
-            layout: &Interaction_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self
-                        .global_layout
-                        .as_ref()
-                        .unwrap()
-                        .global_unitform_buffer
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: interaction_frame_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self
-                        .gpu_debug
-                        .borrow()
-                        .buffer
-                        .as_ref()
-                        .unwrap()
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self
-                        .animation_pipe_line_cahce
-                        .panel_anim_delta_buffer
-                        .as_ref()
-                        .unwrap()
-                        .as_entire_binding(),
-                },
-            ],
-        });
+    //     let Interaction_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    //         label: Some("Compute Bind Group"),
+    //         layout: &Interaction_bind_group_layout,
+    //         entries: &[
+    //             wgpu::BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: self.instance_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 1,
+    //                 resource: self
+    //                     .global_layout
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .global_unitform_buffer
+    //                     .as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 2,
+    //                 resource: interaction_frame_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 3,
+    //                 resource: self
+    //                     .gpu_debug
+    //                     .borrow()
+    //                     .buffer
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 4,
+    //                 resource: self
+    //                     .animation_pipe_line_cahce
+    //                     .panel_anim_delta_buffer
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .as_entire_binding(),
+    //             },
+    //         ],
+    //     });
 
-        let interaction_compute_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("interaction_compute_pipeline_pipeline"),
-                layout: Some(
-                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("interaction_compute_pipeline Layout"),
-                        bind_group_layouts: &[&Interaction_bind_group_layout],
-                        push_constant_ranges: &[],
-                    }),
-                ),
-                module: &compute_shader_module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: Default::default(),
-            });
+    //     let interaction_compute_pipeline =
+    //         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    //             label: Some("interaction_compute_pipeline_pipeline"),
+    //             layout: Some(
+    //                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //                     label: Some("interaction_compute_pipeline Layout"),
+    //                     bind_group_layouts: &[&Interaction_bind_group_layout],
+    //                     push_constant_ranges: &[],
+    //                 }),
+    //             ),
+    //             module: &compute_shader_module,
+    //             entry_point: Some("main"),
+    //             compilation_options: Default::default(),
+    //             cache: Default::default(),
+    //         });
 
-        self.interaction_pipeline_cache.pipe_bind_group_layout =
-            Some(Interaction_bind_group_layout);
-        self.interaction_pipeline_cache.pipe_bind_group = Some(Interaction_bind_group);
-        self.interaction_pipeline_cache.pipeline = Some(interaction_compute_pipeline);
-    }
+    //     self.interaction_pipeline_cache.pipe_bind_group_layout =
+    //         Some(Interaction_bind_group_layout);
+    //     self.interaction_pipeline_cache.pipe_bind_group = Some(Interaction_bind_group);
+    //     self.interaction_pipeline_cache.pipeline = Some(interaction_compute_pipeline);
+    // }
 
-    pub fn interaction_compute(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("interaction_compute Encoder"),
-        });
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("UI interaction_compute pass"),
-                timestamp_writes: Default::default(),
-            });
-            // encoder.copy_buffer_to_buffer(&self.shared_buffer, 0, &self.shared_buffer_readback_buffer, 0, self.shared_buffer.size());
+    // pub fn interaction_compute(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    //     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    //         label: Some("interaction_compute Encoder"),
+    //     });
+    //     {
+    //         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+    //             label: Some("UI interaction_compute pass"),
+    //             timestamp_writes: Default::default(),
+    //         });
+    //         // encoder.copy_buffer_to_buffer(&self.shared_buffer, 0, &self.shared_buffer_readback_buffer, 0, self.shared_buffer.size());
 
-            cpass.set_pipeline(&self.interaction_pipeline_cache.pipeline.as_ref().unwrap());
-            cpass.set_bind_group(0, &self.interaction_pipeline_cache.pipe_bind_group, &[]);
+    //         cpass.set_pipeline(&self.interaction_pipeline_cache.pipeline.as_ref().unwrap());
+    //         cpass.set_bind_group(0, &self.interaction_pipeline_cache.pipe_bind_group, &[]);
 
-            let panel_count = self.instances.len() as u32;
+    //         let panel_count = self.instances.len() as u32;
 
-            let workgroups = (panel_count + 63) / 64;
+    //         let workgroups = (panel_count + 63) / 64;
 
-            cpass.dispatch_workgroups(workgroups, 1, 1);
-        }
-        queue.submit(Some(encoder.finish()));
-        self.interaction_cpu_trigger(device, queue);
-    }
+    //         cpass.dispatch_workgroups(workgroups, 1, 1);
+    //     }
+    //     queue.submit(Some(encoder.finish()));
+    //     self.interaction_cpu_trigger(device, queue);
+    // }
 
-    pub fn createa_animtion_compute_pipeline_two(&mut self, device: &wgpu::Device) {
-        let bind_layout = self
-            .animation_pipe_line_cahce
-            .net_work_layout
-            .as_ref()
-            .unwrap();
-        let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Compute Bind Group"),
-            layout: &bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self
-                        .new_work_store
-                        .as_ref()
-                        .unwrap()
-                        .buffer_meta
-                        .as_ref()
-                        .unwrap()
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self
-                        .new_work_store
-                        .as_ref()
-                        .unwrap()
-                        .buffer_rels
-                        .as_ref()
-                        .unwrap()
-                        .as_entire_binding(),
-                },
-            ],
-        });
-        self.animation_pipe_line_cahce.net_work_bind_group = Some(compute_bind_group)
-    }
+    // pub fn createa_animtion_compute_pipeline_two(&mut self, device: &wgpu::Device) {
+    //     let bind_layout = self
+    //         .animation_pipe_line_cahce
+    //         .net_work_layout
+    //         .as_ref()
+    //         .unwrap();
+    //     let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    //         label: Some("Compute Bind Group"),
+    //         layout: &bind_layout,
+    //         entries: &[
+    //             wgpu::BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: self
+    //                     .new_work_store
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .buffer_meta
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 1,
+    //                 resource: self
+    //                     .new_work_store
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .buffer_rels
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .as_entire_binding(),
+    //             },
+    //         ],
+    //     });
+    //     self.animation_pipe_line_cahce.net_work_bind_group = Some(compute_bind_group)
+    // }
 
-    pub fn create_animtion_compute_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let max_animtion = 8192;
-        let animtion_des_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("TransformAnim Buffer"),
-            size: (max_animtion * std::mem::size_of::<AnimtionFieldOffsetPtr>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+    // pub fn create_animtion_compute_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    //     let max_animtion = 8192;
+    //     let animtion_des_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("TransformAnim Buffer"),
+    //         size: (max_animtion * std::mem::size_of::<AnimtionFieldOffsetPtr>()) as u64,
+    //         usage: wgpu::BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+    //         mapped_at_creation: false,
+    //     });
 
-        let max_animation_field = 8192;
-        let animtion_raw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("max_animation_field Buffer"),
-            size: (max_animation_field * std::mem::size_of::<f32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+    //     let max_animation_field = 8192;
+    //     let animtion_raw_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    //         label: Some("max_animation_field Buffer"),
+    //         size: (max_animation_field * std::mem::size_of::<f32>()) as u64,
+    //         usage: wgpu::BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+    //         mapped_at_creation: false,
+    //     });
 
-        let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("compute_shader_module Compute Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("animtion_compute.wgsl").into()),
-        });
+    //     let compute_shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    //         label: Some("compute_shader_module Compute Shader"),
+    //         source: wgpu::ShaderSource::Wgsl(include_str!("animtion_compute.wgsl").into()),
+    //     });
 
-        let panel_anim_delta_buffer = PanelAnimDelta::global_init(device);
-        let animtion_gpu_des_buffer = GpuAnimationDes::default().to_buffer(device);
+    //     let panel_anim_delta_buffer = PanelAnimDelta::global_init(device);
+    //     let animtion_gpu_des_buffer = GpuAnimationDes::default().to_buffer(device);
 
-        // === Bind Group Layout ===
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Compute Bind Group Layout"),
-            entries: &[
-                // 0️⃣ instance buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 1️⃣ shared buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 2️⃣ global uniform
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // 3️⃣ animation buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+    //     // === Bind Group Layout ===
+    //     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    //         label: Some("Compute Bind Group Layout"),
+    //         entries: &[
+    //             // 0️⃣ instance buffer
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 0,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //             // 1️⃣ shared buffer
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 1,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //             // 2️⃣ global uniform
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 2,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //             // 3️⃣ animation buffer
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 3,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 4,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Uniform,
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //             wgpu::BindGroupLayoutEntry {
+    //                 binding: 5,
+    //                 visibility: wgpu::ShaderStages::COMPUTE,
+    //                 ty: wgpu::BindingType::Buffer {
+    //                     ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                     has_dynamic_offset: false,
+    //                     min_binding_size: None,
+    //                 },
+    //                 count: None,
+    //             },
+    //         ],
+    //     });
 
-        // === Bind Group Layout ===
-        let net_work_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Compute Bind Group Layout"),
-                entries: &[
-                    // 0️⃣ instance buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // 1️⃣ shared buffer
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        // let net_work = self.ui_net_work.borrow();
-        // let buffer_set = net_work.buffer_set.as_ref().unwrap();
+    //     // === Bind Group Layout ===
+    //     let net_work_bind_group_layout =
+    //         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    //             label: Some("Compute Bind Group Layout"),
+    //             entries: &[
+    //                 // 0️⃣ instance buffer
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 0,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //                 // 1️⃣ shared buffer
+    //                 wgpu::BindGroupLayoutEntry {
+    //                     binding: 1,
+    //                     visibility: wgpu::ShaderStages::COMPUTE,
+    //                     ty: wgpu::BindingType::Buffer {
+    //                         ty: wgpu::BufferBindingType::Storage { read_only: false },
+    //                         has_dynamic_offset: false,
+    //                         min_binding_size: None,
+    //                     },
+    //                     count: None,
+    //                 },
+    //             ],
+    //         });
+    //     // let net_work = self.ui_net_work.borrow();
+    //     // let buffer_set = net_work.buffer_set.as_ref().unwrap();
 
-        // === Bind Group ===
-        let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Compute Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.instance_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: self
-                        .global_layout
-                        .as_ref()
-                        .unwrap()
-                        .global_unitform_buffer
-                        .as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: animtion_des_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: panel_anim_delta_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: animtion_gpu_des_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: self
-                        .gpu_debug
-                        .borrow()
-                        .buffer
-                        .as_ref()
-                        .unwrap()
-                        .as_entire_binding(),
-                },
-                // wgpu::BindGroupEntry {
-                //     binding: 6,
-                //     resource: buffer_set.collection_buffer.as_ref().unwrap().as_entire_binding(),
-                // },
-                // wgpu::BindGroupEntry {
-                //     binding: 7,
-                //     resource: buffer_set.panel_ids_buffer.as_ref().unwrap().as_entire_binding(),
-                // },
-                // wgpu::BindGroupEntry {
-                //     binding: 8,
-                //     resource: buffer_set.ui_rel_buffer.as_ref().unwrap().as_entire_binding(),
-                // },
-                // wgpu::BindGroupEntry {
-                //     binding: 9,
-                //     resource: buffer_set.panel_id_to_rel_buffer.as_ref().unwrap().as_entire_binding(),
-                // },
-            ],
-        });
+    //     // === Bind Group ===
+    //     let compute_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    //         label: Some("Compute Bind Group"),
+    //         layout: &bind_group_layout,
+    //         entries: &[
+    //             wgpu::BindGroupEntry {
+    //                 binding: 0,
+    //                 resource: self.instance_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 1,
+    //                 resource: self
+    //                     .global_layout
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .global_unitform_buffer
+    //                     .as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 2,
+    //                 resource: animtion_des_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 3,
+    //                 resource: panel_anim_delta_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 4,
+    //                 resource: animtion_gpu_des_buffer.as_entire_binding(),
+    //             },
+    //             wgpu::BindGroupEntry {
+    //                 binding: 5,
+    //                 resource: self
+    //                     .gpu_debug
+    //                     .borrow()
+    //                     .buffer
+    //                     .as_ref()
+    //                     .unwrap()
+    //                     .as_entire_binding(),
+    //             },
+    //             // wgpu::BindGroupEntry {
+    //             //     binding: 6,
+    //             //     resource: buffer_set.collection_buffer.as_ref().unwrap().as_entire_binding(),
+    //             // },
+    //             // wgpu::BindGroupEntry {
+    //             //     binding: 7,
+    //             //     resource: buffer_set.panel_ids_buffer.as_ref().unwrap().as_entire_binding(),
+    //             // },
+    //             // wgpu::BindGroupEntry {
+    //             //     binding: 8,
+    //             //     resource: buffer_set.ui_rel_buffer.as_ref().unwrap().as_entire_binding(),
+    //             // },
+    //             // wgpu::BindGroupEntry {
+    //             //     binding: 9,
+    //             //     resource: buffer_set.panel_id_to_rel_buffer.as_ref().unwrap().as_entire_binding(),
+    //             // },
+    //         ],
+    //     });
 
-        // === Compute Pipeline ===
-        let animation_compute_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("animation_compute_pipeline"),
-                layout: Some(
-                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("Compute Pipeline Layout"),
-                        bind_group_layouts: &[&bind_group_layout, &net_work_bind_group_layout],
-                        push_constant_ranges: &[],
-                    }),
-                ),
-                module: &compute_shader_module,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: Default::default(),
-            });
+    //     // === Compute Pipeline ===
+    //     let animation_compute_pipeline =
+    //         device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    //             label: Some("animation_compute_pipeline"),
+    //             layout: Some(
+    //                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    //                     label: Some("Compute Pipeline Layout"),
+    //                     bind_group_layouts: &[&bind_group_layout, &net_work_bind_group_layout],
+    //                     push_constant_ranges: &[],
+    //                 }),
+    //             ),
+    //             module: &compute_shader_module,
+    //             entry_point: Some("main"),
+    //             compilation_options: Default::default(),
+    //             cache: Default::default(),
+    //         });
 
-        self.animation_pipe_line_cahce.panel_anim_delta_buffer = Some(panel_anim_delta_buffer);
-        self.animation_pipe_line_cahce.pipe_bind_group_layout = Some(bind_group_layout);
-        self.animation_pipe_line_cahce.pipe_bind_group = Some(compute_bind_group);
-        self.animation_pipe_line_cahce.pipeline = Some(animation_compute_pipeline);
-        self.animation_pipe_line_cahce.animtion_field_offset_buffer = Some(animtion_des_buffer);
-        self.animation_pipe_line_cahce.gpu_animation_des_buffer = Some(animtion_gpu_des_buffer);
-        self.animation_pipe_line_cahce.animtion_raw_buffer = Some(animtion_raw_buffer);
-        self.animation_pipe_line_cahce.net_work_layout = Some(net_work_bind_group_layout);
-    }
+    //     self.animation_pipe_line_cahce.panel_anim_delta_buffer = Some(panel_anim_delta_buffer);
+    //     self.animation_pipe_line_cahce.pipe_bind_group_layout = Some(bind_group_layout);
+    //     self.animation_pipe_line_cahce.pipe_bind_group = Some(compute_bind_group);
+    //     self.animation_pipe_line_cahce.pipeline = Some(animation_compute_pipeline);
+    //     self.animation_pipe_line_cahce.animtion_field_offset_buffer = Some(animtion_des_buffer);
+    //     self.animation_pipe_line_cahce.gpu_animation_des_buffer = Some(animtion_gpu_des_buffer);
+    //     self.animation_pipe_line_cahce.animtion_raw_buffer = Some(animtion_raw_buffer);
+    //     self.animation_pipe_line_cahce.net_work_layout = Some(net_work_bind_group_layout);
+    // }
 
-    pub fn create_net_work_compute_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.new_work_store = Some(NetworkStore::new(
-            device,
-            &self.global_layout.as_ref().unwrap(),
-            self.animation_pipe_line_cahce
-                .panel_anim_delta_buffer
-                .as_ref()
-                .unwrap(),
-            &self.instance_buffer,
-            self.gpu_debug.borrow().buffer.as_ref().unwrap(),
-        ));
-    }
+    // pub fn create_net_work_compute_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    //     self.new_work_store = Some(NetworkStore::new(
+    //         device,
+    //         &self.global_layout.as_ref().unwrap(),
+    //         self.animation_pipe_line_cahce
+    //             .panel_anim_delta_buffer
+    //             .as_ref()
+    //             .unwrap(),
+    //         &self.instance_buffer,
+    //         self.gpu_debug.borrow().buffer.as_ref().unwrap(),
+    //     ));
+    // }
 
     pub fn interaction_cpu_trigger(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let hub = self.event_hub.clone(); // Arc clone
@@ -1531,7 +1376,7 @@ impl GpuUi {
 
                     if new_frame.click_id != u32::MAX {
                         hub.push(CpuPanelEvent::Click((
-                            new_frame.frame,
+                            new_frame.frame, 
                             UiInteractionScope {
                                 panel_id: new_frame.click_id,
                                 state: new_frame.trigger_panel_state,
@@ -2358,8 +2203,6 @@ impl GpuUi {
     }
 
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
-
-        
         for ev in self.global_hub.poll() {
             match ev {
                 mile_api::ModuleEvent::KennelPushResultReadDes(parmas) => {

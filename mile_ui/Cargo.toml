@@ -16,3 +16,7 @@ image = "0.25.8"
 slotmap = "1.0.7"
 mile_api = { path = "../mile_api" }   # 引用核心逻辑
 mile_gpu_dsl = { path = "../mile_gpu_dsl" }   # 引用核心逻辑
+mile_db = { path = "../mile_db" }
+serde = { version = "1", features = ["derive"] }
+field-offset = "0.3"
+serde_json = "1.0.145"

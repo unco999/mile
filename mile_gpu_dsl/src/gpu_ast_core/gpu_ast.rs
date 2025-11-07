@@ -1,9 +1,10 @@
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
+use mile_api::prelude::ImportType;
 use std::collections::HashMap;
 
-use crate::prelude::gpu_program::{*};
-use crate::prelude::{*,op::{*}};
+use crate::prelude::gpu_program::*;
+use crate::prelude::{op::*, *};
 
 bitflags! {
     /// GPU AST Node State

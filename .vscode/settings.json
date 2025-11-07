@@ -1,3 +1,7 @@
 {
-    "chatgpt.openOnStartup": false
+    "chatgpt.openOnStartup": true,
+    "editor.inlineSuggest.enabled": true,
+    "continue.enableInlineCompletions": true,
+    "continue.autocompleteModel": "Gemma 3 4B (autocomplete)",
+    "continue.defaultModel": "Gemma 3 4B (chat)"
 }

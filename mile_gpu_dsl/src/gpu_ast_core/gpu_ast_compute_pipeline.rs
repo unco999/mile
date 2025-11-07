@@ -1,15 +1,13 @@
 // 鍦?gpu_ast.rs 涓坊鍔犱互涓嬪唴瀹?
 
+use crate::prelude::gpu_ast::*;
+use crate::prelude::gpu_program::*;
 use wgpu::{
     BindGroup, BindGroupLayout, Buffer, BufferDescriptor, BufferUsages, CommandEncoder,
     ComputePass, ComputePipeline, Device, PipelineLayout, Queue, ShaderModule, util::DeviceExt,
 };
-use crate::prelude::gpu_ast::{*};
-use crate::prelude::gpu_program::{*};
-
 
 pub struct GpuComputePipeline {
-    // 缂撳啿鍖?
     pub node_buffer: Buffer,
     pub result_buffer: Buffer,
     import_buffer: Buffer,

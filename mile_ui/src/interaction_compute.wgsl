@@ -1,409 +1,223 @@
+// Interaction compute shader rewritten for the new panel data layout.
+// Panel position now represents the top-left corner in pixel space, and
+// size is the width/height. Hover/click/drag results are written back into
+// the frame cache buffer (two frames ring buffer) so the CPU can poll them.
+
 struct Panel {
-    position: vec2<f32>,       // 0..8
-    size: vec2<f32>,           // 8..16
-    uv_offset: vec2<f32>,      // 16..24
-    uv_scale: vec2<f32>,       // 24..32
+    position: vec2<f32>,
+    size: vec2<f32>,
+    uv_offset: vec2<f32>,
+    uv_scale: vec2<f32>,
 
-    z_index: u32,              // 32..36
-    pass_through: u32,         // 36..40
-    id: u32,                   // 40..44
-    interaction: u32,          // 44..48
+    z_index: u32,
+    pass_through: u32,
+    id: u32,
+    interaction: u32,
 
-    event_mask: u32,           // 48..52
-    state_mask: u32,           // 52..56
-    transparent: f32,          // 56..60
-    texture_id: u32,           // 60..64
+    event_mask: u32,
+    state_mask: u32,
+    transparent: f32,
+    texture_slot: u32,
 
-    state: u32,                // 64..68
-    collection_state:u32,
-    pad1:u32,
-    pad2:u32
+    state: u32,
+    collection_state: u32,
+    kennel_des_id: u32,
+    flags: u32,
+
+    color: vec4<f32>,
+    border_color: vec4<f32>,
+    border_width: f32,
+    border_radius: f32,
+    pad_border: vec2<f32>,
 };
 
+struct PanelAnimDelta {
+    delta_position: vec2<f32>,
+    delta_size: vec2<f32>,
+    delta_uv_offset: vec2<f32>,
+    delta_uv_scale: vec2<f32>,
 
-struct TransformAnim {
-    field_id: u32,
-    field_len: u32,
-    start_value: f32,
-    end_value: f32,
+    delta_z_index: i32,
+    delta_pass_through: i32,
+    panel_id: u32,
+    _pad0: u32,
 
-    easing_mask: u32,
+    delta_interaction: u32,
+    delta_event_mask: u32,
+    delta_state_mask: u32,
     _pad1: u32,
-    duration: f32,
-    elapsed: f32,
 
-    instance_id: u32,
-    op: u32,
-    _pad2: u32,
-    _pad3: u32,
+    delta_transparent: f32,
+    delta_texture_id: i32,
+    _pad2: vec2<f32>,
 
-    last_applied: f32,
-    _pad4: vec3<u32>, // 对齐到 16 字节
-};
-
-struct GpuUiCollection {
-    start_index: u32,
-    len: u32,
-    sampling: u32,
-    reserved: u32,
+    start_position: vec2<f32>,
+    _pad3: vec2<f32>,
 }
 
-struct GpuUiRelation {
-    source_collection_id: u32,
-    target_collection_id: u32,
-    influence_start: u32,
-    influence_count: u32,
-    id_start: u32,
-    id_count: u32,
-    reserved: u32,
-    padding: u32, // 新增：保证32字节对齐
-}
-
-struct GpuUiInfluence {
-    field: u32,
-    weight: f32,
-    influence_type: u32,
-    reserved: u32,
-}
 struct GlobalUniform {
-      // === block 1: atomic z/layouts ===
     click_layout_z: atomic<u32>,
     click_layout_id: atomic<u32>,
     hover_layout_id: atomic<u32>,
-    hover_layout_z: atomic<u32>, // 16 bytes
+    hover_layout_z: atomic<u32>,
 
-    // === block 2: atomic drag ===
     drag_layout_id: atomic<u32>,
     drag_layout_z: atomic<u32>,
     pad_atomic1: atomic<u32>,
-    pad_atomic2: atomic<u32>,    // 16 bytes
+    pad_atomic2: atomic<u32>,
 
-    // === block 3: dt ===
     dt: f32,
     pad1: f32,
     pad2: f32,
-    pad3: f32,                   // 16 bytes
+    pad3: f32,
 
-    // === block 4: mouse ===
     mouse_pos: vec2<f32>,
     mouse_state: u32,
-    frame: u32,                   // 16 bytes
+    frame: u32,
 
-    // === block 5: screen info ===
     screen_size: vec2<u32>,
     press_duration: f32,
-    time: f32,                    // 16 bytes
+    time: f32,
 
-    // === block 6: event points ===
     event_point: vec2<f32>,
-    extra1: vec2<f32>,            // 16 bytes
+    extra1: vec2<f32>,
 
-    // === block 7: extra data ===
     extra2: vec2<f32>,
-    pad_extra: vec2<f32>         // 16 bytes
+    pad_extra: vec2<f32>,
 };
 
-struct GpuUiIdInfo {
-    panel_id: u32,     // panel 的唯一 id
-    is_source: u32,    // 0 = 普通 panel, 1 = source panel
-    relation_idx: u32, // 对应的 relation buffer 索引，如果不是 source 可填 0xFFFFFFFF
-    padding: u32,      // 对齐到 16 字节
-}
-
-
-/**
-**/
 struct GpuInteractionFrame {
     frame: u32,
     drag_id: u32,
     hover_id: u32,
-    click_id: atomic<u32>,
-
+    click_id: u32,
     mouse_pos: vec2<f32>,
-    trigger_panel_state:u32,
-    _pad1:u32,
-
+    trigger_panel_state: u32,
+    _pad1: u32,
     mouse_state: u32,
-    _pad2: vec3<u32>,
-
+    _pad2_0: u32,
+    _pad2_1: u32,
+    _pad2_2: u32,
     drag_delta: vec2<f32>,
     _pad3: vec2<f32>,
-
     pinch_delta: f32,
     pass_through_depth: u32,
     event_point: vec2<f32>,
-    _pad5: vec4<u32>, // 保证 128 字节
+    _pad4: array<u32, 4>,
 };
 
-fn update_hover_id(new_hover: u32) {
-}
-
-
 struct GpuUiDebugReadCallBack {
-    floats: array<f32,32>, // 16 * 4 = 64 字节
-    uints: array<u32,32>,  // 16 * 4 = 64 字节
-}
-
-fn ndc_to_pixel(ndc: vec2<f32>, screen_size: vec2<f32>) -> vec2<f32> {
-    // X: [-1,1] -> [0, width]
-    let x = (ndc.x + 1.0) * 0.5 * screen_size.x;
-
-    // Y: [-1,1] -> [height, 0] （翻转 Y）
-    let y = (1.0 - ndc.y) * 0.5 * screen_size.y;
-
-    return vec2<f32>(x, y);
-}
+    floats: array<f32, 32>,
+    uints: array<u32, 32>,
+};
 
 
-struct PanelAnimDelta {
-    // --- Position delta ---
-     delta_position: vec2<f32>, // x, y
-
-    // --- Size delta ---
-     delta_size: vec2<f32>,     // width, height
-
-    // --- UV delta ---
-     delta_uv_offset: vec2<f32>,
-     delta_uv_scale: vec2<f32>,
-
-    // --- Panel attributes ---
-     delta_z_index: i32,        // 可选，用于动画 z 层变化
-     delta_pass_through: i32,   // 可选
-     panel_id: u32,             // 对应 Panel 的 id
-     _pad0: u32,                // 补齐 16 字节
-
-    // --- 状态相关 ---
-     delta_interaction: u32,    // mask
-     delta_event_mask: u32,     // mask
-     delta_state_mask: u32,     // mask
-     _pad1: u32,                // 对齐
-
-    // --- 透明度/texture ---
-     delta_transparent: f32,
-     delta_texture_id: i32,     // 可选，整型存 texture 变化
-     _pad2: u32,           // 补齐 16 字节
-     _pad3: u32,           // 补齐 16 字节
-}
-
-// fn try_set_click_layout(inst_id: u32, pass_through: u32) -> bool {
-//     // 如果允许穿透，不参与竞争
-//     if (pass_through == 1u) {
-//         return false;
-//     }
-
-//     // 原子地比较写入最大ID
-//     let prev_id = atomicMax(&global_uniform.click_layout, inst_id);
-
-//     if(prev_id == 0u){
-//         return true;
-//     }
-
-//     // 如果当前id更大，说明自己是目前最上层的点击目标
-//     return inst_id > prev_id;
-// }
-
-fn try_set_click_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
-        return false; // 穿透层不参与竞争
-    }
-
-    let prev_z = atomicMax(&global_uniform.click_layout_z, z_index);
-    let prev_id = atomicLoad(&global_uniform.click_layout_id);
-
-         // debug 信息
-    if (z_index > prev_z || (z_index == prev_z && panel_id >= prev_id)) {
-        if ( atomicMax(&global_uniform.click_layout_id, panel_id) == panel_id){
-            return true;
-        }
-
-        return true; 
-    }
-
-    return false; 
-}
-
-fn try_set_hover_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
-        return false; 
-    }
-
-    let prev_z = atomicMax(&global_uniform.hover_layout_z, z_index);
-    let prev_id = atomicLoad(&global_uniform.hover_layout_id);
-
-
-    if (z_index > prev_z || (z_index == prev_z && panel_id >= prev_id)) {
-        if ( atomicMax(&global_uniform.hover_layout_id, panel_id) == panel_id){
-            return true; // 成功成为当前点击目标
-        }
-    }
-
-    return false; // 被上层挡住
-}
-
-fn try_set_drag_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
-        return false; // 穿透层不参与竞争
-    }
-
-    // 原子获取当前最高 z_index
-    let prev_z = atomicMax(&global_uniform.drag_layout_z, z_index);
-    let prev_id = atomicLoad(&global_uniform.drag_layout_id);
-
-         // debug 信息
-    // 如果自己是更高层，或者同层 id 更大
-    if (z_index > prev_z || (z_index == prev_z && panel_id >= prev_id)) {
-        if ( atomicMax(&global_uniform.drag_layout_id, panel_id) == panel_id){
-            return true; // 成功成为当前点击目标
-        }
-    }
-
-    return false; // 被上层挡住
-}
-
-
-
-const U32_MAX: u32 = 4294967295u;
+const INVALID_ID: u32 = 0xffffffffu;
+const MOUSE_LEFT_DOWN: u32 = 1u;
+const MOUSE_LEFT_UP: u32 = 2u;
+const MOUSE_LEFT_HELD: u32 = 16u;
+const MOUSE_LEFT_RELEASED: u32 = 32u;
+const INTERACTION_CLICK: u32 = 2u;
+const INTERACTION_HOVER: u32 = 8u;
+const INTERACTION_DRAG: u32 = 4u;
+const DRAG_PRESS_THRESHOLD: f32 = 0.24;
 
 @group(0) @binding(0) var<storage, read_write> panels: array<Panel>;
-@group(0) @binding(1) var<storage,read_write>  global_uniform: GlobalUniform;
-//0号索引是当前帧
-@group(0) @binding(2) var<storage,read_write> frame_cache_array:array<GpuInteractionFrame,2>;
+@group(0) @binding(1) var<storage, read_write> global_uniform: GlobalUniform;
+@group(0) @binding(2) var<storage, read_write> frame_cache: array<GpuInteractionFrame, 2>;
 @group(0) @binding(3) var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 @group(0) @binding(4) var<storage, read_write> panel_anim_delta: array<PanelAnimDelta>;
 
+fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
+    let min = panel.position;
+    let max = panel.position + panel.size;
+    return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
+}
+
+fn claim_hover(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
+    if (pass_through != 0u) {
+        return false;
+    }
+    let prev_z = atomicMax(&global_uniform.hover_layout_z, candidate_z);
+    let prev_id = atomicLoad(&global_uniform.hover_layout_id);
+    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
+        atomicStore(&global_uniform.hover_layout_id, candidate_id);
+        return true;
+    }
+    return false;
+}
+
+fn claim_click(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
+    if (pass_through != 0u) {
+        return false;
+    }
+    let prev_z = atomicMax(&global_uniform.click_layout_z, candidate_z);
+    let prev_id = atomicLoad(&global_uniform.click_layout_id);
+    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
+        atomicStore(&global_uniform.click_layout_id, candidate_id);
+        return true;
+    }
+    return false;
+}
+
+fn claim_drag(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
+    if (pass_through != 0u) {
+        return false;
+    }
+    let prev_z = atomicMax(&global_uniform.drag_layout_z, candidate_z);
+    let prev_id = atomicLoad(&global_uniform.drag_layout_id);
+    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
+        atomicStore(&global_uniform.drag_layout_id, candidate_id);
+        return true;
+    }
+    return false;
+}
+
 @compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let idx = id.x;
-    var inst = panels[idx];
-    
-    let mouse = global_uniform.mouse_pos; 
-    let state = global_uniform.mouse_state; 
-    let panel_interaction = inst.interaction;
-    let pass_through = inst.pass_through;
-    let z_index = inst.z_index;
-
-    debug_buffer.floats[0] = global_uniform.time;
-
-    let half_size = inst.size / 2.0;
-    let screen_size_f = vec2<f32>(global_uniform.screen_size); 
-    let center_ndc = vec2<f32>(
-    (inst.position.x / screen_size_f.x) * 2.0 - 1.0,
-    1.0 - (inst.position.y / screen_size_f.y) * 2.0
-    );
-    let half_size_ndc = half_size / screen_size_f * 2.0;
-    let min_pos = center_ndc - half_size_ndc;
-    let max_pos = center_ndc + half_size_ndc;
-
-    let mouse_pressed = (global_uniform.mouse_state & 16u) != 0u;
-    let mouse_released = (global_uniform.mouse_state & 32u) != 0u;
-    let mouse_pressed_time = global_uniform.press_duration;
-    
-    let pixel_pos = ndc_to_pixel(mouse, screen_size_f);
-
-
-            // debug_buffer.floats[0] = min_pos.x;
-            // debug_buffer.floats[1] = min_pos.y;
-            // debug_buffer.floats[2] = max_pos.x;
-            // debug_buffer.floats[3] = max_pos.y;
-
-            // debug_buffer.floats[4] = mouse.x;
-            // debug_buffer.floats[5] = mouse.y;
-
-
-       
-
-    // 如果鼠标在面板范围内
-    if (mouse.x >= min_pos.x && mouse.x <= max_pos.x &&
-        mouse.y >= min_pos.y && mouse.y <= max_pos.y) {
-
-        if (
-            ((panel_interaction & 4u) != 0u) && 
-            mouse_pressed && 
-            frame_cache_array[0].drag_id == inst.id 
-         ) {
-            // 计算面板新位置
-            let new_panel_pos = pixel_pos - global_uniform.event_point;
-
-            // delta 可以直接用鼠标移动量
-            let delta = new_panel_pos - panels[idx].position;
-
-
-            // 更新动画缓冲
-            panel_anim_delta[inst.id].delta_position = delta;
-
-            // 更新面板位置
-            panels[idx].position = new_panel_pos;
-
-            // 保持 drag_id
-            frame_cache_array[1].drag_id = inst.id;
-        }else{
-             panel_anim_delta[inst.id].delta_position = vec2<f32>(0.0);
-        }
-            
-        let try_hover = try_set_hover_layout(inst.id,z_index,pass_through);
-        // drag
-        if(  
-            ((panel_interaction & 2u) != 0u) && 
-            try_hover
-        ){
-            frame_cache_array[1].hover_id = atomicLoad(&global_uniform.hover_layout_id); // 直接写入 click
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].hover_id].state;
-        }
-        
-        let try_drag = try_set_click_layout(inst.id,z_index,pass_through);
-        // click
-        if ( 
-            ((panel_interaction & 2u) != 0u) 
-            && mouse_released 
-            && mouse_pressed_time > 0.035 
-            && frame_cache_array[0].drag_id == 0xFFFFFFFFu
-            && try_drag
-            ) {
-            frame_cache_array[1].click_id = atomicLoad(&global_uniform.click_layout_id); // 直接写入 click
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].click_id].state;
-            global_uniform.event_point = pixel_pos - panels[frame_cache_array[1].click_id].position;
-            
-        }
-
-        // drag
-        let try_click = try_set_drag_layout(inst.id,z_index,pass_through);
-
-        if(  
-            ((panel_interaction & 4u) != 0u) && 
-            mouse_pressed && 
-            mouse_released == false &&
-            mouse_pressed_time > 0.113 &&
-            try_click
-        ){
-            frame_cache_array[1].drag_id = atomicLoad(&global_uniform.drag_layout_id); // 直接写入 drag
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].drag_id].state;
-            global_uniform.event_point = pixel_pos - panels[frame_cache_array[1].drag_id].position;
-            return;
-        }
-
-
-
-
-        if(mouse_released){
-            frame_cache_array[1].drag_id = 0xFFFFFFFFu;
-            global_uniform.hover_layout_id = 0u;
-            global_uniform.hover_layout_z = 0u;
-            global_uniform.click_layout_z = 0u;
-            global_uniform.click_layout_id = 0u;
-            global_uniform.drag_layout_id = 0u;
-            global_uniform.drag_layout_id = 0u;
-
-        }
-
-    // }
-
-
-        // if(((panel_interaction & 2u) != 0u) && frame_cache_array[1].hover_id == inst.id){
-        //     frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].hover_id].state;
-        //     frame_cache_array[1].hover_id = U32_MAX;
-        //     debug_buffer.uints[idx] =  66;
-        // }
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let idx = global_id.x;
+    if (idx >= arrayLength(&panels)) {
+        return;
     }
 
-    // debug_buffer.uints[0] = state;
+    let panel = panels[idx];
+    let mouse = global_uniform.mouse_pos;
+    let screen = vec2<f32>(global_uniform.screen_size);
+
+    let hovered = mouse_inside(panel, mouse);
+    let mouse_pressed = (global_uniform.mouse_state & MOUSE_LEFT_HELD) != 0u;
+    let mouse_released = (global_uniform.mouse_state & MOUSE_LEFT_RELEASED) != 0u;
+    let press_duration = global_uniform.press_duration;
+        
+
+    if (!hovered) {
+        return;
+    }
+
+
+    // Hover claim
+    if ((panel.interaction & INTERACTION_HOVER) != 0u) {
+        if (claim_hover(panel.z_index, panel.id, panel.pass_through)) {
+            frame_cache[1].hover_id = panel.id;
+            frame_cache[1].trigger_panel_state = panel.state;
+        }
+    }
+
+    // Click claim
+    if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
+        if (claim_click(panel.z_index, panel.id, panel.pass_through)) {
+            frame_cache[1].click_id = panel.id;
+            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].event_point = mouse - panel.position;
+        }
+    }
+
+    // Drag (press)
+    if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed && press_duration >= DRAG_PRESS_THRESHOLD) {
+        if (claim_drag(panel.z_index, panel.id, panel.pass_through)) {
+            frame_cache[1].drag_id = panel.id;
+            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].event_point = mouse - panel.position;
+        }
+    }
 }
