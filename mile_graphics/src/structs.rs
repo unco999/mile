@@ -26,7 +26,6 @@ pub struct WGPUContext {
     pub app_state: AppState,
     pub global_uniform_buffer: Buffer,
     pub bindgroup: BindGroup,
-    pub global_state: Arc<Mutex<GlobalState>>,
     pub realtime_info: RealTimeInfo,
 }
 
@@ -178,7 +177,7 @@ fn create_depth_view(device: &wgpu::Device, size: PhysicalSize<u32>) -> wgpu::Te
 }
 
 impl WGPUContext {
-    pub fn new(window: Arc<Window>, global_state: Arc<Mutex<GlobalState>>) -> Self {
+    pub fn new(window: Arc<Window>) -> Self {
         let instance = wgpu::Instance::default();
         let surface = Arc::new(instance.create_surface(Arc::clone(&window)).unwrap());
 
@@ -266,7 +265,6 @@ impl WGPUContext {
             },
             global_uniform_buffer: buffer,
             bindgroup,
-            global_state,
             realtime_info: RealTimeInfo {
                 windows_width: width,
                 windows_height: height,

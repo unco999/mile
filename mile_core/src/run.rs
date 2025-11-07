@@ -43,7 +43,6 @@ pub struct App {
     pub mui_runtime: Option<Arc<RefCell<MuiRuntime>>>,
     pub mile_font: Option<Arc<RefCell<MileFont>>>,
     pub kennel: Option<Arc<RefCell<Kennel>>>,
-    pub global_state: Arc<Mutex<GlobalState>>,
     pub last_tick: Instant,
     pub tick_interval: Duration,
     pub last_frame_time: Instant,
@@ -52,13 +51,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(global_state: Arc<Mutex<GlobalState>>) -> Self {
+    pub fn new() -> Self {
         Self {
             wgpu_context: None,
             mui_runtime: None,
             mile_font: None,
             kennel: None,
-            global_state,
             last_tick: Instant::now(),
             tick_interval: Duration::from_secs_f64(1.0 / 60.0),
             last_frame_time: Instant::now(),
@@ -201,7 +199,7 @@ impl ApplicationHandler<AppEvent> for App {
             .expect("failed to create window");
 
         let window = Arc::new(window);
-        let ctx = WGPUContext::new(window.clone(), Arc::clone(&self.global_state));
+        let ctx = WGPUContext::new(window.clone());
         let global_uniform = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
 
         let kennel = Arc::new(RefCell::new(Kennel::new(

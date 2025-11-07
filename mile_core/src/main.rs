@@ -14,7 +14,6 @@ fn main() {
     let _proxy = event_loop_main.create_proxy();
 
     // GlobalState keeps GPU/device handles shared across threads.
-    let global_state: Arc<Mutex<GlobalState>> = Arc::new(Mutex::new(GlobalState::new()));
 
     // App bundles hubs, fonts, rendering context, and timing info.
     let mut app = App::new(global_state.clone());
