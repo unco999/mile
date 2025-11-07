@@ -1,17 +1,26 @@
-use std::{
-    cell::RefCell, mem::offset_of, rc::Rc, sync::{Arc, Mutex}, time::{Duration, Instant}
+use mile_api::prelude::{
+    global_event_bus, Computeable, CpuGlobalUniform, GlobalUniform, Renderable,
 };
-use mile_api::prelude::{Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus};
-use mile_font::{event::{BatchFontEntry, BatchRenderFont}, structs::MileFont};
+use mile_font::{
+    event::{BatchFontEntry, BatchRenderFont},
+    structs::MileFont,
+};
 use mile_gpu_dsl::prelude::{
     gpu_ast_compute_pipeline::ComputePipelineConfig,
     kennel::{Kennel, KennelConfig},
 };
 use mile_graphics::structs::WGPUContext;
 use mile_ui::{
-    mui_prototype::{build_demo_panel, CounterData, PanelRuntimeHandle},
-    prelude::{PanelFragExprEvent, *},
+    mui_prototype::build_demo_panel,
+    prelude::*,
     runtime::{BufferArenaConfig, MuiRuntime},
+};
+use std::{
+    cell::RefCell,
+    mem::offset_of,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 use wgpu::SurfaceError;
 use winit::{
@@ -43,6 +52,21 @@ pub struct App {
 }
 
 impl App {
+    pub fn new(global_state: Arc<Mutex<GlobalState>>) -> Self {
+        Self {
+            wgpu_context: None,
+            mui_runtime: None,
+            mile_font: None,
+            kennel: None,
+            global_state,
+            last_tick: Instant::now(),
+            tick_interval: Duration::from_secs_f64(1.0 / 60.0),
+            last_frame_time: Instant::now(),
+            delta_time: Duration::from_secs_f32(0.0),
+            frame_index: 0,
+        }
+    }
+
     fn update_frame_time(&mut self) {
         let now = Instant::now();
         self.delta_time = now - self.last_frame_time;
@@ -50,47 +74,50 @@ impl App {
     }
 
     fn update_runtime(&mut self) {
-        let (ctx, runtime_cell,mile_font) = match (&self.wgpu_context, &self.mui_runtime,&self.mile_font) {
-            (Some(ctx), Some(runtime),Some(mile_font)) => (ctx, runtime,mile_font),
-            _ => return,
-        };
+        let (ctx, runtime_cell, mile_font) =
+            match (&self.wgpu_context, &self.mui_runtime, &self.mile_font) {
+                (Some(ctx), Some(runtime), Some(mile_font)) => (ctx, runtime, mile_font),
+                _ => return,
+            };
 
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
 
         if !runtime.panel_cache.is_empty() {
-            let keys: Vec<_> = runtime.panel_cache
-                .iter()
-                .map(|(key,handle)| key.clone())
-                .collect();
-            let _ = runtime.refresh_panel_cache::<CounterData>(&keys, &ctx.device, &ctx.queue);
+            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
         }
 
         let mut mile_font = mile_font.borrow_mut();
-        mile_font.evnet_polling(&ctx.device,&ctx.queue);
+        mile_font.evnet_polling(&ctx.device, &ctx.queue);
         // runtime.copy_interaction_swap_frame();
         runtime.tick_frame_update_data(&ctx.queue);
         self.frame_index = self.frame_index.wrapping_add(1);
     }
 
-    fn app_first(&mut self){
-        let Some(ctx) = &self.wgpu_context else { return; };
+    fn app_first(&mut self) {
+        let Some(ctx) = &self.wgpu_context else {
+            return;
+        };
 
-        let mut mui_runtime =self.mui_runtime.as_ref().unwrap().borrow_mut();
+        let mut mui_runtime = self.mui_runtime.as_ref().unwrap().borrow_mut();
         mui_runtime.mouse_press_tick_first(&ctx.queue);
-        mui_runtime.copy_interaction_swap_frame(&ctx.device,&ctx.queue);
+        mui_runtime.copy_interaction_swap_frame(&ctx.device, &ctx.queue);
     }
 
-    fn app_post(&mut self){
-        let Some(ctx) = &self.wgpu_context else { return; };
+    fn app_post(&mut self) {
+        let Some(ctx) = &self.wgpu_context else {
+            return;
+        };
 
-        let mut mui_runtime =self.mui_runtime.as_ref().unwrap().borrow_mut();
+        let mut mui_runtime = self.mui_runtime.as_ref().unwrap().borrow_mut();
         mui_runtime.mouse_press_tick_post(&ctx.queue);
     }
 
     fn compute(&mut self) {
-        let Some(ctx) = &self.wgpu_context else { return; };
+        let Some(ctx) = &self.wgpu_context else {
+            return;
+        };
 
         if let Some(font) = &self.mile_font {
             let mut font = font.borrow_mut();
@@ -105,31 +132,31 @@ impl App {
             kennel.process_global_events(&ctx.queue, &ctx.device);
         }
 
-        let mut mui_runtime =self.mui_runtime.as_ref().unwrap();
+        let mut mui_runtime = self.mui_runtime.as_ref().unwrap();
         ctx.compute(&[&*mui_runtime.borrow()]);
-            
     }
 
-    fn event_first(&mut self){
-        let mut mui_runtime =self.mui_runtime.as_ref().unwrap().borrow_mut();
+    fn event_first(&mut self) {
+        let mut mui_runtime = self.mui_runtime.as_ref().unwrap().borrow_mut();
         mui_runtime.event_poll();
     }
 
     fn render(&mut self) {
-        let (ctx, runtime_cell,mile_font) = match (&self.wgpu_context, &self.mui_runtime,&self.mile_font) {
-            (Some(ctx), Some(runtime),Some(mile_font)) => (ctx, runtime,mile_font),
-            _ => return,
-        };
-
-
+        let (ctx, runtime_cell, mile_font) =
+            match (&self.wgpu_context, &self.mui_runtime, &self.mile_font) {
+                (Some(ctx), Some(runtime), Some(mile_font)) => (ctx, runtime, mile_font),
+                _ => return,
+            };
 
         let runtime = runtime_cell.borrow();
         let mile_font = mile_font.borrow();
-        ctx.render(&[&*runtime,&*mile_font]);
+        ctx.render(&[&*runtime, &*mile_font]);
     }
 
     fn build_resources(&mut self) {
-        let Some(ctx) = &self.wgpu_context else { return; };
+        let Some(ctx) = &self.wgpu_context else {
+            return;
+        };
 
         if let Some(font) = &self.mile_font {
             let mut font = font.borrow_mut();
@@ -144,10 +171,8 @@ impl App {
             let mut runtime = runtime_cell.borrow_mut();
             runtime.read_all_texture();
             runtime.rebuild_texture_bindings(&ctx.device, &ctx.queue);
-            runtime.ensure_render_pipeline(&ctx.device, &ctx.queue,ctx.config.format);
+            runtime.ensure_render_pipeline(&ctx.device, &ctx.queue, ctx.config.format);
         }
-
-
     }
 }
 
@@ -187,7 +212,6 @@ impl ApplicationHandler<AppEvent> for App {
             },
         )));
 
-
         let runtime = MuiRuntime::new(
             &ctx.device,
             BufferArenaConfig {
@@ -215,7 +239,6 @@ impl ApplicationHandler<AppEvent> for App {
             self.app_post();
         }
     }
- 
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
@@ -244,24 +267,23 @@ impl ApplicationHandler<AppEvent> for App {
             WindowEvent::CloseRequested => std::process::exit(0),
             WindowEvent::CursorMoved { position, .. } => {
                 let ctx = &self.wgpu_context.as_ref().expect("没有渲染上下文");
-                if let Some(mui_runtime) = &self.mui_runtime{
-                      let mui_runtime = mui_runtime.borrow_mut();
-                      mui_runtime.write_global_buffer(
+                if let Some(mui_runtime) = &self.mui_runtime {
+                    let mui_runtime = mui_runtime.borrow_mut();
+                    mui_runtime.write_global_buffer(
                         &ctx.queue,
-                        offset_of!(GlobalUniform,mouse_pos) as u64,
-                        [position.x as f32,position.y as f32]
+                        offset_of!(GlobalUniform, mouse_pos) as u64,
+                        [position.x as f32, position.y as f32],
                     )
                 }
             }
-            WindowEvent::Resized(size) =>{
-                if let Some(ctx) = self.wgpu_context.as_mut(){
+            WindowEvent::Resized(size) => {
+                if let Some(ctx) = self.wgpu_context.as_mut() {
                     ctx.resize(size);
-                    if let (Some(runtime_cell)) =  &self.mui_runtime {
-                    let mut runtime = runtime_cell.borrow_mut();
-                        runtime.resize(size,&ctx.queue,&ctx.device);
+                    if let Some(runtime_cell) = &self.mui_runtime {
+                        let mut runtime = runtime_cell.borrow_mut();
+                        runtime.resize(size, &ctx.queue, &ctx.device);
                     }
                 }
-
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if let (Some(ctx), Some(runtime_cell)) = (&self.wgpu_context, &self.mui_runtime) {
@@ -290,28 +312,22 @@ impl ApplicationHandler<AppEvent> for App {
                     //     font_file_path: "../ttf/BIZUDPGothic-Regular.ttf",
                     // });
                 }
-                if 
-                    matches!(event.state, ElementState)
+                if matches!(event.state, ElementState)
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
                 {
-
-                       if let Some(runtime_cell) = &self.mui_runtime {
-                           if runtime_cell.borrow().panel_instances.is_empty() {
-                               if let Ok(handles) = build_demo_panel() {
-                                   let key = handles.key().clone();
-                                   {
-                                       let ctx = self.wgpu_context.as_ref().unwrap();
-                                       let mut runtime = runtime_cell.borrow_mut();
-                                       let _ = runtime.refresh_panel_cache::<CounterData>(&[key], &ctx.device, &ctx.queue);
-                                       runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-                                   }
-                               }
-                           }
-                       }
+                    if let Some(runtime_cell) = &self.mui_runtime {
+                        if runtime_cell.borrow().panel_instances.is_empty() {
+                            if build_demo_panel().is_ok() {
+                                let ctx = self.wgpu_context.as_ref().unwrap();
+                                let mut runtime = runtime_cell.borrow_mut();
+                                runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+                                runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
         }
     }
 }
-

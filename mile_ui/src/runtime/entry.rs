@@ -6,11 +6,12 @@
 //! point that gradually replaces the gigantic `GpuUi` struct in `mui.rs`.
 
 use std::{
+    any::TypeId,
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     num::NonZeroU32,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use super::{
@@ -22,8 +23,8 @@ use super::{
 use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
     mui_prototype::{
-        install_runtime_event_bridge, PanelBinding, PanelKey, PanelPayload, PanelRecord,
-        PanelSnapshot, PanelStateOverrides, UiState,
+        install_runtime_event_bridge, registered_panel_keys, PanelBinding, PanelKey, PanelPayload,
+        PanelRecord, PanelSnapshot, PanelStateOverrides, UiState,
     },
     runtime::_ty::{
         AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, TransformAnimFieldInfo,
@@ -145,6 +146,7 @@ pub struct PanelCpuDescriptor {
     pub snapshot: PanelSnapshot,
     pub snapshot_texture: Option<UiTextureInfo>,
     pub states: HashMap<UiState, PanelStateCpu>,
+    pub type_id: TypeId,
 }
 
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
@@ -412,6 +414,19 @@ impl MuiRuntime {
         (index as wgpu::BufferAddress) * Self::PANEL_STRIDE
     }
 
+    pub fn panel_keys_for_type(&self, type_id: TypeId) -> Vec<PanelKey> {
+        let mut keys: HashSet<PanelKey> = self
+            .panel_cache
+            .iter()
+            .filter(|(_, desc)| desc.type_id == type_id)
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in registered_panel_keys(type_id) {
+            keys.insert(key);
+        }
+        keys.into_iter().collect()
+    }
+
     pub fn write_panel(&self, queue: &Queue, index: u32, panel: &Panel) {
         let offset = Self::panel_offset(index);
         queue.write_buffer(&self.buffers.instance, offset, bytes_of(panel));
@@ -425,6 +440,17 @@ impl MuiRuntime {
         let offset = Self::panel_offset(start_index);
         queue.write_buffer(&self.buffers.instance, offset, cast_slice(panels));
         self.compute.borrow_mut().mark_interaction_dirty();
+    }
+
+    pub fn refresh_registered_payloads(&mut self, device: &Device, queue: &Queue) {
+        let registry = payload_registry().lock().unwrap();
+        for (&type_id, refresh_fn) in registry.iter() {
+            let keys = self.panel_keys_for_type(type_id);
+            if keys.is_empty() {
+                continue;
+            }
+            refresh_fn(self, &keys, device, queue);
+        }
     }
 
     pub fn ensure_capacity(&mut self, cfg: &BufferArenaConfig) {
@@ -906,6 +932,7 @@ impl MuiRuntime {
             snapshot,
             snapshot_texture,
             states: state_map,
+            type_id: TypeId::of::<TPayload>(),
         }
     }
 
@@ -1489,4 +1516,28 @@ fn easing_to_mask(easing: Easing) -> EasingMask {
         Easing::CubicInOut => EasingMask::IN_OUT_CUBIC,
         _ => EasingMask::LINEAR,
     }
+}
+
+type PayloadRefreshFn =
+    fn(&mut MuiRuntime, &[PanelKey], &wgpu::Device, &wgpu::Queue);
+
+fn payload_registry() -> &'static Mutex<HashMap<TypeId, PayloadRefreshFn>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<TypeId, PayloadRefreshFn>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn register_payload_refresh<T: PanelPayload + 'static>() {
+    let mut registry = payload_registry().lock().unwrap();
+    registry
+        .entry(TypeId::of::<T>())
+        .or_insert(refresh_payload::<T>);
+}
+
+fn refresh_payload<T: PanelPayload>(
+    runtime: &mut MuiRuntime,
+    keys: &[PanelKey],
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) {
+    let _ = runtime.refresh_panel_cache::<T>(keys, device, queue);
 }

@@ -5,7 +5,10 @@ use crate::{
         group_type_id,
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
-    runtime::state::{PanelEventRegistry, UiInteractionScope},
+    runtime::{
+        register_payload_refresh,
+        state::{PanelEventRegistry, UiInteractionScope},
+    },
     structs::PanelInteraction,
 };
 use glam::{Vec2, Vec4, vec2};
@@ -30,9 +33,31 @@ use std::{
 static EVENT_REGISTRY: OnceLock<Arc<Mutex<PanelEventRegistry>>> = OnceLock::new();
 static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>>> =
     OnceLock::new();
+static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
 
 fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn panel_key_registry() -> &'static Mutex<HashMap<TypeId, HashSet<PanelKey>>> {
+    PANEL_KEY_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn register_panel_key<TPayload: PanelPayload>(key: &PanelKey) {
+    let mut guard = panel_key_registry().lock().unwrap();
+    guard
+        .entry(TypeId::of::<TPayload>())
+        .or_insert_with(HashSet::new)
+        .insert(key.clone());
+}
+
+pub(crate) fn registered_panel_keys(type_id: TypeId) -> Vec<PanelKey> {
+    panel_key_registry()
+        .lock()
+        .unwrap()
+        .get(&type_id)
+        .map(|set| set.iter().cloned().collect())
+        .unwrap_or_default()
 }
 
 pub(crate) fn install_runtime_event_bridge(registry: Arc<Mutex<PanelEventRegistry>>) {
@@ -185,6 +210,12 @@ impl Default for BorderStyle {
 pub trait PanelPayload:
     Serialize + DeserializeOwned + Clone + Default + PartialEq + Send + Sync + 'static
 {
+    fn register_payload_type()
+    where
+        Self: Sized,
+    {
+        register_payload_refresh::<Self>();
+    }
 }
 
 impl<T> PanelPayload for T where
@@ -592,6 +623,7 @@ fn runtime_map<TPayload: PanelPayload>() -> Arc<Mutex<HashMap<PanelKey, PanelRun
 
 fn register_runtime<TPayload: PanelPayload>(key: PanelKey, runtime: PanelRuntime<TPayload>) {
     let arc = runtime_map::<TPayload>();
+    register_panel_key::<TPayload>(&key);
     arc.lock().unwrap().insert(key, runtime);
 }
 
@@ -722,6 +754,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         panel_uuid: &'static str,
         scope: impl Into<String>,
     ) -> Result<Self, DbError> {
+        TPayload::register_payload_type();
         let handle = PanelHandle::<TPayload>::new(panel_uuid, scope)?;
         Ok(Self {
             handle,
@@ -741,6 +774,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         panel_uuid: &'static str,
         scope: impl Into<String>,
     ) -> Result<Self, DbError> {
+        TPayload::register_payload_type();
         let handle = PanelHandle::<TPayload>::new(panel_uuid, scope)?;
         Ok(Self {
             handle,
@@ -1175,8 +1209,8 @@ pub struct ShaderScope;
 /// Example listener that can only mutate its own panel via the guard method.
 pub struct CountResetListener;
 
-impl PanelStyleListener<CounterData> for CountResetListener {
-    fn on_change(&self, change: &PanelStyleChange<'_, CounterData>) {
+impl PanelStyleListener<UiPanelData> for CountResetListener {
+    fn on_change(&self, change: &PanelStyleChange<'_, UiPanelData>) {
         if let Some(old) = &change.old {
             if old.data.count != change.new.data.count && change.new.data.count > 5 {
                 change.mutate(|record| record.data.count = 0);
@@ -1187,15 +1221,21 @@ impl PanelStyleListener<CounterData> for CountResetListener {
 
 /// Example payload type used in the demo.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-pub struct CounterData {
+pub struct UiPanelData {
     pub count: u32,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub struct TestCustomData {
+    pub count: u32,
+}
+
 
 struct CounterHeader;
 
 fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
     configure_group::<CounterHeader, _>(|group| group.center(GroupCenterMode::FirstElement));
-    let runtime = Mui::<CounterData>::stateful(panel_uuid)?
+    let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             let state = state
@@ -1309,7 +1349,7 @@ fn next_listener_id() -> u64 {
 }
 
 /// Example listener registration.
-pub fn register_demo_listener(handle: &Mui<CounterData>) -> PanelListenerGuard<CounterData> {
+pub fn register_demo_listener(handle: &Mui<UiPanelData>) -> PanelListenerGuard<UiPanelData> {
     handle.register_style_listener(CountResetListener)
 }
 
@@ -1319,8 +1359,8 @@ mod tests {
 
     const TEST_PANEL_UUID: &str = "inventory_panel_test_case";
 
-    fn read_counter_record(key: &PanelKey) -> PanelRecord<CounterData> {
-        PanelHandle::<CounterData>::for_key(key.clone())
+    fn read_counter_record(key: &PanelKey) -> PanelRecord<UiPanelData> {
+        PanelHandle::<UiPanelData>::for_key(key.clone())
             .read()
             .expect("panel record to exist")
     }
@@ -1357,13 +1397,13 @@ mod tests {
             Some(&UiState(0))
         );
 
-        handle.trigger::<CounterData>(UiEventKind::Click);
+        handle.trigger::<UiPanelData>(UiEventKind::Click);
         record = read_counter_record(handle.key());
         assert_eq!(record.current_state, UiState(1));
         assert_eq!(record.data.count, 1);
         assert_eq!(record.pending_animations.len(), 1);
 
-        handle.trigger::<CounterData>(UiEventKind::Click);
+        handle.trigger::<UiPanelData>(UiEventKind::Click);
         record = read_counter_record(handle.key());
         assert_eq!(record.current_state, UiState(0));
         assert_eq!(record.data.count, 2);

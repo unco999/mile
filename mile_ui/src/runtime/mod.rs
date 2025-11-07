@@ -14,7 +14,7 @@ pub mod state;
 
 pub use buffers::{BufferArena, BufferArenaConfig, BufferViewSet};
 pub use compute::{ComputePipelines, FrameComputeContext};
-pub use entry::{FrameHistory, FrameSnapshot, MuiRuntime};
+pub use entry::{register_payload_refresh, FrameHistory, FrameSnapshot, MuiRuntime};
 pub use render::{QuadBatchKind, RenderBatches, RenderPipelines};
 pub use state::{
     ClickCallback, CpuPanelEvent, EntryCallBack, EntryFragBack, EntryVertexBack, FRAME, FrameState,
