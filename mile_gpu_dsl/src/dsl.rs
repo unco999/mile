@@ -362,7 +362,11 @@ impl Sub<f32> for Expr {
     type Output = Expr;
 
     fn sub(self, rhs: f32) -> Self::Output {
-        Expr::BinaryOp(BinaryOp::Subtract, Box::new(self), Box::new(Expr::Constant(rhs)))
+        Expr::BinaryOp(
+            BinaryOp::Subtract,
+            Box::new(self),
+            Box::new(Expr::Constant(rhs)),
+        )
     }
 }
 

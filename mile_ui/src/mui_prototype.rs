@@ -759,6 +759,32 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         enqueue_state_transition(transition);
     }
 
+    pub fn request_fragment_shader<F>(&self, shader: F)
+    where
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
+    {
+        let shader: Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static> = Arc::new(shader);
+        submit_shader_request(
+            &self.args.panel_key,
+            *self.current_state,
+            &shader,
+            ShaderStage::Fragment,
+        );
+    }
+
+    pub fn request_vertex_shader<F>(&self, shader: F)
+    where
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
+    {
+        let shader: Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static> = Arc::new(shader);
+        submit_shader_request(
+            &self.args.panel_key,
+            *self.current_state,
+            &shader,
+            ShaderStage::Vertex,
+        );
+    }
+
     pub fn transition(&mut self, event: UiEventKind) -> Option<UiState> {
         let current = *self.current_state;
         if let Some(next) = self
@@ -847,8 +873,9 @@ fn listeners_map<TPayload: PanelPayload>()
         .unwrap()
 }
 
+static MAPS: OnceLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> = OnceLock::new();
+
 fn runtime_map<TPayload: PanelPayload>() -> Arc<Mutex<HashMap<PanelKey, PanelRuntime<TPayload>>>> {
-    static MAPS: OnceLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> = OnceLock::new();
     let maps = MAPS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = maps.lock().unwrap();
     let entry = guard.entry(TypeId::of::<TPayload>()).or_insert_with(|| {
@@ -1520,6 +1547,19 @@ pub struct TestCustomData {
     pub count: u32,
 }
 
+fn frag_template(intensity:f32)->Expr{
+    let uv = rv("uv");
+    let diagonal = uv.x() - uv.y();
+    let offset = Expr::from(intensity * 0.05);
+    let width = Expr::from(0.01f32);
+    let line = smoothstep(
+        offset.clone() - width.clone(),
+        offset.clone() + width,
+        diagonal,
+    );
+    wvec4(line.clone(), 0.0, line, 1.0)
+}
+
 struct CounterHeader;
 
 fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
@@ -1545,9 +1585,7 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
                 //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
                 // })
-                .fragment_shader(|_flow,| {
-                    wvec4(0.0, 0.0, 0.0, 0.0)
-                })
+                .fragment_shader(|_flow| wvec4(0.0, 0.0, 0.0, 0.0))
                 .events()
                 .on_event(
                     UiEventKind::Click,
@@ -1555,6 +1593,11 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                         let data = flow.payload();
                         data.count += 1;
                         println!("内部点击事件 {}", data.count);
+
+                        let intensity = data.count as f32;
+                        flow.request_fragment_shader(move |_scope| {
+                            frag_template(intensity)
+                        });
                         flow.set_state(UiState(1));
                     },
                 )
