@@ -46,6 +46,7 @@ pub enum GpuOp {
     Sqrt = 0b1000000000000000000,
     Abs = 0b10000000000000000000,
     Conditional = 0b100000000000000000000,
+    SmoothStep = 0b1000000000000000000000,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -172,6 +173,7 @@ impl GpuOp {
             0b1000000000000000000 => Some(GpuOp::Sqrt),
             0b10000000000000000000 => Some(GpuOp::Abs),
             0b100000000000000000000 => Some(GpuOp::Conditional),
+            0b1000000000000000000000 => Some(GpuOp::SmoothStep),
             _ => None,
         }
     }
@@ -484,7 +486,7 @@ impl FinalOutputSimulator {
                         let result = if node.get_op() == GpuOp::Conditional {
                             self.apply_conditional(node, left_value, right_value, else_value)
                         } else {
-                            self.apply_operation(node, left_value, right_value)
+                            self.apply_operation(node, left_value, right_value, else_value)
                         };
 
                         self.node_values[i] = result;
@@ -620,7 +622,13 @@ impl FinalOutputSimulator {
         }
     }
 
-    fn apply_operation(&self, node: &GpuAstNode, left: [f32; 4], right: [f32; 4]) -> [f32; 4] {
+    fn apply_operation(
+        &self,
+        node: &GpuAstNode,
+        left: [f32; 4],
+        right: [f32; 4],
+        extra: [f32; 4],
+    ) -> [f32; 4] {
         let op = node.get_op();
         let data_type = node.get_data_type();
 
@@ -628,6 +636,31 @@ impl FinalOutputSimulator {
 
         // 鏍规嵁鎿嶄綔绫诲瀷鎵ц璁＄畻
         match op {
+            GpuOp::SmoothStep => match data_type {
+                DataType::Scalar => {
+                    result[0] = smoothstep_value(left[0], right[0], extra[0]);
+                    for i in 1..4 {
+                        result[i] = result[0];
+                    }
+                }
+                DataType::Vec2 => {
+                    result[0] = smoothstep_value(left[0], right[0], extra[0]);
+                    result[1] = smoothstep_value(left[1], right[1], extra[1]);
+                    result[2] = 0.0;
+                    result[3] = 1.0;
+                }
+                DataType::Vec3 => {
+                    result[0] = smoothstep_value(left[0], right[0], extra[0]);
+                    result[1] = smoothstep_value(left[1], right[1], extra[1]);
+                    result[2] = smoothstep_value(left[2], right[2], extra[2]);
+                    result[3] = 1.0;
+                }
+                DataType::Vec4 => {
+                    for i in 0..4 {
+                        result[i] = smoothstep_value(left[i], right[i], extra[i]);
+                    }
+                }
+            },
             GpuOp::Add
             | GpuOp::Subtract
             | GpuOp::Multiply
@@ -895,6 +928,14 @@ impl FinalOutputSimulator {
         outputs
     }
 }
+
+fn smoothstep_value(edge0: f32, edge1: f32, value: f32) -> f32 {
+    if (edge1 - edge0).abs() < f32::EPSILON {
+        return if value < edge0 { 0.0 } else { 1.0 };
+    }
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 // 杈呭姪鍑芥暟锛氫粠瀵煎叆鎺╃爜鑾峰彇瀵煎叆鍚嶇О
 fn get_import_name_from_mask(mask: u8) -> Option<&'static str> {
     match mask {
@@ -929,6 +970,7 @@ fn format_op(op: GpuOp) -> &'static str {
         GpuOp::Abs => "abs",
         GpuOp::Index => "index",
         GpuOp::Conditional => "conditional",
+        GpuOp::SmoothStep => "smoothstep",
     }
 }
 // 鏀硅繘鐨勮浆鎹㈠嚱鏁帮紝姝ｇ‘寤虹珛鑺傜偣杩炴帴

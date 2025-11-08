@@ -6,12 +6,11 @@ use crate::{
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
-        register_payload_refresh,
+        QuadBatchKind, register_payload_refresh,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
             UIEventHub, UiInteractionScope,
         },
-        QuadBatchKind,
     },
     structs::PanelInteraction,
 };
@@ -22,7 +21,12 @@ use mile_api::{
 };
 use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
-    core::{Expr, dsl::{wvec2, wvec4}}, dsl::rv, gpu_ast_core::event::{ExprTy, ExprWithIdxEvent}
+    core::{
+        Expr,
+        dsl::{IF, modulo, sin, sqrt, wvec2, wvec4},
+    },
+    dsl::{cv, rv, smoothstep},
+    gpu_ast_core::event::{ExprTy, ExprWithIdxEvent},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -69,7 +73,7 @@ struct PendingShaderRequest {
     stage: ShaderStage,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShaderStage {
     Fragment,
     Vertex,
@@ -80,6 +84,13 @@ impl ShaderStage {
         match self {
             ShaderStage::Fragment => ExprTy::Frag,
             ShaderStage::Vertex => ExprTy::Vertex,
+        }
+    }
+
+    pub fn from_expr_ty(expr_ty: ExprTy) -> Self {
+        match expr_ty {
+            ExprTy::Frag => ShaderStage::Fragment,
+            ExprTy::Vertex => ShaderStage::Vertex,
         }
     }
 }
@@ -277,7 +288,7 @@ pub struct PanelSnapshot {
     #[serde(default)]
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
-    pub quad_mod: QuadBatchKind,
+    pub quad_vertex: QuadBatchKind,
 }
 
 impl Default for PanelSnapshot {
@@ -291,7 +302,7 @@ impl Default for PanelSnapshot {
             z_index: 0,
             fragment_shader_id: None,
             vertex_shader_id: None,
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         }
     }
 }
@@ -748,6 +759,32 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         enqueue_state_transition(transition);
     }
 
+    pub fn request_fragment_shader<F>(&self, shader: F)
+    where
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
+    {
+        let shader: Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static> = Arc::new(shader);
+        submit_shader_request(
+            &self.args.panel_key,
+            *self.current_state,
+            &shader,
+            ShaderStage::Fragment,
+        );
+    }
+
+    pub fn request_vertex_shader<F>(&self, shader: F)
+    where
+        F: Fn(&ShaderScope) -> Expr + Send + Sync + 'static,
+    {
+        let shader: Arc<dyn Fn(&ShaderScope) -> Expr + Send + Sync + 'static> = Arc::new(shader);
+        submit_shader_request(
+            &self.args.panel_key,
+            *self.current_state,
+            &shader,
+            ShaderStage::Vertex,
+        );
+    }
+
     pub fn transition(&mut self, event: UiEventKind) -> Option<UiState> {
         let current = *self.current_state;
         if let Some(next) = self
@@ -836,8 +873,9 @@ fn listeners_map<TPayload: PanelPayload>()
         .unwrap()
 }
 
+static MAPS: OnceLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> = OnceLock::new();
+
 fn runtime_map<TPayload: PanelPayload>() -> Arc<Mutex<HashMap<PanelKey, PanelRuntime<TPayload>>>> {
-    static MAPS: OnceLock<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>> = OnceLock::new();
     let maps = MAPS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = maps.lock().unwrap();
     let entry = guard.entry(TypeId::of::<TPayload>()).or_insert_with(|| {
@@ -982,7 +1020,7 @@ pub struct Mui<TPayload: PanelPayload> {
     handle: PanelHandle<TPayload>,
     mode: FlowMode<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 }
 
 impl<TPayload: PanelPayload> Mui<TPayload> {
@@ -1007,7 +1045,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 states: HashMap::new(),
             },
             observers: Vec::new(),
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         })
     }
 
@@ -1027,7 +1065,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 state: PanelStateDefinition::default(),
             },
             observers: Vec::new(),
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         })
     }
 
@@ -1059,8 +1097,8 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         self
     }
 
-    pub fn quad_mod(mut self, quad_mod: QuadBatchKind) -> Self {
-        self.quad_mod = quad_mod;
+    pub fn quad_vertex(mut self, quad_vertex: QuadBatchKind) -> Self {
+        self.quad_vertex = quad_vertex;
         self
     }
 
@@ -1109,14 +1147,20 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
 
     pub fn build(self) -> Result<PanelRuntimeHandle, DbError> {
         let handle = self.handle;
-        let quad_mod = self.quad_mod;
+        let quad_vertex = self.quad_vertex;
         match self.mode {
             FlowMode::Stateful {
                 default_state,
                 states,
-            } => build_stateful::<TPayload>(handle, default_state, states, self.observers, quad_mod),
+            } => build_stateful::<TPayload>(
+                handle,
+                default_state,
+                states,
+                self.observers,
+                quad_vertex,
+            ),
             FlowMode::Stateless { state } => {
-                build_stateless::<TPayload>(handle, state, self.observers, quad_mod)
+                build_stateless::<TPayload>(handle, state, self.observers, quad_vertex)
             }
         }
     }
@@ -1363,7 +1407,7 @@ fn build_stateful<TPayload: PanelPayload>(
     default_state: Option<UiState>,
     states: HashMap<UiState, PanelStateDefinition<TPayload>>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let panel_key = handle.key.clone();
     let default = default_state
@@ -1374,7 +1418,7 @@ fn build_stateful<TPayload: PanelPayload>(
         record.default_state = Some(default);
         record.current_state = default;
         record.states.clear();
-        record.snapshot.quad_mod = quad_mod;
+        record.snapshot.quad_vertex = quad_vertex;
         for (state_id, definition) in &states {
             record
                 .states
@@ -1425,7 +1469,7 @@ fn build_stateless<TPayload: PanelPayload>(
     handle: PanelHandle<TPayload>,
     definition: PanelStateDefinition<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let state_id = UiState(0);
     let panel_key = handle.key.clone();
@@ -1434,7 +1478,7 @@ fn build_stateless<TPayload: PanelPayload>(
         record.default_state = Some(state_id);
         record.current_state = state_id;
         record.states.clear();
-        record.snapshot.quad_mod = quad_mod;
+        record.snapshot.quad_vertex = quad_vertex;
         record.states.insert(state_id, definition.overrides.clone());
     })?;
 
@@ -1503,12 +1547,26 @@ pub struct TestCustomData {
     pub count: u32,
 }
 
+fn frag_template(intensity:f32)->Expr{
+    let uv = rv("uv");
+    let diagonal = uv.x() - uv.y();
+    let offset = Expr::from(intensity * 0.05);
+    let width = Expr::from(0.01f32);
+    let line = smoothstep(
+        offset.clone() - width.clone(),
+        offset.clone() + width,
+        diagonal,
+    );
+    wvec4(line.clone(), 0.0, line, 1.0)
+}
+
 struct CounterHeader;
 
 fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
     configure_group::<CounterHeader, _>(|group| group.center(GroupCenterMode::FirstElement));
     let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
+        .quad_vertex(QuadBatchKind::UltraVertex)
         .state(UiState(0), |state| {
             let state = state
                 .group::<CounterHeader>()
@@ -1520,12 +1578,14 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                     radius: 0.0,
                 })
                 .z_index(5)
-                .fragment_shader(|_flow| {
-                    let r= rv("uv").x();
-                    let g= rv("uv").y();
-                    wvec4(r, g,1.0,1.0)
-                }
-                )
+                // .vertex_shader(|_flow| {
+                //     let r = cv("time");
+                //     let sin = sin(r);
+                //     let uv = rv("uv").y();
+                //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
+                //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
+                // })
+                .fragment_shader(|_flow| wvec4(0.0, 0.0, 0.0, 0.0))
                 .events()
                 .on_event(
                     UiEventKind::Click,
@@ -1533,6 +1593,11 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                         let data = flow.payload();
                         data.count += 1;
                         println!("内部点击事件 {}", data.count);
+
+                        let intensity = data.count as f32;
+                        flow.request_fragment_shader(move |_scope| {
+                            frag_template(intensity)
+                        });
                         flow.set_state(UiState(1));
                     },
                 )

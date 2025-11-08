@@ -195,6 +195,18 @@ pub fn mix<A: Into<Expr>, B: Into<Expr>, T: Into<Expr>>(a: A, b: B, t: T) -> Exp
     first + second
 }
 
+pub fn smoothstep<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>>(
+    edge0: A,
+    edge1: B,
+    value: C,
+) -> Expr {
+    Expr::SmoothStep {
+        edge0: Box::new(edge0.into()),
+        edge1: Box::new(edge1.into()),
+        value: Box::new(value.into()),
+    }
+}
+
 impl Expr {
     pub fn x(&self) -> Expr {
         self.take(0)
@@ -343,6 +355,18 @@ impl Sub<Expr> for i32 {
     type Output = Expr;
     fn sub(self, rhs: Expr) -> Expr {
         Expr::Constant(self as f32) - rhs
+    }
+}
+
+impl Sub<f32> for Expr {
+    type Output = Expr;
+
+    fn sub(self, rhs: f32) -> Self::Output {
+        Expr::BinaryOp(
+            BinaryOp::Subtract,
+            Box::new(self),
+            Box::new(Expr::Constant(rhs)),
+        )
     }
 }
 

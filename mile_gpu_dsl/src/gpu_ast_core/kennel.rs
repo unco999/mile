@@ -226,6 +226,7 @@ impl Kennel {
         self._global_event_bus.publish(KennelResultIdxEvent {
             kennel_id: layer_index as u32,
             idx: event.idx,
+            _type: event._ty.clone(),
         });
         // self._global_hub
         //     .push(ModuleEvent::KennelPushResultReadDes(ModuleParmas {

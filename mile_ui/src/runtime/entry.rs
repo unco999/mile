@@ -11,6 +11,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU32,
     path::PathBuf,
+    rc::Rc,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -40,7 +41,7 @@ use mile_api::{
     event_bus::{EventBus, EventStream},
     global::{global_db, global_event_bus},
     interface::{Computeable, GlobalUniform},
-    prelude::{GpuDebug, GpuDebugReadCallBack, Renderable},
+    prelude::{CpuGlobalUniform, GpuDebug, GpuDebugReadCallBack, Renderable},
 };
 use mile_db::{DbError, MileDb};
 use mile_gpu_dsl::{
@@ -79,6 +80,7 @@ impl FrameHistory {
 pub struct GlobalUniformState {
     cpu: GlobalUniform,
     buffer: wgpu::Buffer,
+    shared_cpu: Option<Rc<RefCell<GlobalUniform>>>,
 }
 
 impl GlobalUniformState {
@@ -91,7 +93,22 @@ impl GlobalUniformState {
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
         });
-        Self { cpu, buffer }
+        Self {
+            cpu,
+            buffer,
+            shared_cpu: None,
+        }
+    }
+
+    pub fn from_cpu_uniform(shared: &Rc<CpuGlobalUniform>) -> Self {
+        let shared_cpu = shared.get_struct();
+        let cpu = *shared_cpu.borrow();
+        let buffer = shared.get_buffer();
+        Self {
+            cpu,
+            buffer,
+            shared_cpu: Some(shared_cpu),
+        }
     }
 
     #[inline]
@@ -114,6 +131,9 @@ impl GlobalUniformState {
         T: bytemuck::Pod,
     {
         queue.write_buffer(&self.buffer, offset, bytes_of(value));
+        if let Some(shared_cpu) = &self.shared_cpu {
+            *shared_cpu.borrow_mut() = self.cpu;
+        }
     }
 }
 
@@ -155,7 +175,7 @@ pub struct PanelCpuDescriptor {
     pub snapshot_texture: Option<UiTextureInfo>,
     pub states: HashMap<UiState, PanelStateCpu>,
     pub type_id: TypeId,
-    pub quad_mod: QuadBatchKind,
+    pub quad_vertex: QuadBatchKind,
 }
 
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
@@ -261,9 +281,29 @@ impl MuiRuntime {
 
     /// Construct a new runtime using the supplied GPU device.
     pub fn new(device: &Device, arena_cfg: BufferArenaConfig) -> Self {
+        Self::new_internal(device, arena_cfg, None)
+    }
+
+    /// Construct a runtime that shares the given CPU global uniform buffer.
+    pub fn new_with_shared_uniform(
+        device: &Device,
+        arena_cfg: BufferArenaConfig,
+        cpu_uniform: Rc<CpuGlobalUniform>,
+    ) -> Self {
+        Self::new_internal(device, arena_cfg, Some(cpu_uniform))
+    }
+
+    fn new_internal(
+        device: &Device,
+        arena_cfg: BufferArenaConfig,
+        shared_uniform: Option<Rc<CpuGlobalUniform>>,
+    ) -> Self {
         let buffers = BufferArena::new(device, &arena_cfg);
         let render = RenderPipelines::new(device);
-        let global_uniform = GlobalUniformState::new(device);
+        let global_uniform = match shared_uniform {
+            Some(ref shared) => GlobalUniformState::from_cpu_uniform(shared),
+            None => GlobalUniformState::new(device),
+        };
         let mut state = RuntimeState::default();
         let hub = state.event_hub.clone();
         let registry = state.panel_events.clone();
@@ -277,8 +317,8 @@ impl MuiRuntime {
             render_bind_group_layout: None,
             render_bind_group: None,
             render_surface_format: None,
-             kennel_bind_group_layout: None,
-             kennel_bind_group: None,
+            kennel_bind_group_layout: None,
+            kennel_bind_group: None,
             buffers,
             render,
             compute: RefCell::new(compute),
@@ -294,7 +334,7 @@ impl MuiRuntime {
             transitioning_panels: HashMap::new(),
             animation_descriptor: GpuAnimationDes::default(),
             animation_field_cache: HashMap::new(),
-            trace: RefCell::new(GpuDebug::new("mui_runtime")),
+            trace: RefCell::new(GpuDebug::new("mui_runtime_render")),
         }
     }
 
@@ -635,14 +675,14 @@ impl MuiRuntime {
         let mut panels = Vec::with_capacity(descriptors.len());
 
         const BATCH_ORDER: [QuadBatchKind; 3] = [
-            QuadBatchKind::Static,
-            QuadBatchKind::VertexAnimated,
-            QuadBatchKind::Overlay,
+            QuadBatchKind::Normal,
+            QuadBatchKind::MultiVertex,
+            QuadBatchKind::UltraVertex,
         ];
 
         for kind in BATCH_ORDER {
             let start = panels.len() as u32;
-            for desc in descriptors.iter().filter(|desc| desc.quad_mod == kind) {
+            for desc in descriptors.iter().filter(|desc| desc.quad_vertex == kind) {
                 let fallback = previous_instances.get(&desc.key.panel_id);
                 let panel = self.descriptor_to_panel_with_base(desc, fallback);
                 panels.push(panel);
@@ -889,9 +929,16 @@ impl MuiRuntime {
     }
 
     fn apply_shader_result(&mut self, event: &KennelResultIdxEvent, queue: &Queue) {
-        let Some((panel_key, state, stage)) = take_pending_shader(event.idx) else {
+        let Some((panel_key, state, pending_stage)) = take_pending_shader(event.idx) else {
             return;
         };
+        let stage = ShaderStage::from_expr_ty(event._type);
+        if stage != pending_stage {
+            eprintln!(
+                "shader result stage mismatch for panel {:?} (idx {}): pending {:?}, event {:?}",
+                panel_key, event.idx, pending_stage, stage
+            );
+        }
 
         let display_state_matches = {
             let Some(descriptor) = self.panel_cache.get_mut(&panel_key) else {
@@ -1027,7 +1074,7 @@ impl MuiRuntime {
         let needs_pipeline = self
             .render
             .batches
-            .get(QuadBatchKind::Static)
+            .get(QuadBatchKind::Normal)
             .pipeline
             .is_none()
             || self.render_surface_format != Some(surface_format);
@@ -1201,7 +1248,12 @@ impl MuiRuntime {
                 cache: None,
             });
 
-            self.render.set_pipeline(QuadBatchKind::Static, pipeline);
+            self.render
+                .set_pipeline(QuadBatchKind::Normal, pipeline.clone());
+            self.render
+                .set_pipeline(QuadBatchKind::MultiVertex, pipeline.clone());
+            self.render
+                .set_pipeline(QuadBatchKind::UltraVertex, pipeline);
             self.render_surface_format = Some(surface_format);
         }
     }
@@ -1262,7 +1314,7 @@ impl MuiRuntime {
             state_map.insert(state_id, PanelStateCpu { overrides, texture });
         }
 
-        let quad_mod = snapshot.quad_mod;
+        let quad_vertex = snapshot.quad_vertex;
 
         PanelCpuDescriptor {
             key,
@@ -1273,7 +1325,7 @@ impl MuiRuntime {
             snapshot_texture,
             states: state_map,
             type_id: TypeId::of::<TPayload>(),
-            quad_mod,
+            quad_vertex,
         }
     }
 

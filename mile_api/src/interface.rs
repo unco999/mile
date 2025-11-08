@@ -3,6 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt::Debug,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -231,8 +232,8 @@ impl CpuGlobalUniform {
 }
 
 pub struct ImportRegistry {
-    render_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
-    compute_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
+    pub render_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
+    pub compute_imports: std::collections::HashMap<String, (u32, ImportHandler)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
