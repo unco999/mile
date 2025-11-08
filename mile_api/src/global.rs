@@ -24,6 +24,10 @@ pub fn global_wgsl_register() -> &'static ImportRegistry {
         import.register_render_import("uv", 1, Box::new(|_| vec![0.0]));
         import.register_render_import("color", 2, Box::new(|_| vec![0.0]));
         import.register_compute_import("time", 1, Box::new(|_| vec![0.0]));
+        import.register_render_import("pos", 4, Box::new(|_| vec![0.0]));
+        import.register_render_import("instance_pos", 8, Box::new(|_| vec![0.0]));
+        import.register_render_import("instance_size", 16, Box::new(|_| vec![0.0]));
+        import.register_render_import("random", 32, Box::new(|_| vec![0.0]));
         import
     })
 }

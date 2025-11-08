@@ -265,10 +265,19 @@ impl RenderPipelines {
 
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-        let fallback_instances = 0..num_instances;
+        // Keep fallback disabled so only batches with explicit ranges draw.
+        let fallback_instances = 0..0;
 
         for (kind, batch) in self.batches.iter() {
-            let geometry = self.geometries.get(kind);
+            let should_skip = batch.indirect_count == 0
+                && batch.instance_range.is_empty()
+                && fallback_instances.is_empty()
+                && indirect_count == 0;
+            if should_skip {
+                continue;
+            }
+
+            let geometry: &QuadGeometry = self.geometries.get(kind);
             pass.set_vertex_buffer(0, geometry.vertex.slice(..));
             pass.set_index_buffer(geometry.index.slice(..), IndexFormat::Uint16);
 
@@ -285,4 +294,3 @@ impl RenderPipelines {
         }
     }
 }
-

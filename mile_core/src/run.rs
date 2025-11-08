@@ -43,6 +43,7 @@ pub struct App {
     pub mui_runtime: Option<Arc<RefCell<MuiRuntime>>>,
     pub mile_font: Option<Arc<RefCell<MileFont>>>,
     pub kennel: Option<Arc<RefCell<Kennel>>>,
+    pub global_uniform: Option<Rc<CpuGlobalUniform>>,
     pub last_tick: Instant,
     pub tick_interval: Duration,
     pub last_frame_time: Instant,
@@ -57,6 +58,7 @@ impl App {
             mui_runtime: None,
             mile_font: None,
             kennel: None,
+            global_uniform: None,
             last_tick: Instant::now(),
             tick_interval: Duration::from_secs_f64(1.0 / 60.0),
             last_frame_time: Instant::now(),
@@ -220,6 +222,7 @@ impl ApplicationHandler<AppEvent> for App {
         let window = Arc::new(window);
         let ctx = WGPUContext::new(window.clone());
         let global_uniform = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
+        self.global_uniform = Some(global_uniform.clone());
 
         let kennel = Arc::new(RefCell::new(Kennel::new(
             &ctx.device,
@@ -235,7 +238,7 @@ impl ApplicationHandler<AppEvent> for App {
             },
         )));
 
-        let runtime = MuiRuntime::new(
+        let runtime = MuiRuntime::new_with_shared_uniform(
             &ctx.device,
             BufferArenaConfig {
                 max_panels: 1024,
@@ -243,6 +246,7 @@ impl ApplicationHandler<AppEvent> for App {
                 max_collections: 128,
                 max_relations: 128,
             },
+            global_uniform.clone(),
         );
 
         self.wgpu_context = Some(ctx.clone());

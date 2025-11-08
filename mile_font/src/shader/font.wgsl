@@ -97,7 +97,7 @@ var font_sampler: sampler;
 @group(0) @binding(2)
 var<storage, read> glyph_descs: array<FontGlyphDes>;
 
-@group(0) @binding(3) var<storage, read_write> global_uniform: GlobalUniform;
+@group(0) @binding(3) var<storage, read> global_uniform: GlobalUniform;
 
 const GLYPH_SIZE: u32 = 64u;
 const ATLAS_SIZE: vec2<f32> = vec2<f32>(4096.0, 4096.0); 

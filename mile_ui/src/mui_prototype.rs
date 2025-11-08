@@ -1,4 +1,4 @@
-﻿use crate::{
+use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
     mui_group::{
         GroupCenterMode, GroupRelationSpec, MuiGroupDefinition, configure_group, group_definition,
@@ -6,12 +6,11 @@
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
-        register_payload_refresh,
+        QuadBatchKind, register_payload_refresh,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
             UIEventHub, UiInteractionScope,
         },
-        QuadBatchKind,
     },
     structs::PanelInteraction,
 };
@@ -22,7 +21,12 @@ use mile_api::{
 };
 use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
-    core::{Expr, dsl::{wvec2, wvec4}}, dsl::rv, gpu_ast_core::event::{ExprTy, ExprWithIdxEvent}
+    core::{
+        Expr,
+        dsl::{IF, sin, wvec2, wvec4},
+    },
+    dsl::{cv, rv},
+    gpu_ast_core::event::{ExprTy, ExprWithIdxEvent},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -69,7 +73,7 @@ struct PendingShaderRequest {
     stage: ShaderStage,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShaderStage {
     Fragment,
     Vertex,
@@ -80,6 +84,13 @@ impl ShaderStage {
         match self {
             ShaderStage::Fragment => ExprTy::Frag,
             ShaderStage::Vertex => ExprTy::Vertex,
+        }
+    }
+
+    pub fn from_expr_ty(expr_ty: ExprTy) -> Self {
+        match expr_ty {
+            ExprTy::Frag => ShaderStage::Fragment,
+            ExprTy::Vertex => ShaderStage::Vertex,
         }
     }
 }
@@ -1114,7 +1125,13 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
             FlowMode::Stateful {
                 default_state,
                 states,
-            } => build_stateful::<TPayload>(handle, default_state, states, self.observers, quad_vertex),
+            } => build_stateful::<TPayload>(
+                handle,
+                default_state,
+                states,
+                self.observers,
+                quad_vertex,
+            ),
             FlowMode::Stateless { state } => {
                 build_stateless::<TPayload>(handle, state, self.observers, quad_vertex)
             }
@@ -1521,12 +1538,13 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                     radius: 0.0,
                 })
                 .z_index(5)
-                .fragment_shader(|_flow| {
-                    let r= rv("uv").x();
-                    let g= rv("uv").y();
-                    wvec4(r, g,1.0,1.0)
-                }
-                )
+                .vertex_shader(|_flow| {
+                    let r = cv("time");
+                    let sin = sin(r);
+                    let uv = rv("uv").y();
+                    let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
+                    wvec4(scan.clone(), 0.0, 1.0, 1.0)
+                })
                 .events()
                 .on_event(
                     UiEventKind::Click,
@@ -1705,5 +1723,3 @@ mod tests {
         assert_eq!(record.data.count, 2);
     }
 }
-
-

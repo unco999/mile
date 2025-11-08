@@ -16,6 +16,7 @@ pub mod event {
         pub _ty: ExprTy,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum ExprTy {
         Frag,
         Vertex,
@@ -27,6 +28,7 @@ pub mod event {
     pub struct KennelResultIdxEvent {
         pub kennel_id: u32,
         pub idx: u32,
+        pub _type: ExprTy,
     }
 }
 

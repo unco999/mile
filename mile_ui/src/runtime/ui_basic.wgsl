@@ -111,8 +111,9 @@ struct VertexOutput {
     @location(5) border: vec2<f32>,
     @location(6) local_pos: vec2<f32>,
     @location(7) instance_size: vec2<f32>,
-    @location(8) fragment_shader_id: u32,
-    @location(9) vertex_shader_id: u32,
+    @location(8) instance_pos: vec2<f32>,
+    @location(9) fragment_shader_id: u32,
+    @location(10) vertex_shader_id: u32,
 };
 
 const U32_MAX: u32 = 0xffffffffu;
@@ -155,6 +156,18 @@ const FACTOR_UNARY_COS: u32 = 2u;
 
 const RENDER_IMPORT_UV: u32 = 0x1u;
 const RENDER_IMPORT_COLOR: u32 = 0x2u;
+const RENDER_IMPORT_VERTEX_LOCAL: u32 = 0x4u;
+const RENDER_IMPORT_INSTANCE_POS: u32 = 0x8u;
+const RENDER_IMPORT_INSTANCE_SIZE: u32 = 0x10u;
+const RENDER_IMPORT_RANDOM: u32 = 0x20u;
+
+struct RenderImportInputs {
+    uv: vec2<f32>,
+    base_color: vec4<f32>,
+    local_pos: vec2<f32>,
+    instance_pos: vec2<f32>,
+    instance_size: vec2<f32>,
+};
 
 @group(0) @binding(0)
 var<storage, read> global_uniform: GlobalUniform;
@@ -210,18 +223,35 @@ fn apply_factor_unary(kind: u32, value: f32) -> f32 {
     }
 }
 
-fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
+fn read_render_import(mask: u32, component_index: u32, inputs: RenderImportInputs) -> f32 {
+
     if (mask & RENDER_IMPORT_UV) != 0u {
-        let uv_ext = vec4<f32>(uv, 0.0, 1.0);
+        let uv_ext = vec4<f32>(inputs.uv, 0.0, 1.0);
         return uv_ext[component_index];
     }
     if (mask & RENDER_IMPORT_COLOR) != 0u {
-        return base_color[component_index];
+        return inputs.base_color[component_index];
+    }
+    if (mask & RENDER_IMPORT_VERTEX_LOCAL) != 0u {
+        let local = vec4<f32>(inputs.local_pos, 0.0, 1.0);
+        return local[component_index];
+    }
+    if (mask & RENDER_IMPORT_INSTANCE_POS) != 0u {
+        let pos = vec4<f32>(inputs.instance_pos, inputs.instance_size);
+        return pos[component_index];
+    }
+    if (mask & RENDER_IMPORT_INSTANCE_SIZE) != 0u {
+        let size = vec4<f32>(inputs.instance_size, 0.0, 1.0);
+        return size[component_index];
+    }
+    if (mask & RENDER_IMPORT_RANDOM) != 0u {
+        let seed = f32(global_uniform.frame) * 17.0 + f32(component_index) * 13.0 + global_uniform.time;
+        return random(seed);
     }
     return 0.0;
 }
 
-fn eval_render_expression(start: u32, len: u32, lane: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
+fn eval_render_expression(start: u32, len: u32, lane: u32, inputs: RenderImportInputs) -> f32 {
     if (len == 0u) {
         return 0.0;
     }
@@ -234,7 +264,7 @@ fn eval_render_expression(start: u32, len: u32, lane: u32, uv: vec2<f32>, base_c
                 values[idx] = node.data0;
             }
             case RENDER_EXPR_OP_RENDER_IMPORT: {
-                values[idx] = read_render_import(node.arg0, node.arg1, uv, base_color);
+                values[idx] = read_render_import(node.arg0, node.arg1, inputs);
             }
             case RENDER_EXPR_OP_COMPUTE_RESULT: {
                 if (node.arg0 < arrayLength(&kennel_results_buffer)) {
@@ -320,7 +350,7 @@ fn eval_render_expression(start: u32, len: u32, lane: u32, uv: vec2<f32>, base_c
     return values[len - 1u];
 }
 
-fn evaluate_render_layer(layer_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> vec4<f32> {
+fn evaluate_render_layer(layer_index: u32, inputs: RenderImportInputs) -> vec4<f32> {
     if (layer_index == U32_MAX || layer_index >= arrayLength(&kennel_render_layers)) {
         return vec4<f32>(0.0);
     }
@@ -341,14 +371,14 @@ fn evaluate_render_layer(layer_index: u32, uv: vec2<f32>, base_color: vec4<f32>)
             }
             case CHANNEL_RENDER_IMPORT: {
                 let src_component = comp.source_component % 4u;
-                composed[lane] = read_render_import(comp.source_index, src_component, uv, base_color);
+                composed[lane] = read_render_import(comp.source_index, src_component, inputs);
             }
             case CHANNEL_RENDER_COMPOSITE: {
                 let src_component = comp.source_component % 4u;
-                let base = read_render_import(comp.source_index, src_component, uv, base_color);
+                let base = read_render_import(comp.source_index, src_component, inputs);
                 var inner = comp.payload.y;
                 if (comp.factor_component != U32_MAX) {
-                    let factor_base = read_render_import(comp.source_index, comp.factor_component, uv, base_color);
+                    let factor_base = read_render_import(comp.source_index, comp.factor_component, inputs);
                     inner = inner + factor_base * comp.payload.x;
                 }
                 if (comp.factor_inner_compute != U32_MAX
@@ -370,8 +400,7 @@ fn evaluate_render_layer(layer_index: u32, uv: vec2<f32>, base_color: vec4<f32>)
                     comp.source_index,
                     comp.component_index,
                     lane,
-                    uv,
-                    base_color,
+                    inputs,
                 );
             }
             default: {
@@ -381,6 +410,12 @@ fn evaluate_render_layer(layer_index: u32, uv: vec2<f32>, base_color: vec4<f32>)
     }
 
     return composed;
+}
+
+
+fn random(seed: f32) -> f32 {
+    // 使用一个简单的哈希函数生成伪随机数
+    return fract(sin(seed) * 43758.5453);
 }
 
 fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {
@@ -396,15 +431,35 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     var instance_pos = input.instance_pos;
     var instance_size = input.instance_size;
+    var local_pos = input.pos;
+
+    // 根据顶点落在的象限映射到调试槽，避免互相覆盖
+    var slot: u32 = 0u;
+
     let uv = input.uv_offset + input.uv * input.uv_scale;
 
     if (input.vertex_shader_id != U32_MAX) {
-        let vertex_adjust = evaluate_render_layer(input.vertex_shader_id, uv, vec4<f32>(0.0));
-        instance_pos = instance_pos + vertex_adjust.xy;
+        let vertex_inputs = RenderImportInputs(
+            uv,
+            vec4<f32>(0.0),
+            input.pos,
+            instance_pos,
+            instance_size,
+        );
+        let vertex_adjust = evaluate_render_layer(input.vertex_shader_id, vertex_inputs);
+
+
+        local_pos = input.pos + vertex_adjust.xy;
+
+
         instance_size = max(instance_size + vertex_adjust.zw, vec2<f32>(0.0));
     }
 
-    let quad_pos = instance_pos + input.pos * instance_size;
+    let quad_pos = instance_pos + local_pos * instance_size ;
+
+
+    
+
     out.clip_position = to_clip_space(quad_pos);
     out.clip_position.z = f32(0.0);
     out.uv = uv;
@@ -413,8 +468,9 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     out.color = input.color;
     out.border_color = input.border_color;
     out.border = input.border;
-    out.local_pos = input.pos;
+    out.local_pos = local_pos;
     out.instance_size = instance_size;
+    out.instance_pos = vec2<f32>(0.0,0.0);
     out.fragment_shader_id = input.fragment_shader_id;
     out.vertex_shader_id = input.vertex_shader_id;
     return out;
@@ -422,10 +478,6 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    debug_buffer.floats[0] = global_uniform.mouse_pos.x;
-    debug_buffer.floats[1] = global_uniform.mouse_pos.y;
-    debug_buffer.floats[2] = 99999.0;
-
     var sampled = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     if (input.texture_id != U32_MAX) {
         let info = sub_image_struct_array[input.texture_id];
@@ -456,7 +508,14 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let kennel_color = evaluate_render_layer(input.fragment_shader_id, input.uv, base_color);
+    let render_inputs = RenderImportInputs(
+        input.uv,
+        base_color,
+        input.local_pos,
+        input.instance_pos,
+        input.instance_size,
+    );
+    let kennel_color = evaluate_render_layer(input.fragment_shader_id, render_inputs);
 
     var final_color = base_color;
     if any(kennel_color != vec4<f32>(0.0)) {
