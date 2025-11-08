@@ -149,6 +149,7 @@ const RENDER_EXPR_OP_BINARY_LE: u32 = 33u;
 const RENDER_EXPR_OP_BINARY_EQ: u32 = 34u;
 const RENDER_EXPR_OP_BINARY_NE: u32 = 35u;
 const RENDER_EXPR_OP_IF: u32 = 40u;
+const RENDER_EXPR_OP_SMOOTHSTEP: u32 = 41u;
 
 const FACTOR_UNARY_NONE: u32 = 0u;
 const FACTOR_UNARY_SIN: u32 = 1u;
@@ -341,6 +342,13 @@ fn eval_render_expression(start: u32, len: u32, lane: u32, inputs: RenderImportI
                 let else_val = values[node.arg2 - start];
                 values[idx] = select(else_val, then_val, cond > 0.5);
             }
+            case RENDER_EXPR_OP_SMOOTHSTEP: {
+                let edge0 = values[node.arg0 - start];
+                let edge1 = values[node.arg1 - start];
+                let val = values[node.arg2 - start];
+                values[idx] = smoothstep(edge0, edge1, val);
+                debug_buffer.floats[8] = 999999.9;
+            }
             default: {
                 values[idx] = 0.0;
             }
@@ -416,6 +424,11 @@ fn evaluate_render_layer(layer_index: u32, inputs: RenderImportInputs) -> vec4<f
 fn random(seed: f32) -> f32 {
     // 使用一个简单的哈希函数生成伪随机数
     return fract(sin(seed) * 43758.5453);
+}
+
+fn smoothstep_official(edge0: f32, edge1: f32, value: f32) -> f32 {
+    // WGSL 内置 smoothstep：对 value 进行 clamp，并使用 3x^2-2x^3 的 Hermite 插值
+    return smoothstep(edge0, edge1, value);
 }
 
 fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {

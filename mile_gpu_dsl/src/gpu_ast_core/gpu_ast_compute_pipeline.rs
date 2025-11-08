@@ -450,6 +450,7 @@ const OP_LOG: u32 = 0x20000u;
 const OP_SQRT: u32 = 0x40000u;
 const OP_ABS: u32 = 0x80000u;
 const OP_CONDITIONAL: u32 = 0x100000u;
+const OP_SMOOTHSTEP: u32 = 0x200000u;
 
 const TYPE_SCALAR: u32 = 0u;
 const TYPE_VEC2: u32 = 1u;
@@ -586,6 +587,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
         for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {{
             let cond = abs(left_value[lane]) > 1e-6;
             result[lane] = select(else_value[lane], right_value[lane], cond);
+        }}
+    }} else if (node.op == OP_SMOOTHSTEP) {{
+        for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {{
+            result[lane] = smoothstep(left_value[lane], right_value[lane], else_value[lane]);
         }}
     }} else if (node.op <= OP_NOT_EQUAL) {{
         for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {{

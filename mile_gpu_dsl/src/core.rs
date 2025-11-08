@@ -103,6 +103,18 @@ pub mod dsl {
     pub fn modulo<A: Into<Expr>, B: Into<Expr>>(a: A, b: B) -> Expr {
         Expr::BinaryOp(BinaryOp::Modulo, Box::new(a.into()), Box::new(b.into()))
     }
+
+    pub fn smoothstep<A: Into<Expr>, B: Into<Expr>, C: Into<Expr>>(
+        edge0: A,
+        edge1: B,
+        value: C,
+    ) -> Expr {
+        Expr::SmoothStep {
+            edge0: Box::new(edge0.into()),
+            edge1: Box::new(edge1.into()),
+            value: Box::new(value.into()),
+        }
+    }
 }
 
 // 向量结构体定义 - 使用 Box 打破循环
@@ -203,6 +215,11 @@ pub enum Expr {
     Constant(f32),
     BinaryOp(BinaryOp, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryFunc, Box<Expr>),
+    SmoothStep {
+        edge0: Box<Expr>,
+        edge1: Box<Expr>,
+        value: Box<Expr>,
+    },
     If {
         condition: Box<Expr>,
         then_branch: Box<Expr>,

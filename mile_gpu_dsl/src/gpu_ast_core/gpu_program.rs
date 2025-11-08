@@ -102,6 +102,15 @@ impl SerializableGpuProgram {
                     gpu_node.set_conditional_children(*condition, *then_branch, *else_branch);
                     gpu_node.add_state(GpuAstState::IS_BRANCH);
                 }
+                ComputeNodeKind::SmoothStep {
+                    edge0,
+                    edge1,
+                    value,
+                } => {
+                    gpu_node.set_op(GpuOp::SmoothStep);
+                    gpu_node.set_children(*edge0, *edge1);
+                    gpu_node.set_else_child(*value);
+                }
             }
 
             nodes.push(gpu_node);
@@ -177,6 +186,7 @@ pub enum RenderExprOp {
     Binary(SerializableBinaryOp),
     Negate,
     If,
+    SmoothStep,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -518,6 +528,23 @@ impl<'a> GpuProgramBuilder<'a> {
                     "component out of range in render expression",
                 )),
             },
+            Expr::SmoothStep {
+                edge0,
+                edge1,
+                value,
+            } => {
+                let e0 = self.build_render_expr(edge0, lane)?;
+                let e1 = self.build_render_expr(edge1, lane)?;
+                let val = self.build_render_expr(value, lane)?;
+                Ok(self.push_render_expr_node(RenderExprNode {
+                    op: RenderExprOp::SmoothStep,
+                    arg0: e0,
+                    arg1: e1,
+                    arg2: val,
+                    data0: 0.0,
+                    data1: 0.0,
+                }))
+            }
             Expr::ComputeImport(name) => {
                 let node = self.push_compute_import(*name)?;
                 Ok(self.push_render_expr_node(RenderExprNode {
@@ -856,6 +883,22 @@ impl<'a> GpuProgramBuilder<'a> {
                 let id = self.push_unary(func, input_handle.id, stage);
                 Ok(NodeHandle { id, stage })
             }
+            Expr::SmoothStep {
+                edge0,
+                edge1,
+                value,
+            } => {
+                let edge0_handle = self.build_compute_expr(edge0)?;
+                let edge1_handle = self.build_compute_expr(edge1)?;
+                let value_handle = self.build_compute_expr(value)?;
+                let stage = edge0_handle
+                    .stage
+                    .combine(edge1_handle.stage)
+                    .combine(value_handle.stage);
+                let id =
+                    self.push_smoothstep(edge0_handle.id, edge1_handle.id, value_handle.id, stage);
+                Ok(NodeHandle { id, stage })
+            }
             Expr::Vec4(Vec4 { .. }) | Expr::Vec3(_) | Expr::Vec2(_) => {
                 Err(ProgramBuildError::UnsupportedExpression(
                     "vector constructors cannot appear inside scalar compute expressions",
@@ -953,6 +996,20 @@ impl<'a> GpuProgramBuilder<'a> {
         });
         id
     }
+
+    fn push_smoothstep(&mut self, edge0: u32, edge1: u32, value: u32, stage: ComputeStage) -> u32 {
+        let id = self.nodes.len() as u32;
+        self.nodes.push(SerializableComputeNode {
+            id,
+            stage,
+            kind: ComputeNodeKind::SmoothStep {
+                edge0,
+                edge1,
+                value,
+            },
+        });
+        id
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -986,6 +1043,11 @@ pub enum ComputeNodeKind {
         condition: u32,
         then_branch: u32,
         else_branch: u32,
+    },
+    SmoothStep {
+        edge0: u32,
+        edge1: u32,
+        value: u32,
     },
 }
 
@@ -1186,6 +1248,15 @@ fn contains_render_import(expr: &Expr) -> bool {
                 || contains_render_import(&vec.z)
                 || contains_render_import(&vec.w)
         }
+        Expr::SmoothStep {
+            edge0,
+            edge1,
+            value,
+        } => {
+            contains_render_import(edge0)
+                || contains_render_import(edge1)
+                || contains_render_import(value)
+        }
     }
 }
 
@@ -1225,6 +1296,15 @@ fn contains_render_import_with_different_name(expr: &Expr, expected: &'static st
                 || contains_render_import_with_different_name(&vec.z, expected)
                 || contains_render_import_with_different_name(&vec.w, expected)
         }
+        Expr::SmoothStep {
+            edge0,
+            edge1,
+            value,
+        } => {
+            contains_render_import_with_different_name(edge0, expected)
+                || contains_render_import_with_different_name(edge1, expected)
+                || contains_render_import_with_different_name(value, expected)
+        }
     }
 }
 
@@ -1261,6 +1341,15 @@ fn contains_named_render_import(expr: &Expr, expected: &'static str) -> bool {
                 || contains_named_render_import(&vec.y, expected)
                 || contains_named_render_import(&vec.z, expected)
                 || contains_named_render_import(&vec.w, expected)
+        }
+        Expr::SmoothStep {
+            edge0,
+            edge1,
+            value,
+        } => {
+            contains_named_render_import(edge0, expected)
+                || contains_named_render_import(edge1, expected)
+                || contains_named_render_import(value, expected)
         }
     }
 }
@@ -1573,6 +1662,16 @@ fn evaluate_constant(expr: &Expr) -> Option<f32> {
             let value = evaluate_constant(input)?;
             Some(apply_unary_constant(func, value)?)
         }
+        Expr::SmoothStep {
+            edge0,
+            edge1,
+            value,
+        } => {
+            let e0 = evaluate_constant(edge0)?;
+            let e1 = evaluate_constant(edge1)?;
+            let v = evaluate_constant(value)?;
+            Some(smoothstep_scalar(e0, e1, v))
+        }
         _ => None,
     }
 }
@@ -1631,4 +1730,12 @@ fn evaluate_index(expr: &Expr) -> Option<u32> {
     let value = evaluate_constant(expr)?;
     let clamped = value.clamp(0.0, 3.0);
     Some(clamped.round() as u32)
+}
+
+fn smoothstep_scalar(edge0: f32, edge1: f32, value: f32) -> f32 {
+    if (edge1 - edge0).abs() < f32::EPSILON {
+        return if value < edge0 { 0.0 } else { 1.0 };
+    }
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }

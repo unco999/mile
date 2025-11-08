@@ -64,6 +64,7 @@ pub const RENDER_EXPR_OP_BINARY_LE: u32 = 33;
 pub const RENDER_EXPR_OP_BINARY_EQ: u32 = 34;
 pub const RENDER_EXPR_OP_BINARY_NE: u32 = 35;
 pub const RENDER_EXPR_OP_IF: u32 = 40;
+pub const RENDER_EXPR_OP_SMOOTHSTEP: u32 = 41;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -366,6 +367,16 @@ pub fn encode_render_expr_nodes(
             },
             RenderExprOp::If => RenderExprNodeGpu {
                 op: RENDER_EXPR_OP_IF,
+                arg0: node.arg0 + expr_offset,
+                arg1: node.arg1 + expr_offset,
+                arg2: node.arg2 + expr_offset,
+                data0: 0.0,
+                data1: 0.0,
+                _pad0: 0.0,
+                _pad1: 0.0,
+            },
+            RenderExprOp::SmoothStep => RenderExprNodeGpu {
+                op: RENDER_EXPR_OP_SMOOTHSTEP,
                 arg0: node.arg0 + expr_offset,
                 arg1: node.arg1 + expr_offset,
                 arg2: node.arg2 + expr_offset,

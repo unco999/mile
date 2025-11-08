@@ -23,9 +23,9 @@ use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
     core::{
         Expr,
-        dsl::{IF, sin, wvec2, wvec4},
+        dsl::{IF, modulo, sin, sqrt, wvec2, wvec4},
     },
-    dsl::{cv, rv},
+    dsl::{cv, rv, smoothstep},
     gpu_ast_core::event::{ExprTy, ExprWithIdxEvent},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -1538,12 +1538,15 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                     radius: 0.0,
                 })
                 .z_index(5)
-                .vertex_shader(|_flow| {
-                    let r = cv("time");
-                    let sin = sin(r);
-                    let uv = rv("uv").y();
-                    let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
-                    wvec4(scan.clone(), 0.0, 1.0, 1.0)
+                // .vertex_shader(|_flow| {
+                //     let r = cv("time");
+                //     let sin = sin(r);
+                //     let uv = rv("uv").y();
+                //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
+                //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
+                // })
+                .fragment_shader(|_flow,| {
+                    wvec4(0.0, 0.0, 0.0, 0.0)
                 })
                 .events()
                 .on_event(
