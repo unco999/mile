@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
     mui_group::{
         GroupCenterMode, GroupRelationSpec, MuiGroupDefinition, configure_group, group_definition,
@@ -277,7 +277,7 @@ pub struct PanelSnapshot {
     #[serde(default)]
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
-    pub quad_mod: QuadBatchKind,
+    pub quad_vertex: QuadBatchKind,
 }
 
 impl Default for PanelSnapshot {
@@ -291,7 +291,7 @@ impl Default for PanelSnapshot {
             z_index: 0,
             fragment_shader_id: None,
             vertex_shader_id: None,
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         }
     }
 }
@@ -982,7 +982,7 @@ pub struct Mui<TPayload: PanelPayload> {
     handle: PanelHandle<TPayload>,
     mode: FlowMode<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 }
 
 impl<TPayload: PanelPayload> Mui<TPayload> {
@@ -1007,7 +1007,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 states: HashMap::new(),
             },
             observers: Vec::new(),
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         })
     }
 
@@ -1027,7 +1027,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
                 state: PanelStateDefinition::default(),
             },
             observers: Vec::new(),
-            quad_mod: QuadBatchKind::Static,
+            quad_vertex: QuadBatchKind::Normal,
         })
     }
 
@@ -1059,8 +1059,8 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         self
     }
 
-    pub fn quad_mod(mut self, quad_mod: QuadBatchKind) -> Self {
-        self.quad_mod = quad_mod;
+    pub fn quad_vertex(mut self, quad_vertex: QuadBatchKind) -> Self {
+        self.quad_vertex = quad_vertex;
         self
     }
 
@@ -1109,14 +1109,14 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
 
     pub fn build(self) -> Result<PanelRuntimeHandle, DbError> {
         let handle = self.handle;
-        let quad_mod = self.quad_mod;
+        let quad_vertex = self.quad_vertex;
         match self.mode {
             FlowMode::Stateful {
                 default_state,
                 states,
-            } => build_stateful::<TPayload>(handle, default_state, states, self.observers, quad_mod),
+            } => build_stateful::<TPayload>(handle, default_state, states, self.observers, quad_vertex),
             FlowMode::Stateless { state } => {
-                build_stateless::<TPayload>(handle, state, self.observers, quad_mod)
+                build_stateless::<TPayload>(handle, state, self.observers, quad_vertex)
             }
         }
     }
@@ -1363,7 +1363,7 @@ fn build_stateful<TPayload: PanelPayload>(
     default_state: Option<UiState>,
     states: HashMap<UiState, PanelStateDefinition<TPayload>>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let panel_key = handle.key.clone();
     let default = default_state
@@ -1374,7 +1374,7 @@ fn build_stateful<TPayload: PanelPayload>(
         record.default_state = Some(default);
         record.current_state = default;
         record.states.clear();
-        record.snapshot.quad_mod = quad_mod;
+        record.snapshot.quad_vertex = quad_vertex;
         for (state_id, definition) in &states {
             record
                 .states
@@ -1425,7 +1425,7 @@ fn build_stateless<TPayload: PanelPayload>(
     handle: PanelHandle<TPayload>,
     definition: PanelStateDefinition<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
-    quad_mod: QuadBatchKind,
+    quad_vertex: QuadBatchKind,
 ) -> Result<PanelRuntimeHandle, DbError> {
     let state_id = UiState(0);
     let panel_key = handle.key.clone();
@@ -1434,7 +1434,7 @@ fn build_stateless<TPayload: PanelPayload>(
         record.default_state = Some(state_id);
         record.current_state = state_id;
         record.states.clear();
-        record.snapshot.quad_mod = quad_mod;
+        record.snapshot.quad_vertex = quad_vertex;
         record.states.insert(state_id, definition.overrides.clone());
     })?;
 
@@ -1509,6 +1509,7 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
     configure_group::<CounterHeader, _>(|group| group.center(GroupCenterMode::FirstElement));
     let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
+        .quad_vertex(QuadBatchKind::UltraVertex)
         .state(UiState(0), |state| {
             let state = state
                 .group::<CounterHeader>()
@@ -1704,3 +1705,5 @@ mod tests {
         assert_eq!(record.data.count, 2);
     }
 }
+
+

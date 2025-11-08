@@ -1,4 +1,4 @@
-0001 | //! High level UI runtime orchestrator.
+﻿0001 | //! High level UI runtime orchestrator.
 0001 | //!
 0001 | //! This module exposes `MuiRuntime`, a lightweight façade that ties together the new
 0001 | //! runtime building blocks (buffer arena, render batches, CPU state) while also wiring
@@ -175,7 +175,7 @@
 0001 |             trace: RefCell::new(GpuDebug::new("mui_runtime")),
 0001 | 
 0001 |     /**
-0001 |      * 调用图片材质总合成入�?     */
+0001 |      * 调用图片材质总合成入�?     */
 0001 |         self.texture_atlas_store.read_all_image();
 0001 | 
 0001 |     #[inline]
@@ -352,9 +352,9 @@
 0001 | 
 0001 |         let count = self.panel_instances.len() as u32;
 0001 |         self.render
-0001 |             .set_instance_range(QuadBatchKind::Static, 0..count);
+0001 |             .set_instance_range(QuadBatchKind::Normal, 0..count);
 0001 |         self.render
-0001 |             .set_indirect_count(QuadBatchKind::Static, 0);
+0001 |             .set_indirect_count(QuadBatchKind::Normal, 0);
 0001 | 
 0001 |         &self.panel_instances
 0001 | 
@@ -400,7 +400,7 @@
 0001 |         let needs_pipeline = self
 0001 |             .render
 0001 |             .batches
-0001 |             .get(QuadBatchKind::Static)
+0001 |             .get(QuadBatchKind::Normal)
 0001 |             .pipeline
 0001 |             .is_none()
 0001 |             || self.render_surface_format != Some(surface_format);
@@ -505,7 +505,7 @@
 0001 |                         write_mask: wgpu::ColorWrites::ALL,
 0001 |                     compilation_options: Default::default(),
 0001 |                 primitive: wgpu::PrimitiveState::default(),
-0001 |                     format: wgpu::TextureFormat::Depth32Float, // �?必须�?render pass �?depth_view 格式一�?
+0001 |                     format: wgpu::TextureFormat::Depth32Float, // �?必须�?render pass �?depth_view 格式一�?
 0001 |                     depth_write_enabled: true,
 0001 |                     depth_compare: wgpu::CompareFunction::Less,
 0001 |                     stencil: wgpu::StencilState::default(),
@@ -515,7 +515,7 @@
 0001 |                 multiview: None,
 0001 |                 cache: None,
 0001 | 
-0001 |             self.render.set_pipeline(QuadBatchKind::Static, pipeline);
+0001 |             self.render.set_pipeline(QuadBatchKind::Normal, pipeline);
 0001 |             self.render_surface_format = Some(surface_format);
 0001 | 
 0001 |             return;
@@ -837,3 +837,4 @@
 0001 | 
 0001 |     /// Update the indirect draw count for a render batch.
 0001 |         self.render.set_indirect_count(kind, count);
+

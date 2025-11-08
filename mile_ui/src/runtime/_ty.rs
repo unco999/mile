@@ -2,6 +2,7 @@ use bytemuck::{Pod, Zeroable, bytes_of, cast_slice};
 
 use crate::structs::{AnimOp, EasingMask};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use super::render::QuadBatchKind;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -9,25 +10,6 @@ struct Vertex {
     pos: [f32; 2],
     uv: [f32; 2],
 }
-// Quad 顶点数据（屏幕空间，-0.5 ~ 0.5）
-const QUAD_VERTICES: &[Vertex] = &[
-    Vertex {
-        pos: [0.0, 0.0],
-        uv: [0.0, 0.0],
-    },
-    Vertex {
-        pos: [1.0, 0.0],
-        uv: [1.0, 0.0],
-    },
-    Vertex {
-        pos: [1.0, 1.0],
-        uv: [1.0, 1.0],
-    },
-    Vertex {
-        pos: [0.0, 1.0],
-        uv: [0.0, 1.0],
-    },
-];
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -79,14 +61,83 @@ pub struct GlobalUiState {
     pub _pad4: [u32; 2], // 8 bytes
 }
 
-const QUAD_INDICES: &[u16] = &[0, 1, 2, 2, 3, 0];
+const NORMAL_QUAD_VERTICES: [Vertex; 4] = [
+    Vertex { pos: [0.0, 0.0], uv: [0.0, 0.0] },
+    Vertex { pos: [1.0, 0.0], uv: [1.0, 0.0] },
+    Vertex { pos: [1.0, 1.0], uv: [1.0, 1.0] },
+    Vertex { pos: [0.0, 1.0], uv: [0.0, 1.0] },
+];
 
-pub(super) fn quad_vertex_bytes() -> &'static [u8] {
-    cast_slice(QUAD_VERTICES)
+const MULTI_QUAD_VERTICES: [Vertex; 8] = [
+    Vertex { pos: [0.0, 0.0], uv: [0.0, 0.0] },
+    Vertex { pos: [0.33333334, 0.0], uv: [0.33333334, 0.0] },
+    Vertex { pos: [0.6666667, 0.0], uv: [0.6666667, 0.0] },
+    Vertex { pos: [1.0, 0.0], uv: [1.0, 0.0] },
+    Vertex { pos: [0.0, 1.0], uv: [0.0, 1.0] },
+    Vertex { pos: [0.33333334, 1.0], uv: [0.33333334, 1.0] },
+    Vertex { pos: [0.6666667, 1.0], uv: [0.6666667, 1.0] },
+    Vertex { pos: [1.0, 1.0], uv: [1.0, 1.0] },
+];
+
+const ULTRA_QUAD_VERTICES: [Vertex; 16] = [
+    Vertex { pos: [0.0, 0.0], uv: [0.0, 0.0] },
+    Vertex { pos: [0.33333334, 0.0], uv: [0.33333334, 0.0] },
+    Vertex { pos: [0.6666667, 0.0], uv: [0.6666667, 0.0] },
+    Vertex { pos: [1.0, 0.0], uv: [1.0, 0.0] },
+    Vertex { pos: [0.0, 0.33333334], uv: [0.0, 0.33333334] },
+    Vertex { pos: [0.33333334, 0.33333334], uv: [0.33333334, 0.33333334] },
+    Vertex { pos: [0.6666667, 0.33333334], uv: [0.6666667, 0.33333334] },
+    Vertex { pos: [1.0, 0.33333334], uv: [1.0, 0.33333334] },
+    Vertex { pos: [0.0, 0.6666667], uv: [0.0, 0.6666667] },
+    Vertex { pos: [0.33333334, 0.6666667], uv: [0.33333334, 0.6666667] },
+    Vertex { pos: [0.6666667, 0.6666667], uv: [0.6666667, 0.6666667] },
+    Vertex { pos: [1.0, 0.6666667], uv: [1.0, 0.6666667] },
+    Vertex { pos: [0.0, 1.0], uv: [0.0, 1.0] },
+    Vertex { pos: [0.33333334, 1.0], uv: [0.33333334, 1.0] },
+    Vertex { pos: [0.6666667, 1.0], uv: [0.6666667, 1.0] },
+    Vertex { pos: [1.0, 1.0], uv: [1.0, 1.0] },
+];
+
+const NORMAL_QUAD_INDICES: [u16; 6] = [0, 1, 2, 2, 3, 0];
+const MULTI_QUAD_INDICES: [u16; 18] = [
+    0, 1, 5, 5, 4, 0, //
+    1, 2, 6, 6, 5, 1, //
+    2, 3, 7, 7, 6, 2,
+];
+const ULTRA_QUAD_INDICES: [u16; 54] = [
+    0, 1, 5, 5, 4, 0, //
+    1, 2, 6, 6, 5, 1, //
+    2, 3, 7, 7, 6, 2, //
+    4, 5, 9, 9, 8, 4, //
+    5, 6, 10, 10, 9, 5, //
+    6, 7, 11, 11, 10, 6, //
+    8, 9, 13, 13, 12, 8, //
+    9, 10, 14, 14, 13, 9, //
+    10, 11, 15, 15, 14, 10,
+];
+
+pub(super) fn quad_vertex_bytes(kind: QuadBatchKind) -> &'static [u8] {
+    match kind {
+        QuadBatchKind::Normal => cast_slice(&NORMAL_QUAD_VERTICES),
+        QuadBatchKind::MultiVertex => cast_slice(&MULTI_QUAD_VERTICES),
+        QuadBatchKind::UltraVertex => cast_slice(&ULTRA_QUAD_VERTICES),
+    }
 }
 
-pub(super) fn quad_index_bytes() -> &'static [u8] {
-    cast_slice(QUAD_INDICES)
+pub(super) fn quad_index_bytes(kind: QuadBatchKind) -> &'static [u8] {
+    match kind {
+        QuadBatchKind::Normal => cast_slice(&NORMAL_QUAD_INDICES),
+        QuadBatchKind::MultiVertex => cast_slice(&MULTI_QUAD_INDICES),
+        QuadBatchKind::UltraVertex => cast_slice(&ULTRA_QUAD_INDICES),
+    }
+}
+
+pub(super) fn quad_index_len(kind: QuadBatchKind) -> u32 {
+    match kind {
+        QuadBatchKind::Normal => NORMAL_QUAD_INDICES.len() as u32,
+        QuadBatchKind::MultiVertex => MULTI_QUAD_INDICES.len() as u32,
+        QuadBatchKind::UltraVertex => ULTRA_QUAD_INDICES.len() as u32,
+    }
 }
 
 #[repr(C, align(16))]

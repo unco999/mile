@@ -1,28 +1,31 @@
-//! Render pipeline aggregation and per-tier batches.
+﻿//! Render pipeline aggregation and per-tier batches.
 //!
 //! This module currently defines the shape of the render subsystem.  Actual pipeline
 //! construction and draw submission will be implemented alongside the runtime refactor.
 
 use std::{mem, ops::Range};
 
-use crate::runtime::_ty::{quad_index_bytes, quad_vertex_bytes};
+use crate::runtime::_ty::{quad_index_bytes, quad_index_len, quad_vertex_bytes};
 use serde::{Deserialize, Serialize};
 use wgpu::{
     IndexFormat,
     util::{BufferInitDescriptor, DeviceExt},
 };
 
-/// Enumeration of the panel batches we render each frame.
+/// Enumeration of the vertex batch tiers we render each frame.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QuadBatchKind {
-    Static,
-    VertexAnimated,
-    Overlay,
+    /// 正常顶点数量
+    Normal,
+    /// 较多顶点
+    MultiVertex,
+    /// 非常多的顶点
+    UltraVertex,
 }
 
 impl Default for QuadBatchKind {
     fn default() -> Self {
-        QuadBatchKind::Static
+        QuadBatchKind::Normal
     }
 }
 
@@ -105,88 +108,123 @@ impl QuadBatch {
 
 /// Aggregates the three quad batches used by the runtime.
 pub struct RenderBatches {
-    pub static_quads: QuadBatch,
-    pub vertex_quads: QuadBatch,
-    pub overlay_quads: QuadBatch,
+    pub normal_quads: QuadBatch,
+    pub multi_vertex_quads: QuadBatch,
+    pub ultra_vertex_quads: QuadBatch,
 }
 
 impl RenderBatches {
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (QuadBatchKind, &mut QuadBatch)> {
         [
-            (QuadBatchKind::Static, &mut self.static_quads),
-            (QuadBatchKind::VertexAnimated, &mut self.vertex_quads),
-            (QuadBatchKind::Overlay, &mut self.overlay_quads),
+            (QuadBatchKind::Normal, &mut self.normal_quads),
+            (QuadBatchKind::MultiVertex, &mut self.multi_vertex_quads),
+            (QuadBatchKind::UltraVertex, &mut self.ultra_vertex_quads),
         ]
         .into_iter()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (QuadBatchKind, &QuadBatch)> {
         [
-            (QuadBatchKind::Static, &self.static_quads),
-            (QuadBatchKind::VertexAnimated, &self.vertex_quads),
-            (QuadBatchKind::Overlay, &self.overlay_quads),
+            (QuadBatchKind::Normal, &self.normal_quads),
+            (QuadBatchKind::MultiVertex, &self.multi_vertex_quads),
+            (QuadBatchKind::UltraVertex, &self.ultra_vertex_quads),
         ]
         .into_iter()
     }
 
     pub fn get(&self, kind: QuadBatchKind) -> &QuadBatch {
         match kind {
-            QuadBatchKind::Static => &self.static_quads,
-            QuadBatchKind::VertexAnimated => &self.vertex_quads,
-            QuadBatchKind::Overlay => &self.overlay_quads,
+            QuadBatchKind::Normal => &self.normal_quads,
+            QuadBatchKind::MultiVertex => &self.multi_vertex_quads,
+            QuadBatchKind::UltraVertex => &self.ultra_vertex_quads,
         }
     }
 
     pub fn get_mut(&mut self, kind: QuadBatchKind) -> &mut QuadBatch {
         match kind {
-            QuadBatchKind::Static => &mut self.static_quads,
-            QuadBatchKind::VertexAnimated => &mut self.vertex_quads,
-            QuadBatchKind::Overlay => &mut self.overlay_quads,
+            QuadBatchKind::Normal => &mut self.normal_quads,
+            QuadBatchKind::MultiVertex => &mut self.multi_vertex_quads,
+            QuadBatchKind::UltraVertex => &mut self.ultra_vertex_quads,
+        }
+    }
+}
+
+struct QuadGeometry {
+    vertex: wgpu::Buffer,
+    index: wgpu::Buffer,
+    index_count: u32,
+}
+
+impl QuadGeometry {
+    fn new(device: &wgpu::Device, kind: QuadBatchKind) -> Self {
+        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(&format!("ui::quad-vertex-buffer::{kind:?}")),
+            contents: quad_vertex_bytes(kind),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_data = quad_index_bytes(kind);
+        let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some(&format!("ui::quad-index-buffer::{kind:?}")),
+            contents: index_data,
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let index_count = quad_index_len(kind);
+        Self {
+            vertex: vertex_buffer,
+            index: index_buffer,
+            index_count,
+        }
+    }
+}
+
+struct QuadGeometrySet {
+    normal: QuadGeometry,
+    multi_vertex: QuadGeometry,
+    ultra_vertex: QuadGeometry,
+}
+
+impl QuadGeometrySet {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            normal: QuadGeometry::new(device, QuadBatchKind::Normal),
+            multi_vertex: QuadGeometry::new(device, QuadBatchKind::MultiVertex),
+            ultra_vertex: QuadGeometry::new(device, QuadBatchKind::UltraVertex),
+        }
+    }
+
+    fn get(&self, kind: QuadBatchKind) -> &QuadGeometry {
+        match kind {
+            QuadBatchKind::Normal => &self.normal,
+            QuadBatchKind::MultiVertex => &self.multi_vertex,
+            QuadBatchKind::UltraVertex => &self.ultra_vertex,
         }
     }
 }
 
 /// Container wiring the batches with shared resources (bind layouts, kennel bindings).
 pub struct RenderPipelines {
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
+    geometries: QuadGeometrySet,
     pub batches: RenderBatches,
 }
 
 impl RenderPipelines {
     pub fn new(device: &wgpu::Device) -> Self {
-        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("ui::quad-vertex-buffer"),
-            contents: quad_vertex_bytes(),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("ui::quad-index-buffer"),
-            contents: quad_index_bytes(),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        Self::with_buffers(vertex_buffer, index_buffer)
-    }
-
-    pub fn with_buffers(vertex_buffer: wgpu::Buffer, index_buffer: wgpu::Buffer) -> Self {
         Self {
-            vertex_buffer,
-            index_buffer,
+            geometries: QuadGeometrySet::new(device),
             batches: RenderBatches {
-                static_quads: QuadBatch {
+                normal_quads: QuadBatch {
                     pipeline: None,
                     bind_group: None,
                     instance_range: 0..0,
                     indirect_count: 0,
                 },
-                vertex_quads: QuadBatch {
+                multi_vertex_quads: QuadBatch {
                     pipeline: None,
                     bind_group: None,
                     instance_range: 0..0,
                     indirect_count: 0,
                 },
-                overlay_quads: QuadBatch {
+                ultra_vertex_quads: QuadBatch {
                     pipeline: None,
                     bind_group: None,
                     instance_range: 0..0,
@@ -218,23 +256,22 @@ impl RenderPipelines {
         instance_buffer: &wgpu::Buffer,
         indirect_buffer: &wgpu::Buffer,
         indirect_count: u32,
-        num_indices: u32,
+        _legacy_num_indices: u32,
         num_instances: u32,
     ) {
-        if num_indices == 0 {
+        if num_instances == 0 {
             return;
         }
 
-        let vertex_buffer = self.vertex_buffer.clone();
-        let index_buffer = self.index_buffer.clone();
-
-        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
         pass.set_vertex_buffer(1, instance_buffer.slice(..));
-        pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint16);
 
         let fallback_instances = 0..num_instances;
 
-        for (_kind, batch) in self.batches.iter() {
+        for (kind, batch) in self.batches.iter() {
+            let geometry = self.geometries.get(kind);
+            pass.set_vertex_buffer(0, geometry.vertex.slice(..));
+            pass.set_index_buffer(geometry.index.slice(..), IndexFormat::Uint16);
+
             batch.encode(
                 pass,
                 render_bind_group,
@@ -243,8 +280,9 @@ impl RenderPipelines {
                 indirect_buffer,
                 fallback_instances.clone(),
                 indirect_count,
-                num_indices,
+                geometry.index_count,
             );
         }
     }
 }
+

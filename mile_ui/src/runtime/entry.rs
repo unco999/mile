@@ -1,4 +1,4 @@
-//! High level UI runtime orchestrator.
+﻿//! High level UI runtime orchestrator.
 //!
 //! This module exposes `MuiRuntime`, a lightweight façade that ties together the new
 //! runtime building blocks (buffer arena, render batches, CPU state) while also wiring
@@ -155,7 +155,7 @@ pub struct PanelCpuDescriptor {
     pub snapshot_texture: Option<UiTextureInfo>,
     pub states: HashMap<UiState, PanelStateCpu>,
     pub type_id: TypeId,
-    pub quad_mod: QuadBatchKind,
+    pub quad_vertex: QuadBatchKind,
 }
 
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
@@ -635,14 +635,14 @@ impl MuiRuntime {
         let mut panels = Vec::with_capacity(descriptors.len());
 
         const BATCH_ORDER: [QuadBatchKind; 3] = [
-            QuadBatchKind::Static,
-            QuadBatchKind::VertexAnimated,
-            QuadBatchKind::Overlay,
+            QuadBatchKind::Normal,
+            QuadBatchKind::MultiVertex,
+            QuadBatchKind::UltraVertex,
         ];
 
         for kind in BATCH_ORDER {
             let start = panels.len() as u32;
-            for desc in descriptors.iter().filter(|desc| desc.quad_mod == kind) {
+            for desc in descriptors.iter().filter(|desc| desc.quad_vertex == kind) {
                 let fallback = previous_instances.get(&desc.key.panel_id);
                 let panel = self.descriptor_to_panel_with_base(desc, fallback);
                 panels.push(panel);
@@ -1027,7 +1027,7 @@ impl MuiRuntime {
         let needs_pipeline = self
             .render
             .batches
-            .get(QuadBatchKind::Static)
+            .get(QuadBatchKind::Normal)
             .pipeline
             .is_none()
             || self.render_surface_format != Some(surface_format);
@@ -1201,7 +1201,7 @@ impl MuiRuntime {
                 cache: None,
             });
 
-            self.render.set_pipeline(QuadBatchKind::Static, pipeline);
+            self.render.set_pipeline(QuadBatchKind::Normal, pipeline);
             self.render_surface_format = Some(surface_format);
         }
     }
@@ -1262,7 +1262,7 @@ impl MuiRuntime {
             state_map.insert(state_id, PanelStateCpu { overrides, texture });
         }
 
-        let quad_mod = snapshot.quad_mod;
+        let quad_vertex = snapshot.quad_vertex;
 
         PanelCpuDescriptor {
             key,
@@ -1273,7 +1273,7 @@ impl MuiRuntime {
             snapshot_texture,
             states: state_map,
             type_id: TypeId::of::<TPayload>(),
-            quad_mod,
+            quad_vertex,
         }
     }
 
@@ -1992,3 +1992,5 @@ fn refresh_payload<T: PanelPayload>(
 ) {
     let _ = runtime.refresh_panel_cache::<T>(keys, device, queue);
 }
+
+
