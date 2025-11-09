@@ -18,6 +18,7 @@ use std::{
 use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
+    relations::{clear_panel_relations, set_panel_active_state},
     render::{QuadBatchKind, RenderPipelines},
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
@@ -634,6 +635,7 @@ impl MuiRuntime {
                     };
                     if needs_update {
                         self.panel_cache.insert(key.clone(), descriptor.clone());
+                        set_panel_active_state(key.panel_id, descriptor.display_state);
                         self.panel_instances_dirty = true;
                     }
 
@@ -646,6 +648,7 @@ impl MuiRuntime {
                 }
                 None => {
                     if self.panel_cache.remove(key).is_some() {
+                        clear_panel_relations(key.panel_id);
                         self.panel_instances_dirty = true;
                     }
                 }
@@ -685,6 +688,7 @@ impl MuiRuntime {
             for desc in descriptors.iter().filter(|desc| desc.quad_vertex == kind) {
                 let fallback = previous_instances.get(&desc.key.panel_id);
                 let panel = self.descriptor_to_panel_with_base(desc, fallback);
+                set_panel_active_state(desc.key.panel_id, desc.display_state);
                 panels.push(panel);
             }
             let end = panels.len() as u32;
@@ -743,6 +747,7 @@ impl MuiRuntime {
             desc.current_state = transition.new_state;
             let mut clone = desc.clone();
             clone.display_state = clone.current_state;
+            set_panel_active_state(panel_id, clone.display_state);
             clone
         };
         let (instance_index, previous_panel) = match self

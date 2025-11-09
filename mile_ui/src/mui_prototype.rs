@@ -1,12 +1,10 @@
 use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
-    mui_group::{
-        GroupCenterMode, GroupRelationSpec, MuiGroupDefinition, configure_group, group_definition,
-        group_type_id,
-    },
+    mui_rel::{RelComposer, RelGraphDefinition, RelLayoutKind, RelSpace, RelViewKey, panel_field},
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         QuadBatchKind, register_payload_refresh,
+        relations::register_panel_relations,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
             UIEventHub, UiInteractionScope,
@@ -997,8 +995,7 @@ struct PanelStateDefinition<TPayload: PanelPayload> {
     vertex_shader: Option<VertexClosure>,
     callbacks: HashMap<UiEventKind, Arc<EventFn<TPayload>>>,
     animations: Vec<AnimationSpec>,
-    groups: Vec<MuiGroupDefinition>,
-    group_relations: Vec<GroupRelationSpec>,
+    relations: Option<RelGraphDefinition>,
 }
 
 impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
@@ -1009,8 +1006,7 @@ impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
             vertex_shader: None,
             callbacks: HashMap::new(),
             animations: Vec::new(),
-            groups: Vec::new(),
-            group_relations: Vec::new(),
+            relations: None,
         }
     }
 }
@@ -1117,7 +1113,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     where
         F: FnOnce(StateStageBuilder<TPayload>) -> StateStageBuilder<TPayload>,
     {
-        let builder = configure(StateStageBuilder::new(state_id));
+        let builder = configure(StateStageBuilder::new(state_id, &self.handle.key));
         let definition = builder.into_definition();
 
         match self.mode {
@@ -1137,7 +1133,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     {
         match self.mode {
             FlowMode::Stateless { ref mut state } => {
-                let builder = configure(StateStageBuilder::new(UiState(0)));
+                let builder = configure(StateStageBuilder::new(UiState(0), &self.handle.key));
                 *state = builder.into_definition();
             }
             FlowMode::Stateful { .. } => panic!("stateful panels should use `state`"),
@@ -1175,20 +1171,30 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
 
 /// Builder dedicated to a single state.
 pub struct StateStageBuilder<TPayload: PanelPayload> {
-    state_id: UiState,
     definition: PanelStateDefinition<TPayload>,
+    rel: RelComposer,
 }
 
 impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
-    fn new(state_id: UiState) -> Self {
+    fn new(state_id: UiState, panel_key: &PanelKey) -> Self {
+        let owner = RelViewKey::for_owner::<TPayload>(
+            panel_key.panel_uuid.clone(),
+            panel_key.scope.clone(),
+            state_id.0,
+        );
         Self {
-            state_id,
             definition: PanelStateDefinition::default(),
+            rel: RelComposer::new(owner),
         }
     }
 
-    fn into_definition(self) -> PanelStateDefinition<TPayload> {
+    fn into_definition(mut self) -> PanelStateDefinition<TPayload> {
+        self.definition.relations = self.rel.into_definition();
         self.definition
+    }
+
+    pub fn rel(&mut self) -> &mut RelComposer {
+        &mut self.rel
     }
 
     pub fn texture(mut self, path: &str) -> Self {
@@ -1201,13 +1207,25 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self
     }
 
-    pub fn size(mut self, size: Vec2) -> Self {
-        self.definition.overrides.size = Some([size.x, size.y]);
+    pub fn size(self, size: Vec2) -> Self {
+        self.rel_size(size)
+    }
+
+    pub fn rel_size(mut self, size: Vec2) -> Self {
+        let value = [size.x, size.y];
+        self.definition.overrides.size = Some(value);
+        self.rel.size_fixed(value);
         self
     }
 
-    pub fn position(mut self, pos: Vec2) -> Self {
-        self.definition.overrides.position = Some([pos.x, pos.y]);
+    pub fn position(self, pos: Vec2) -> Self {
+        self.rel_position_in(RelSpace::Local, pos)
+    }
+
+    pub fn rel_position_in(mut self, space: RelSpace, pos: Vec2) -> Self {
+        let value = [pos.x, pos.y];
+        self.definition.overrides.position = Some(value);
+        self.rel.position_fixed(space, value);
         self
     }
 
@@ -1218,6 +1236,19 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
 
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.definition.overrides.border = Some(border);
+        self
+    }
+
+    pub fn container_layout(mut self, layout: RelLayoutKind) -> Self {
+        self.rel.container_self(|spec| spec.layout = layout.clone());
+        self
+    }
+
+    pub fn configure_container_layout<F>(mut self, configure: F) -> Self
+    where
+        F: FnOnce(&mut RelLayoutKind),
+    {
+        self.rel.container_self(|spec| configure(&mut spec.layout));
         self
     }
 
@@ -1245,33 +1276,6 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
     {
         self.definition.vertex_shader = Some(Arc::new(shader));
         self
-    }
-
-    pub(crate) fn group_with<T: 'static, F>(mut self, configure: F) -> Self
-    where
-        F: FnOnce(&mut MuiGroupDefinition),
-    {
-        let id = group_type_id::<T>();
-        if self
-            .definition
-            .groups
-            .iter()
-            .any(|existing| existing.id == id)
-        {
-            return self;
-        }
-
-        let mut definition = group_definition::<T>();
-        configure(&mut definition);
-        let order = self.definition.groups.len() as u32;
-        definition.order = order;
-        definition.cpu_index = order;
-        self.definition.groups.push(definition);
-        self
-    }
-
-    pub fn group<T: 'static>(self) -> Self {
-        self.group_with::<T, _>(|_| {})
     }
 
     pub fn try_style(mut self, key: &str) -> Result<Self, StyleError> {
@@ -1436,8 +1440,7 @@ fn build_stateful<TPayload: PanelPayload>(
             vertex_shader,
             callbacks: state_callbacks,
             animations: _animations,
-            groups: _groups,
-            group_relations: _group_relations,
+            relations,
         } = definition;
 
         if let Some(shader) = frag_shader.as_ref() {
@@ -1449,6 +1452,10 @@ fn build_stateful<TPayload: PanelPayload>(
 
         transitions.insert(state_id, overrides.transitions.clone());
         callbacks.insert(state_id, state_callbacks);
+
+        if let Some(rel_def) = relations {
+            register_panel_relations(panel_key.panel_id, state_id, rel_def);
+        }
     }
 
     install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
@@ -1488,8 +1495,7 @@ fn build_stateless<TPayload: PanelPayload>(
         frag_shader,
         callbacks,
         animations: _animations,
-        groups: _groups,
-        group_relations: _group_relations,
+        relations,
     } = definition;
 
     if let Some(shader) = frag_shader.as_ref() {
@@ -1512,6 +1518,10 @@ fn build_stateless<TPayload: PanelPayload>(
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
+
+    if let Some(rel_def) = relations {
+        register_panel_relations(panel_key.panel_id, state_id, rel_def);
+    }
 
     Ok(PanelRuntimeHandle { key: panel_key })
 }
@@ -1547,7 +1557,7 @@ pub struct TestCustomData {
     pub count: u32,
 }
 
-fn frag_template(intensity:f32)->Expr{
+fn frag_template(intensity: f32) -> Expr {
     let uv = rv("uv");
     let diagonal = uv.x() - uv.y();
     let offset = Expr::from(intensity * 0.05);
@@ -1560,16 +1570,20 @@ fn frag_template(intensity:f32)->Expr{
     wvec4(line.clone(), 0.0, line, 1.0)
 }
 
-struct CounterHeader;
-
 fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
-    configure_group::<CounterHeader, _>(|group| group.center(GroupCenterMode::FirstElement));
     let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
         .quad_vertex(QuadBatchKind::UltraVertex)
-        .state(UiState(0), |state| {
+        .state(UiState(0), |state: StateStageBuilder<TestCustomData>| {
+            let mut state = state;
+            {
+                let rel = state.rel();
+                rel.mutex_view::<TestCustomData>(panel_uuid);
+                rel.dep_view::<UiPanelData>(panel_uuid);
+                rel.attach::<UiPanelData>(panel_uuid, panel_field::position_x);
+                rel.container_with::<UiPanelData>(panel_uuid);
+            }
             let state = state
-                .group::<CounterHeader>()
                 .size(vec2(100.0, 100.0))
                 .position(vec2(333.0, 333.0))
                 .border(BorderStyle {
@@ -1595,9 +1609,7 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                         println!("内部点击事件 {}", data.count);
 
                         let intensity = data.count as f32;
-                        flow.request_fragment_shader(move |_scope| {
-                            frag_template(intensity)
-                        });
+                        flow.request_fragment_shader(move |_scope| frag_template(intensity));
                         flow.set_state(UiState(1));
                     },
                 )
