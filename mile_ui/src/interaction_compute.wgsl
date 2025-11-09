@@ -28,7 +28,8 @@ struct Panel {
     border_color: vec4<f32>,
     border_width: f32,
     border_radius: f32,
-    pad_border: vec2<f32>,
+    visible: u32,
+    _pad_border: u32,
 };
 
 struct PanelAnimDelta {
@@ -120,7 +121,8 @@ const MOUSE_LEFT_RELEASED: u32 = 32u;
 const INTERACTION_CLICK: u32 = 2u;
 const INTERACTION_HOVER: u32 = 8u;
 const INTERACTION_DRAG: u32 = 4u;
-const DRAG_PRESS_THRESHOLD: f32 = 0.24;
+const DRAG_PRESS_THRESHOLD: f32 = 0.05;
+const DRAG_LOCK_INVALID: u32 = 0xffffffffu;
 
 @group(0) @binding(0) var<storage, read_write> panels: array<Panel>;
 @group(0) @binding(1) var<storage, read_write> global_uniform: GlobalUniform;
@@ -134,15 +136,70 @@ fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
     return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
 }
 
+fn encode_depth(z_index: u32, panel_id: u32) -> u32 {
+    let depth = min(z_index, 0x3FFu);
+    let id_bits = panel_id & 0x003FFFFFu;
+    return (depth << 22u) | id_bits;
+}
+
+fn try_lock_drag(panel_id: u32) -> bool {
+    loop {
+        let current = atomicLoad(&global_uniform.pad_atomic1);
+        if (current == panel_id) {
+            return true;
+        }
+        if (current == DRAG_LOCK_INVALID) {
+            let result = atomicCompareExchangeWeak(&global_uniform.pad_atomic1, DRAG_LOCK_INVALID, panel_id);
+            if (result.exchanged || result.old_value == panel_id) {
+                return true;
+            }
+            continue;
+        }
+        let winner = atomicLoad(&global_uniform.drag_layout_id);
+        if (winner != panel_id) {
+            return false;
+        }
+        let result = atomicCompareExchangeWeak(&global_uniform.pad_atomic1, current, panel_id);
+        if (result.exchanged) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn release_drag_lock(panel_id: u32) {
+    atomicCompareExchangeWeak(&global_uniform.pad_atomic1, panel_id, DRAG_LOCK_INVALID);
+}
+
 fn claim_hover(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
     if (pass_through != 0u) {
         return false;
     }
-    let prev_z = atomicMax(&global_uniform.hover_layout_z, candidate_z);
-    let prev_id = atomicLoad(&global_uniform.hover_layout_id);
-    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
-        atomicStore(&global_uniform.hover_layout_id, candidate_id);
-        return true;
+    let depth = encode_depth(candidate_z, candidate_id);
+    loop {
+        let current_depth = atomicLoad(&global_uniform.hover_layout_z);
+        if (depth < current_depth) {
+            return false;
+        }
+        if (depth == current_depth) {
+            return atomicLoad(&global_uniform.hover_layout_id) == candidate_id;
+        }
+        let depth_swap =
+            atomicCompareExchangeWeak(&global_uniform.hover_layout_z, current_depth, depth);
+        if (!depth_swap.exchanged) {
+            continue;
+        }
+        loop {
+            let current_id = atomicLoad(&global_uniform.hover_layout_id);
+            let id_swap =
+                atomicCompareExchangeWeak(&global_uniform.hover_layout_id, current_id, candidate_id);
+            if (id_swap.exchanged || id_swap.old_value == candidate_id) {
+                return true;
+            }
+            if (id_swap.old_value != current_id) {
+                break;
+            }
+        }
     }
     return false;
 }
@@ -151,11 +208,31 @@ fn claim_click(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
     if (pass_through != 0u) {
         return false;
     }
-    let prev_z = atomicMax(&global_uniform.click_layout_z, candidate_z);
-    let prev_id = atomicLoad(&global_uniform.click_layout_id);
-    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
-        atomicStore(&global_uniform.click_layout_id, candidate_id);
-        return true;
+    let depth = encode_depth(candidate_z, candidate_id);
+    loop {
+        let current_depth = atomicLoad(&global_uniform.click_layout_z);
+        if (depth < current_depth) {
+            return false;
+        }
+        if (depth == current_depth) {
+            return atomicLoad(&global_uniform.click_layout_id) == candidate_id;
+        }
+        let depth_swap =
+            atomicCompareExchangeWeak(&global_uniform.click_layout_z, current_depth, depth);
+        if (!depth_swap.exchanged) {
+            continue;
+        }
+        loop {
+            let current_id = atomicLoad(&global_uniform.click_layout_id);
+            let id_swap =
+                atomicCompareExchangeWeak(&global_uniform.click_layout_id, current_id, candidate_id);
+            if (id_swap.exchanged || id_swap.old_value == candidate_id) {
+                return true;
+            }
+            if (id_swap.old_value != current_id) {
+                break;
+            }
+        }
     }
     return false;
 }
@@ -164,33 +241,79 @@ fn claim_drag(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
     if (pass_through != 0u) {
         return false;
     }
-    let prev_z = atomicMax(&global_uniform.drag_layout_z, candidate_z);
-    let prev_id = atomicLoad(&global_uniform.drag_layout_id);
-    if (candidate_z > prev_z || (candidate_z == prev_z && candidate_id >= prev_id)) {
-        atomicStore(&global_uniform.drag_layout_id, candidate_id);
-        return true;
+    let depth = encode_depth(candidate_z, candidate_id);
+    loop {
+        let current_depth = atomicLoad(&global_uniform.drag_layout_z);
+        if (depth < current_depth) {
+            return false;
+        }
+        if (depth == current_depth) {
+            return atomicLoad(&global_uniform.drag_layout_id) == candidate_id;
+        }
+        let depth_swap =
+            atomicCompareExchangeWeak(&global_uniform.drag_layout_z, current_depth, depth);
+        if (!depth_swap.exchanged) {
+            continue;
+        }
+        loop {
+            let current_id = atomicLoad(&global_uniform.drag_layout_id);
+            let id_swap =
+                atomicCompareExchangeWeak(&global_uniform.drag_layout_id, current_id, candidate_id);
+            if (id_swap.exchanged || id_swap.old_value == candidate_id) {
+                return true;
+            }
+            if (id_swap.old_value != current_id) {
+                break;
+            }
+        }
     }
     return false;
 }
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    if (global_id.x == 0u) {
+        frame_cache[1].hover_id = INVALID_ID;
+        frame_cache[1].click_id = INVALID_ID;
+        let prev_drag = frame_cache[0].drag_id;
+        if (prev_drag == INVALID_ID) {
+            atomicStore(&global_uniform.pad_atomic1, DRAG_LOCK_INVALID);
+        }
+        atomicStore(&global_uniform.hover_layout_z, 0u);
+        atomicStore(&global_uniform.hover_layout_id, INVALID_ID);
+        atomicStore(&global_uniform.click_layout_z, 0u);
+        atomicStore(&global_uniform.click_layout_id, INVALID_ID);
+        let lock = atomicLoad(&global_uniform.pad_atomic1);
+        if (lock == DRAG_LOCK_INVALID) {
+            frame_cache[1].drag_id = INVALID_ID;
+            atomicStore(&global_uniform.drag_layout_z, 0u);
+            atomicStore(&global_uniform.drag_layout_id, INVALID_ID);
+        } else {
+            frame_cache[1].drag_id = lock;
+        }
+    }
+    storageBarrier();
+
     let idx = global_id.x;
     if (idx >= arrayLength(&panels)) {
         return;
     }
 
     let panel = panels[idx];
+    if (panel.visible == 0u) {
+        return;
+    }
     let mouse = global_uniform.mouse_pos;
-    let screen = vec2<f32>(global_uniform.screen_size);
 
-    let hovered = mouse_inside(panel, mouse);
     let mouse_pressed = (global_uniform.mouse_state & MOUSE_LEFT_HELD) != 0u;
     let mouse_released = (global_uniform.mouse_state & MOUSE_LEFT_RELEASED) != 0u;
     let press_duration = global_uniform.press_duration;
-        
+    let hovered = mouse_inside(panel, mouse);
+    let prev_drag_id = frame_cache[0].drag_id;
+    let was_dragging = prev_drag_id == panel.id;
+    let is_dragging = frame_cache[1].drag_id == panel.id;
 
-    if (!hovered) {
+    if (!hovered && !was_dragging && !is_dragging) {
         return;
     }
 
@@ -214,10 +337,43 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Drag (press)
     if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed && press_duration >= DRAG_PRESS_THRESHOLD) {
-        if (claim_drag(panel.z_index, panel.id, panel.pass_through)) {
-            frame_cache[1].drag_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
-            frame_cache[1].event_point = mouse - panel.position;
+        let can_request_drag = was_dragging || prev_drag_id == INVALID_ID;
+        if (can_request_drag && claim_drag(panel.z_index, panel.id, panel.pass_through)) {
+            if (try_lock_drag(panel.id)) {
+                frame_cache[1].drag_id = panel.id;
+                frame_cache[1].trigger_panel_state = panel.state;
+                if (!was_dragging) {
+                    let event_point = mouse - panel.position;
+                    frame_cache[1].event_point = event_point;
+                    global_uniform.event_point = event_point;
+                    if (panel.id < arrayLength(&panel_anim_delta)) {
+                        panel_anim_delta[panel.id].start_position = event_point;
+                    }
+                }
+            }
         }
+    }
+
+    if ((panel.interaction & INTERACTION_DRAG) != 0u) {
+        let active_drag_id = frame_cache[1].drag_id;
+        if (active_drag_id == panel.id && panel.id < arrayLength(&panel_anim_delta)) {
+            let anchor = panel_anim_delta[panel.id].start_position;
+            let _target = mouse - anchor;
+            let delta = _target - panel.position;
+            panel_anim_delta[panel.id].delta_position = delta;
+            if (mouse_released) {
+                frame_cache[1].drag_id = INVALID_ID;
+                release_drag_lock(panel.id);
+            }
+        } else if (mouse_released && atomicLoad(&global_uniform.pad_atomic1) == panel.id) {
+            release_drag_lock(panel.id);
+        }
+    } else if (mouse_released && atomicLoad(&global_uniform.pad_atomic1) == panel.id) {
+        release_drag_lock(panel.id);
+    }
+
+    if (mouse_released && frame_cache[1].drag_id == INVALID_ID) {
+        atomicStore(&global_uniform.drag_layout_z, 0u);
+        atomicStore(&global_uniform.drag_layout_id, INVALID_ID);
     }
 }

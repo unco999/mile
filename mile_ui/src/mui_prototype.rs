@@ -1,12 +1,10 @@
 use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
-    mui_group::{
-        GroupCenterMode, GroupRelationSpec, MuiGroupDefinition, configure_group, group_definition,
-        group_type_id,
-    },
+    mui_rel::{RelComposer, RelGraphDefinition, RelLayoutKind, RelSpace, RelViewKey, panel_field},
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         QuadBatchKind, register_payload_refresh,
+        relations::register_panel_relations,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
             UIEventHub, UiInteractionScope,
@@ -270,6 +268,8 @@ pub struct PanelStateOverrides {
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
     pub transitions: HashMap<UiEventKind, UiState>,
+    #[serde(default)]
+    pub visible: Option<bool>,
 }
 
 /// Resolved visual/layout snapshot applied to a panel.
@@ -289,6 +289,8 @@ pub struct PanelSnapshot {
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
     pub quad_vertex: QuadBatchKind,
+    #[serde(default = "panel_snapshot_visible_default")]
+    pub visible: bool,
 }
 
 impl Default for PanelSnapshot {
@@ -303,8 +305,13 @@ impl Default for PanelSnapshot {
             fragment_shader_id: None,
             vertex_shader_id: None,
             quad_vertex: QuadBatchKind::Normal,
+            visible: true,
         }
     }
+}
+
+const fn panel_snapshot_visible_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -965,6 +972,7 @@ pub fn trigger_event<TPayload: PanelPayload>(key: &PanelKey, event: UiEventKind)
 }
 
 /// Handle returned by `build` so tests can trigger events.
+#[derive(Clone)]
 pub struct PanelRuntimeHandle {
     key: PanelKey,
 }
@@ -978,6 +986,7 @@ impl PanelRuntimeHandle {
         &self.key
     }
 }
+
 
 /// Flow mode for the builder.
 enum FlowMode<TPayload: PanelPayload> {
@@ -997,8 +1006,7 @@ struct PanelStateDefinition<TPayload: PanelPayload> {
     vertex_shader: Option<VertexClosure>,
     callbacks: HashMap<UiEventKind, Arc<EventFn<TPayload>>>,
     animations: Vec<AnimationSpec>,
-    groups: Vec<MuiGroupDefinition>,
-    group_relations: Vec<GroupRelationSpec>,
+    relations: Option<RelGraphDefinition>,
 }
 
 impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
@@ -1009,8 +1017,7 @@ impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
             vertex_shader: None,
             callbacks: HashMap::new(),
             animations: Vec::new(),
-            groups: Vec::new(),
-            group_relations: Vec::new(),
+            relations: None,
         }
     }
 }
@@ -1117,7 +1124,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     where
         F: FnOnce(StateStageBuilder<TPayload>) -> StateStageBuilder<TPayload>,
     {
-        let builder = configure(StateStageBuilder::new(state_id));
+        let builder = configure(StateStageBuilder::new(state_id, &self.handle.key));
         let definition = builder.into_definition();
 
         match self.mode {
@@ -1137,7 +1144,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     {
         match self.mode {
             FlowMode::Stateless { ref mut state } => {
-                let builder = configure(StateStageBuilder::new(UiState(0)));
+                let builder = configure(StateStageBuilder::new(UiState(0), &self.handle.key));
                 *state = builder.into_definition();
             }
             FlowMode::Stateful { .. } => panic!("stateful panels should use `state`"),
@@ -1175,20 +1182,30 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
 
 /// Builder dedicated to a single state.
 pub struct StateStageBuilder<TPayload: PanelPayload> {
-    state_id: UiState,
     definition: PanelStateDefinition<TPayload>,
+    rel: RelComposer,
 }
 
 impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
-    fn new(state_id: UiState) -> Self {
+    fn new(state_id: UiState, panel_key: &PanelKey) -> Self {
+        let owner = RelViewKey::for_owner::<TPayload>(
+            panel_key.panel_uuid.clone(),
+            panel_key.scope.clone(),
+            state_id.0,
+        );
         Self {
-            state_id,
             definition: PanelStateDefinition::default(),
+            rel: RelComposer::new(owner),
         }
     }
 
-    fn into_definition(self) -> PanelStateDefinition<TPayload> {
+    fn into_definition(mut self) -> PanelStateDefinition<TPayload> {
+        self.definition.relations = self.rel.into_definition();
         self.definition
+    }
+
+    pub fn rel(&mut self) -> &mut RelComposer {
+        &mut self.rel
     }
 
     pub fn texture(mut self, path: &str) -> Self {
@@ -1201,13 +1218,25 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self
     }
 
-    pub fn size(mut self, size: Vec2) -> Self {
-        self.definition.overrides.size = Some([size.x, size.y]);
+    pub fn size(self, size: Vec2) -> Self {
+        self.rel_size(size)
+    }
+
+    pub fn rel_size(mut self, size: Vec2) -> Self {
+        let value = [size.x, size.y];
+        self.definition.overrides.size = Some(value);
+        self.rel.size_fixed(value);
         self
     }
 
-    pub fn position(mut self, pos: Vec2) -> Self {
-        self.definition.overrides.position = Some([pos.x, pos.y]);
+    pub fn position(self, pos: Vec2) -> Self {
+        self.rel_position_in(RelSpace::Local, pos)
+    }
+
+    pub fn rel_position_in(mut self, space: RelSpace, pos: Vec2) -> Self {
+        let value = [pos.x, pos.y];
+        self.definition.overrides.position = Some(value);
+        self.rel.position_fixed(space, value);
         self
     }
 
@@ -1218,6 +1247,24 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
 
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.definition.overrides.border = Some(border);
+        self
+    }
+
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.definition.overrides.visible = Some(visible);
+        self
+    }
+
+    pub fn container_layout(mut self, layout: RelLayoutKind) -> Self {
+        self.rel.container_self(|spec| spec.layout = layout.clone());
+        self
+    }
+
+    pub fn configure_container_layout<F>(mut self, configure: F) -> Self
+    where
+        F: FnOnce(&mut RelLayoutKind),
+    {
+        self.rel.container_self(|spec| configure(&mut spec.layout));
         self
     }
 
@@ -1245,33 +1292,6 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
     {
         self.definition.vertex_shader = Some(Arc::new(shader));
         self
-    }
-
-    pub(crate) fn group_with<T: 'static, F>(mut self, configure: F) -> Self
-    where
-        F: FnOnce(&mut MuiGroupDefinition),
-    {
-        let id = group_type_id::<T>();
-        if self
-            .definition
-            .groups
-            .iter()
-            .any(|existing| existing.id == id)
-        {
-            return self;
-        }
-
-        let mut definition = group_definition::<T>();
-        configure(&mut definition);
-        let order = self.definition.groups.len() as u32;
-        definition.order = order;
-        definition.cpu_index = order;
-        self.definition.groups.push(definition);
-        self
-    }
-
-    pub fn group<T: 'static>(self) -> Self {
-        self.group_with::<T, _>(|_| {})
     }
 
     pub fn try_style(mut self, key: &str) -> Result<Self, StyleError> {
@@ -1436,8 +1456,7 @@ fn build_stateful<TPayload: PanelPayload>(
             vertex_shader,
             callbacks: state_callbacks,
             animations: _animations,
-            groups: _groups,
-            group_relations: _group_relations,
+            relations,
         } = definition;
 
         if let Some(shader) = frag_shader.as_ref() {
@@ -1449,6 +1468,10 @@ fn build_stateful<TPayload: PanelPayload>(
 
         transitions.insert(state_id, overrides.transitions.clone());
         callbacks.insert(state_id, state_callbacks);
+
+        if let Some(rel_def) = relations {
+            register_panel_relations(panel_key.panel_id, state_id, rel_def);
+        }
     }
 
     install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
@@ -1488,8 +1511,7 @@ fn build_stateless<TPayload: PanelPayload>(
         frag_shader,
         callbacks,
         animations: _animations,
-        groups: _groups,
-        group_relations: _group_relations,
+        relations,
     } = definition;
 
     if let Some(shader) = frag_shader.as_ref() {
@@ -1512,6 +1534,10 @@ fn build_stateless<TPayload: PanelPayload>(
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
+
+    if let Some(rel_def) = relations {
+        register_panel_relations(panel_key.panel_id, state_id, rel_def);
+    }
 
     Ok(PanelRuntimeHandle { key: panel_key })
 }
@@ -1547,7 +1573,7 @@ pub struct TestCustomData {
     pub count: u32,
 }
 
-fn frag_template(intensity:f32)->Expr{
+fn frag_template(intensity: f32) -> Expr {
     let uv = rv("uv");
     let diagonal = uv.x() - uv.y();
     let offset = Expr::from(intensity * 0.05);
@@ -1560,100 +1586,67 @@ fn frag_template(intensity:f32)->Expr{
     wvec4(line.clone(), 0.0, line, 1.0)
 }
 
-struct CounterHeader;
+fn build_demo_panel_with_uuid(
+    panel_uuid: &'static str,
+) -> Result<Vec<PanelRuntimeHandle>, DbError> {
+    let mut handles = Vec::new();
 
-fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
-    configure_group::<CounterHeader, _>(|group| group.center(GroupCenterMode::FirstElement));
-    let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
+    let test_container = Mui::<TestCustomData>::stateful("demo_container")?
         .default_state(UiState(0))
-        .quad_vertex(QuadBatchKind::UltraVertex)
         .state(UiState(0), |state| {
-            let state = state
-                .group::<CounterHeader>()
-                .size(vec2(100.0, 100.0))
-                .position(vec2(333.0, 333.0))
-                .border(BorderStyle {
-                    color: [1.0, 0.0, 0.0, 1.0],
-                    width: 10.0,
-                    radius: 0.0,
-                })
-                .z_index(5)
-                // .vertex_shader(|_flow| {
-                //     let r = cv("time");
-                //     let sin = sin(r);
-                //     let uv = rv("uv").y();
-                //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
-                //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
-                // })
-                .fragment_shader(|_flow| wvec4(0.0, 0.0, 0.0, 0.0))
-                .events()
-                .on_event(
-                    UiEventKind::Click,
-                    |flow: &mut EventFlow<'_, TestCustomData>| {
-                        let data = flow.payload();
-                        data.count += 1;
-                        println!("内部点击事件 {}", data.count);
+            let mut state = state;
+            let mut rel = state.rel();
 
-                        let intensity = data.count as f32;
-                        flow.request_fragment_shader(move |_scope| {
-                            frag_template(intensity)
-                        });
-                        flow.set_state(UiState(1));
-                    },
-                )
-                .finish()
-                .state_transform_fade(0.2);
             state
+                .z_index(4)
+                .position(vec2(200.0, 200.0))
+                .texture("backgound.png")
+                .size(vec2(500.0, 500.0))
                 .events()
-                .on_event(UiEventKind::Drag, |flow| {
-                    {
-                        let data = flow.payload();
-                        data.count += 1;
-                        flow.set_state(UiState(1));
-                    }
-                    flow.push_animation(
-                        AnimBuilder::new(AnimProperty::Size)
-                            .to(vec2(3.0, 3.0))
-                            .build(),
-                    );
-                })
-                .finish()
-        })
-        .state(UiState(1), |state| {
-            state
-                .size(vec2(200.0, 100.0))
-                .position(vec2(433.0, 333.0))
-                .color(Vec4::new(1.0, 0.0, 0.8, 1.0))
-                .z_index(5)
-                .border(BorderStyle {
-                    color: [1.0, 0.0, 0.0, 0.0],
-                    width: 5.0,
-                    radius: 1.0,
-                })
-                .events()
-                .on_event(UiEventKind::Click, |flow| {
-                    flow.payload().count += 1;
-                    flow.set_state(UiState(2));
-                })
-                .finish()
-        })
-        .state(UiState(2), |state| {
-            state
-                .position(vec2(0.0, 0.0))
-                .events()
-                .on_event(UiEventKind::Click, |flow| {
-                    flow.payload().count += 1;
-                    flow.set_state(UiState(0));
-                })
+                .on_event(UiEventKind::Drag, |_| {})
                 .finish()
         })
         .build()?;
+    handles.push(test_container);
 
-    Ok(runtime)
+    let cols = 10;
+    let spacing = vec2(140.0, 140.0);
+    let origin = vec2(80.0, 80.0);
+
+    for idx in 0..100 {
+        let row = idx / cols;
+        let col = idx % cols;
+        let position = origin + vec2(col as f32, row as f32) * spacing;
+        let label = Box::leak(format!("{panel_uuid}_{idx}").into_boxed_str());
+
+        let panel = Mui::<TestCustomData>::stateful(label)?
+            .default_state(UiState(0))
+            .quad_vertex(QuadBatchKind::UltraVertex)
+            .state(UiState(0), move |state: StateStageBuilder<TestCustomData>| {
+                state
+                    .size(vec2(100.0, 100.0))
+                    .position(position)
+                    .border(BorderStyle {
+                        color: [1.0, 0.0, 0.0, 1.0],
+                        width: 4.0,
+                        radius: 6.0,
+                    })
+                    .events()
+                    .on_event(UiEventKind::Drag, |flow| {
+                        flow.payload().count += 1;
+                    })
+                    .finish()
+            })
+            .build()?;
+
+        handles.push(panel);
+    }
+
+    Ok(handles)
 }
 
 /// Demonstration that mirrors the existing builder usage.
-pub fn build_demo_panel() -> Result<PanelRuntimeHandle, DbError> {
+pub fn build_demo_panel() -> Result<Vec<PanelRuntimeHandle>, DbError> {
     build_demo_panel_with_uuid("inventory_panel")
 }
 
@@ -1727,9 +1720,10 @@ mod tests {
 
     #[test]
     fn demo_panel_states_and_events_roundtrip() {
-        let handle = build_demo_panel_with_uuid(TEST_PANEL_UUID).expect("demo panel builds");
+        let handles = build_demo_panel_with_uuid(TEST_PANEL_UUID).expect("demo panel builds");
+        let runtime_handle = handles.first().expect("runtime handle present");
 
-        let mut record = read_counter_record(handle.key());
+        let mut record = read_counter_record(runtime_handle.key());
         assert_eq!(record.default_state, Some(UiState(0)));
         assert_eq!(record.current_state, UiState(0));
         assert_eq!(record.data.count, 0);
@@ -1757,15 +1751,15 @@ mod tests {
             Some(&UiState(0))
         );
 
-        handle.trigger::<UiPanelData>(UiEventKind::Click);
-        record = read_counter_record(handle.key());
-        assert_eq!(record.current_state, UiState(1));
-        assert_eq!(record.data.count, 1);
-        assert_eq!(record.pending_animations.len(), 1);
+            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+            record = read_counter_record(runtime_handle.key());
+            assert_eq!(record.current_state, UiState(1));
+            assert_eq!(record.data.count, 1);
+            assert_eq!(record.pending_animations.len(), 1);
 
-        handle.trigger::<UiPanelData>(UiEventKind::Click);
-        record = read_counter_record(handle.key());
-        assert_eq!(record.current_state, UiState(0));
-        assert_eq!(record.data.count, 2);
-    }
+            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+            record = read_counter_record(runtime_handle.key());
+            assert_eq!(record.current_state, UiState(0));
+            assert_eq!(record.data.count, 2);
+        }
 }

@@ -18,6 +18,10 @@ use std::{
 use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
+    relations::{
+        RelationWorkItem, clear_panel_relations, inject_relation_work, layout_flags,
+        set_panel_active_state,
+    },
     render::{QuadBatchKind, RenderPipelines},
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
@@ -349,6 +353,29 @@ impl MuiRuntime {
         &self.buffers
     }
 
+    pub fn test_rel_build(&mut self) {
+        let total = 5;
+        let origin = [120.0, 80.0];
+        let slot = [60.0, 32.0];
+        let spacing = [10.0, 0.0];
+        let mut items = Vec::new();
+        for i in 0..total {
+            items.push(RelationWorkItem {
+                panel_id: 30_000 + i,
+                layout_flags: layout_flags::HORIZONTAL,
+                order: i,
+                total,
+                origin,
+                size: [slot[0] * total as f32, slot[1]],
+                slot,
+                spacing,
+                ..RelationWorkItem::default()
+            });
+        }
+        inject_relation_work(items);
+        self.compute.borrow_mut().relations.set_dirty();
+    }
+
     #[inline]
     pub fn buffers_mut(&mut self) -> &mut BufferArena {
         &mut self.buffers
@@ -634,6 +661,7 @@ impl MuiRuntime {
                     };
                     if needs_update {
                         self.panel_cache.insert(key.clone(), descriptor.clone());
+                        set_panel_active_state(key.panel_id, descriptor.display_state);
                         self.panel_instances_dirty = true;
                     }
 
@@ -646,6 +674,7 @@ impl MuiRuntime {
                 }
                 None => {
                     if self.panel_cache.remove(key).is_some() {
+                        clear_panel_relations(key.panel_id);
                         self.panel_instances_dirty = true;
                     }
                 }
@@ -685,6 +714,7 @@ impl MuiRuntime {
             for desc in descriptors.iter().filter(|desc| desc.quad_vertex == kind) {
                 let fallback = previous_instances.get(&desc.key.panel_id);
                 let panel = self.descriptor_to_panel_with_base(desc, fallback);
+                set_panel_active_state(desc.key.panel_id, desc.display_state);
                 panels.push(panel);
             }
             let end = panels.len() as u32;
@@ -718,6 +748,7 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
+        self.compute.borrow_mut().ingest_relation_work(queue);
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -743,6 +774,7 @@ impl MuiRuntime {
             desc.current_state = transition.new_state;
             let mut clone = desc.clone();
             clone.display_state = clone.current_state;
+            set_panel_active_state(panel_id, clone.display_state);
             clone
         };
         let (instance_index, previous_panel) = match self
@@ -1211,6 +1243,11 @@ impl MuiRuntime {
                             shader_location: 20,
                             format: wgpu::VertexFormat::Float32x2,
                         },
+                        wgpu::VertexAttribute {
+                            offset: 120,
+                            shader_location: 21,
+                            format: wgpu::VertexFormat::Uint32,
+                        },
                     ],
                 },
             ];
@@ -1374,10 +1411,12 @@ impl MuiRuntime {
         }
         let size = size.unwrap_or([100.0, 100.0]);
 
-        let z_value = overrides
+        let base_z = overrides
             .and_then(|o| o.z_index)
             .unwrap_or(desc.snapshot.z_index)
             .max(0) as u32;
+        let z_bias = (desc.key.panel_id & 0x3F) as u32;
+        let z_value = base_z.saturating_add(z_bias).min(0x3FF);
 
         let pass_through = overrides.and_then(|o| o.pass_through).unwrap_or(0);
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
@@ -1445,7 +1484,12 @@ impl MuiRuntime {
             panel.border_width = 0.0;
             panel.border_radius = 0.0;
         }
-        panel.pad_border = [0.0, 0.0];
+        panel.visible = if overrides.and_then(|o| o.visible).unwrap_or(true) {
+            1
+        } else {
+            0
+        };
+        panel._pad_border = 0;
         panel
     }
 
@@ -1505,6 +1549,9 @@ impl MuiRuntime {
             panel.border_color = border.color;
             panel.border_width = border.width;
             panel.border_radius = border.radius;
+        }
+        if let Some(force_visible) = overrides.and_then(|o| o.visible) {
+            panel.visible = if force_visible { 1 } else { 0 };
         }
 
         if let Some(trans) = overrides
@@ -1745,7 +1792,7 @@ impl MuiRuntime {
 
         if pressed {
             // 持续按下累加时间
-            unitfrom_struct.press_duration += 0.033;
+            unitfrom_struct.press_duration += 0.016;
         }
 
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;

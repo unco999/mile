@@ -232,7 +232,7 @@ fn try_set_hover_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool 
 
 
     if (z_index > prev_z || (z_index == prev_z && panel_id >= prev_id)) {
-        if ( atomicMax(&global_uniform.hover_layout_id, panel_id) == panel_id){
+        if (atomicMax(&global_uniform.hover_layout_id, panel_id) == panel_id) {
             return true; // 成功成为当前点击目标
         }
     }

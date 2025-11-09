@@ -24,6 +24,7 @@ struct VertexInput {
     @location(18) color: vec4<f32>,
     @location(19) border_color: vec4<f32>,
     @location(20) border: vec2<f32>,
+    @location(21) visible: u32,
 };
 
 struct GlobalUniform {
@@ -451,6 +452,22 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     let uv = input.uv_offset + input.uv * input.uv_scale;
 
+    if (input.visible == 0u) {
+        out.clip_position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        out.uv = vec2<f32>(0.0);
+        out.texture_id = U32_MAX;
+        out.transparent = 0.0;
+        out.color = vec4<f32>(0.0);
+        out.border_color = vec4<f32>(0.0);
+        out.border = vec2<f32>(0.0);
+        out.local_pos = vec2<f32>(0.0);
+        out.instance_size = vec2<f32>(0.0);
+        out.instance_pos = vec2<f32>(0.0);
+        out.fragment_shader_id = U32_MAX;
+        out.vertex_shader_id = U32_MAX;
+        return out;
+    }
+
     if (input.vertex_shader_id != U32_MAX) {
         let vertex_inputs = RenderImportInputs(
             uv,
@@ -474,7 +491,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     
 
     out.clip_position = to_clip_space(quad_pos);
-    out.clip_position.z = f32(0.0);
+
+    let normalized_z = f32(input.z_index) / 100.0;
+    out.clip_position.z = 1.0 - clamp(normalized_z, 0.0, 1.0);
+
     out.uv = uv;
     out.texture_id = input.texture_id;
     out.transparent = input.transparent;
@@ -498,9 +518,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let tex = ui_textures[parent_index];
         let samp = ui_samplers[parent_index];
 
-        let uv_min = info.uv_min.xy;
-        let uv_max = info.uv_max.xy;
-        let atlas_uv = uv_min + (uv_max - uv_min) * input.uv;
+        let atlas_uv = input.uv;
         sampled = textureSample(tex, samp, atlas_uv);
     }
 
