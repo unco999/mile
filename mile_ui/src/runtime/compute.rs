@@ -10,9 +10,8 @@ use bytemuck::{bytes_of, cast_slice};
 use wgpu::util::DownloadBuffer;
 
 use crate::runtime::{
-    _ty::{GpuInteractionFrame, PanelAnimDelta},
+    _ty::GpuInteractionFrame,
     buffers::{BufferArena, BufferViewSet},
-    relations::{RelationWorkItem, relation_registry},
     state::{CpuPanelEvent, UIEventHub, UiInteractionScope},
 };
 use mile_api::interface::GpuDebug;
@@ -28,7 +27,6 @@ pub struct FrameComputeContext<'a> {
 /// Holder for the three compute stages used by the UI runtime.
 pub struct ComputePipelines {
     pub interaction: InteractionComputeStage,
-    pub relations: RelationComputeStage,
     pub animation: AnimationComputeStage,
 }
 
@@ -41,7 +39,6 @@ impl ComputePipelines {
     ) -> Self {
         Self {
             interaction: InteractionComputeStage::new(device, buffers, global_uniform, event_hub),
-            relations: RelationComputeStage::new(buffers),
             animation: AnimationComputeStage::new(device, buffers, global_uniform),
         }
     }
@@ -55,9 +52,6 @@ impl ComputePipelines {
         if self.interaction.is_dirty() {
             self.interaction.encode(pass, buffers, ctx);
         }
-        if self.relations.is_dirty() {
-            self.relations.encode(pass, buffers, ctx);
-        }
         if self.animation.is_dirty() {
             self.animation.encode(pass, buffers, ctx);
         }
@@ -70,7 +64,6 @@ impl ComputePipelines {
         ctx: &FrameComputeContext<'_>,
     ) {
         self.interaction.readback(device, queue, ctx);
-        self.relations.readback(device, queue, ctx);
         self.animation.readback(device, queue, ctx);
     }
 
@@ -87,13 +80,12 @@ impl ComputePipelines {
     #[inline]
     pub fn mark_all_dirty(&mut self) {
         self.interaction.set_dirty();
-        self.relations.set_dirty();
         self.animation.set_dirty();
     }
 
     #[inline]
     pub fn is_any_dirty(&self) -> bool {
-        self.interaction.is_dirty() || self.relations.is_dirty() || self.animation.is_dirty()
+        self.interaction.is_dirty() || self.animation.is_dirty()
     }
 
     pub fn rebuild_interaction_bind_group(
@@ -702,77 +694,6 @@ impl AnimationComputeStage {
 }
 
 /// CPU driven relation stage that writes group offsets into the animation delta buffer.
-pub struct RelationComputeStage {
-    panel_anim_delta: wgpu::Buffer,
-    panel_stride: wgpu::BufferAddress,
-    capacity: u32,
-    dirty: bool,
-}
-
-impl RelationComputeStage {
-    pub fn new(buffers: &BufferArena) -> Self {
-        Self {
-            panel_anim_delta: buffers.panel_anim_delta.clone(),
-            panel_stride: std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress,
-            capacity: buffers.capacities.max_panels,
-            dirty: false,
-        }
-    }
-
-    pub fn set_dirty(&mut self) {
-        self.dirty = true;
-    }
-
-    #[inline]
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    pub fn encode(
-        &mut self,
-        _pass: &mut wgpu::ComputePass<'_>,
-        _buffers: &BufferViewSet<'_>,
-        _ctx: &FrameComputeContext<'_>,
-    ) {
-        self.dirty = false;
-    }
-
-    pub fn readback(
-        &mut self,
-        _device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        _ctx: &FrameComputeContext<'_>,
-    ) {
-        let mut registry = relation_registry().lock().unwrap();
-        let work = registry.take_dirty();
-        drop(registry);
-
-        if work.is_empty() {
-            return;
-        }
-
-        for item in work {
-            self.write_panel_delta(queue, item);
-        }
-    }
-
-    fn write_panel_delta(&self, queue: &wgpu::Queue, item: RelationWorkItem) {
-        if item.panel_id >= self.capacity {
-            return;
-        }
-        let mut delta = PanelAnimDelta::default();
-        delta.panel_id = item.panel_id;
-        if let Some(graph) = item.graph {
-            if let Some(container) = graph.container {
-                delta.delta_position = container.origin;
-                delta.start_position = container.origin;
-            }
-        }
-        let offset = item.panel_id as wgpu::BufferAddress * self.panel_stride;
-        queue.write_buffer(&self.panel_anim_delta, offset, bytes_of(&delta));
-    }
-}
-
 /// Fallback stage used while individual compute passes are not implemented.
 #[derive(Default)]
 pub struct NoopStage {
