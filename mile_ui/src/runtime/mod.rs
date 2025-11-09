@@ -17,7 +17,8 @@ pub use buffers::{BufferArena, BufferArenaConfig, BufferViewSet};
 pub use compute::{ComputePipelines, FrameComputeContext};
 pub use entry::{FrameHistory, FrameSnapshot, MuiRuntime, register_payload_refresh};
 pub use relations::{
-    clear_panel_relations, register_panel_relations, relation_registry, set_panel_active_state,
+    RelationWorkItem, clear_panel_relations, inject_relation_work, layout_flags,
+    register_panel_relations, relation_registry, set_panel_active_state,
 };
 pub use render::{QuadBatchKind, RenderBatches, RenderPipelines};
 pub use state::{

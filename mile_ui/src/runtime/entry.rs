@@ -18,7 +18,10 @@ use std::{
 use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
-    relations::{clear_panel_relations, set_panel_active_state},
+    relations::{
+        RelationWorkItem, clear_panel_relations, inject_relation_work, layout_flags,
+        set_panel_active_state,
+    },
     render::{QuadBatchKind, RenderPipelines},
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
@@ -348,6 +351,29 @@ impl MuiRuntime {
     #[inline]
     pub fn buffers(&self) -> &BufferArena {
         &self.buffers
+    }
+
+    pub fn test_rel_build(&mut self) {
+        let total = 5;
+        let origin = [120.0, 80.0];
+        let slot = [60.0, 32.0];
+        let spacing = [10.0, 0.0];
+        let mut items = Vec::new();
+        for i in 0..total {
+            items.push(RelationWorkItem {
+                panel_id: 30_000 + i,
+                layout_flags: layout_flags::HORIZONTAL,
+                order: i,
+                total,
+                origin,
+                size: [slot[0] * total as f32, slot[1]],
+                slot,
+                spacing,
+                ..RelationWorkItem::default()
+            });
+        }
+        inject_relation_work(items);
+        self.compute.borrow_mut().relations.set_dirty();
     }
 
     #[inline]
@@ -722,6 +748,7 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
+        self.compute.borrow_mut().ingest_relation_work(queue);
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -1216,6 +1243,11 @@ impl MuiRuntime {
                             shader_location: 20,
                             format: wgpu::VertexFormat::Float32x2,
                         },
+                        wgpu::VertexAttribute {
+                            offset: 120,
+                            shader_location: 21,
+                            format: wgpu::VertexFormat::Uint32,
+                        },
                     ],
                 },
             ];
@@ -1450,7 +1482,12 @@ impl MuiRuntime {
             panel.border_width = 0.0;
             panel.border_radius = 0.0;
         }
-        panel.pad_border = [0.0, 0.0];
+        panel.visible = if overrides.and_then(|o| o.visible).unwrap_or(true) {
+            1
+        } else {
+            0
+        };
+        panel._pad_border = 0;
         panel
     }
 
@@ -1510,6 +1547,9 @@ impl MuiRuntime {
             panel.border_color = border.color;
             panel.border_width = border.width;
             panel.border_radius = border.radius;
+        }
+        if let Some(force_visible) = overrides.and_then(|o| o.visible) {
+            panel.visible = if force_visible { 1 } else { 0 };
         }
 
         if let Some(trans) = overrides

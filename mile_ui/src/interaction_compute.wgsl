@@ -28,7 +28,8 @@ struct Panel {
     border_color: vec4<f32>,
     border_width: f32,
     border_radius: f32,
-    pad_border: vec2<f32>,
+    visible: u32,
+    _pad_border: u32,
 };
 
 struct PanelAnimDelta {
@@ -181,6 +182,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let panel = panels[idx];
+    if (panel.visible == 0u) {
+        return;
+    }
     let mouse = global_uniform.mouse_pos;
     let screen = vec2<f32>(global_uniform.screen_size);
 

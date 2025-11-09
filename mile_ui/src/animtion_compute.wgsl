@@ -44,7 +44,8 @@ struct Panel {
     border_color: vec4<f32>,
     border_width: f32,
     border_radius: f32,
-    pad_border: vec2<f32>,
+    visible: u32,
+    _pad_border: u32,
 };
 
 struct AnimtionFieldOffsetPtr {

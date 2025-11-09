@@ -49,6 +49,7 @@ pub struct BufferArena {
     pub collections: wgpu::Buffer,
     pub relations: wgpu::Buffer,
     pub relation_ids: wgpu::Buffer,
+    pub relation_work: wgpu::Buffer,
     pub indirect_draws: wgpu::Buffer,
     pub interaction_frames: wgpu::Buffer,
     pub debug_buffer: wgpu::Buffer,
@@ -121,6 +122,15 @@ impl BufferArena {
             mapped_at_creation: false,
         });
 
+        let relation_work = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui::relation-work"),
+            size: (cfg.max_relations as u64
+                * std::mem::size_of::<crate::runtime::_ty::GpuRelationWorkItem>() as u64)
+                .max(1),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let indirect_draws = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui::indirect-draws"),
             size: (cfg.max_panels as u64 * std::mem::size_of::<[u32; 5]>() as u64).max(1),
@@ -153,6 +163,7 @@ impl BufferArena {
             collections,
             relations,
             relation_ids,
+            relation_work,
             indirect_draws,
             interaction_frames,
             debug_buffer,

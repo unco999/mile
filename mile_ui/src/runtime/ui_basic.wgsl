@@ -24,6 +24,7 @@ struct VertexInput {
     @location(18) color: vec4<f32>,
     @location(19) border_color: vec4<f32>,
     @location(20) border: vec2<f32>,
+    @location(21) visible: u32,
 };
 
 struct GlobalUniform {
@@ -450,6 +451,22 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     var slot: u32 = 0u;
 
     let uv = input.uv_offset + input.uv * input.uv_scale;
+
+    if (input.visible == 0u) {
+        out.clip_position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        out.uv = vec2<f32>(0.0);
+        out.texture_id = U32_MAX;
+        out.transparent = 0.0;
+        out.color = vec4<f32>(0.0);
+        out.border_color = vec4<f32>(0.0);
+        out.border = vec2<f32>(0.0);
+        out.local_pos = vec2<f32>(0.0);
+        out.instance_size = vec2<f32>(0.0);
+        out.instance_pos = vec2<f32>(0.0);
+        out.fragment_shader_id = U32_MAX;
+        out.vertex_shader_id = U32_MAX;
+        return out;
+    }
 
     if (input.vertex_shader_id != U32_MAX) {
         let vertex_inputs = RenderImportInputs(

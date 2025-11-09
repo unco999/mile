@@ -539,7 +539,8 @@ pub struct Panel {
     // === 16-byte 块 8 ===
     pub border_width: f32,
     pub border_radius: f32,
-    pub pad_border: [f32; 2],
+    pub visible: u32,
+    pub _pad_border: u32,
 }
 
 #[repr(C, align(16))]
@@ -667,6 +668,19 @@ impl PanelAnimDelta {
             mapped_at_creation: false,
         })
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
+pub struct GpuRelationWorkItem {
+    pub panel_id: u32,
+    pub relation_flags: u32,
+    pub order: u32,
+    pub total: u32,
+    pub origin: [f32; 2],
+    pub container_size: [f32; 2],
+    pub slot_size: [f32; 2],
+    pub spacing: [f32; 2],
 }
 
 #[derive(Debug, Clone)]

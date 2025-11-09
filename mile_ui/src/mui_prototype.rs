@@ -268,6 +268,8 @@ pub struct PanelStateOverrides {
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
     pub transitions: HashMap<UiEventKind, UiState>,
+    #[serde(default)]
+    pub visible: Option<bool>,
 }
 
 /// Resolved visual/layout snapshot applied to a panel.
@@ -287,6 +289,8 @@ pub struct PanelSnapshot {
     pub vertex_shader_id: Option<u32>,
     #[serde(default)]
     pub quad_vertex: QuadBatchKind,
+    #[serde(default = "panel_snapshot_visible_default")]
+    pub visible: bool,
 }
 
 impl Default for PanelSnapshot {
@@ -301,8 +305,13 @@ impl Default for PanelSnapshot {
             fragment_shader_id: None,
             vertex_shader_id: None,
             quad_vertex: QuadBatchKind::Normal,
+            visible: true,
         }
     }
+}
+
+const fn panel_snapshot_visible_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -1239,6 +1248,11 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self
     }
 
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.definition.overrides.visible = Some(visible);
+        self
+    }
+
     pub fn container_layout(mut self, layout: RelLayoutKind) -> Self {
         self.rel.container_self(|spec| spec.layout = layout.clone());
         self
@@ -1578,10 +1592,7 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
             let mut state = state;
             {
                 let rel = state.rel();
-                rel.mutex_view::<TestCustomData>(panel_uuid);
-                rel.dep_view::<UiPanelData>(panel_uuid);
-                rel.attach::<UiPanelData>(panel_uuid, panel_field::position_x);
-                rel.container_with::<UiPanelData>(panel_uuid);
+
             }
             let state = state
                 .size(vec2(100.0, 100.0))
