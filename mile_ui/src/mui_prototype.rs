@@ -1594,7 +1594,7 @@ fn build_demo_panel_with_uuid(
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             state
-                .z_index(6)
+                .z_index(4)
                 .position(vec2(200.0, 200.0))
                 .texture("backgound.png")
                 .size(vec2(500.0, 500.0))
@@ -1604,6 +1604,7 @@ fn build_demo_panel_with_uuid(
         })
         .build()?;
 
+    
     let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
         .quad_vertex(QuadBatchKind::UltraVertex)
@@ -1645,34 +1646,6 @@ fn build_demo_panel_with_uuid(
                 .finish()
                 .state_transform_fade(0.2);
                 state
-        })
-        .state(UiState(1), |state| {
-            state
-                .size(vec2(200.0, 100.0))
-                .position(vec2(433.0, 333.0))
-                .color(Vec4::new(1.0, 0.0, 0.8, 1.0))
-                .z_index(5)
-                .border(BorderStyle {
-                    color: [1.0, 0.0, 0.0, 0.0],
-                    width: 5.0,
-                    radius: 1.0,
-                })
-                .events()
-                .on_event(UiEventKind::Click, |flow| {
-                    flow.payload().count += 1;
-                    flow.set_state(UiState(2));
-                })
-                .finish()
-        })
-        .state(UiState(2), |state| {
-            state
-                .position(vec2(0.0, 0.0))
-                .events()
-                .on_event(UiEventKind::Click, |flow| {
-                    flow.payload().count += 1;
-                    flow.set_state(UiState(0));
-                })
-                .finish()
         })
         .build()?;
 

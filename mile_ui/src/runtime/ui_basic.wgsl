@@ -493,7 +493,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     out.clip_position = to_clip_space(quad_pos);
 
     let normalized_z = f32(input.z_index) / 100.0;
-    out.clip_position.z = clamp(normalized_z, 0.0, 1.0);
+    out.clip_position.z = 1.0 - clamp(normalized_z, 0.0, 1.0);
 
     out.uv = uv;
     out.texture_id = input.texture_id;

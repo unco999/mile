@@ -56,14 +56,19 @@ var<storage, read_write> panel_deltas: array<PanelAnimDelta>;
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
-    if (idx >= arrayLength(&panels) || idx >= arrayLength(&panel_deltas)) {
+    if (idx >= arrayLength(&panels)) {
         return;
     }
 
-    let delta = panel_deltas[idx].delta_position;
+    let panel = panels[idx];
+    let panel_id = panel.id;
+    if (panel_id >= arrayLength(&panel_deltas)) {
+        return;
+    }
+
+    let delta = panel_deltas[panel_id].delta_position;
     if (delta.x != 0.0 || delta.y != 0.0) {
         panels[idx].position += delta;
-        panel_deltas[idx].delta_position = vec2<f32>(0.0);
+        panel_deltas[panel_id].delta_position = vec2<f32>(0.0);
     }
 }
-
