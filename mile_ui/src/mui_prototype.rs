@@ -972,6 +972,7 @@ pub fn trigger_event<TPayload: PanelPayload>(key: &PanelKey, event: UiEventKind)
 }
 
 /// Handle returned by `build` so tests can trigger events.
+#[derive(Clone)]
 pub struct PanelRuntimeHandle {
     key: PanelKey,
 }
@@ -985,6 +986,7 @@ impl PanelRuntimeHandle {
         &self.key
     }
 }
+
 
 /// Flow mode for the builder.
 enum FlowMode<TPayload: PanelPayload> {
@@ -1584,7 +1586,24 @@ fn frag_template(intensity: f32) -> Expr {
     wvec4(line.clone(), 0.0, line, 1.0)
 }
 
-fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHandle, DbError> {
+fn build_demo_panel_with_uuid(
+    panel_uuid: &'static str,
+) -> Result<Vec<PanelRuntimeHandle>, DbError> {
+
+    let test_container = Mui::<TestCustomData>::stateful("demo_container")?
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            state
+                .z_index(6)
+                .position(vec2(200.0, 200.0))
+                .texture("backgound.png")
+                .size(vec2(500.0, 500.0))
+                .events()
+                .on_event(UiEventKind::Drag, |_| {})
+                .finish()
+        })
+        .build()?;
+
     let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
         .default_state(UiState(0))
         .quad_vertex(QuadBatchKind::UltraVertex)
@@ -1610,7 +1629,6 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
                 //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
                 // })
-                .fragment_shader(|_flow| wvec4(0.0, 0.0, 0.0, 0.0))
                 .events()
                 .on_event(
                     UiEventKind::Drag,
@@ -1658,11 +1676,11 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
         })
         .build()?;
 
-    Ok(runtime)
+    Ok(vec![runtime, test_container])
 }
 
 /// Demonstration that mirrors the existing builder usage.
-pub fn build_demo_panel() -> Result<PanelRuntimeHandle, DbError> {
+pub fn build_demo_panel() -> Result<Vec<PanelRuntimeHandle>, DbError> {
     build_demo_panel_with_uuid("inventory_panel")
 }
 
@@ -1736,9 +1754,10 @@ mod tests {
 
     #[test]
     fn demo_panel_states_and_events_roundtrip() {
-        let handle = build_demo_panel_with_uuid(TEST_PANEL_UUID).expect("demo panel builds");
+        let handles = build_demo_panel_with_uuid(TEST_PANEL_UUID).expect("demo panel builds");
+        let runtime_handle = handles.first().expect("runtime handle present");
 
-        let mut record = read_counter_record(handle.key());
+        let mut record = read_counter_record(runtime_handle.key());
         assert_eq!(record.default_state, Some(UiState(0)));
         assert_eq!(record.current_state, UiState(0));
         assert_eq!(record.data.count, 0);
@@ -1766,15 +1785,15 @@ mod tests {
             Some(&UiState(0))
         );
 
-        handle.trigger::<UiPanelData>(UiEventKind::Click);
-        record = read_counter_record(handle.key());
-        assert_eq!(record.current_state, UiState(1));
-        assert_eq!(record.data.count, 1);
-        assert_eq!(record.pending_animations.len(), 1);
+            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+            record = read_counter_record(runtime_handle.key());
+            assert_eq!(record.current_state, UiState(1));
+            assert_eq!(record.data.count, 1);
+            assert_eq!(record.pending_animations.len(), 1);
 
-        handle.trigger::<UiPanelData>(UiEventKind::Click);
-        record = read_counter_record(handle.key());
-        assert_eq!(record.current_state, UiState(0));
-        assert_eq!(record.data.count, 2);
-    }
+            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+            record = read_counter_record(runtime_handle.key());
+            assert_eq!(record.current_state, UiState(0));
+            assert_eq!(record.data.count, 2);
+        }
 }

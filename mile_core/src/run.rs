@@ -11,7 +11,7 @@ use mile_gpu_dsl::prelude::{
 };
 use mile_graphics::structs::WGPUContext;
 use mile_ui::{
-    mui_prototype::build_demo_panel,
+    mui_prototype::{build_demo_panel, PanelRuntimeHandle},
     prelude::*,
     runtime::{BufferArenaConfig, MuiRuntime},
 };
@@ -49,6 +49,7 @@ pub struct App {
     pub last_frame_time: Instant,
     pub delta_time: Duration,
     pub frame_index: u32,
+    pub demo_panel_handles: Vec<PanelRuntimeHandle>,
 }
 
 impl App {
@@ -64,6 +65,7 @@ impl App {
             last_frame_time: Instant::now(),
             delta_time: Duration::from_secs_f32(0.0),
             frame_index: 0,
+            demo_panel_handles: Vec::new(),
         }
     }
 
@@ -343,15 +345,19 @@ impl ApplicationHandler<AppEvent> for App {
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
                 {
                     if let Some(runtime_cell) = &self.mui_runtime {
-                        if runtime_cell.borrow().panel_instances.is_empty() {
-                            if build_demo_panel().is_ok() {
-                                let ctx = self.wgpu_context.as_ref().unwrap();
-                                let mut runtime = runtime_cell.borrow_mut();
-                                runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
-                                runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-                            }
+                    if runtime_cell.borrow().panel_instances.is_empty() {
+                        if let Ok(handles) = build_demo_panel() {
+                            self.demo_panel_handles = handles;
+                            let ctx = self.wgpu_context.as_ref().unwrap();
+                            let mut runtime = runtime_cell.borrow_mut();
+                            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+                            runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+                             for panel in runtime.panel_instances() {
+                                 println!("panel {:?} at {:?}", panel.id, panel.position);
+                             }
                         }
                     }
+                }
                 }
             }
             _ => {}

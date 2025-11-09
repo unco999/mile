@@ -491,7 +491,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     
 
     out.clip_position = to_clip_space(quad_pos);
-    out.clip_position.z = f32(0.0);
+
+    let normalized_z = f32(input.z_index) / 100.0;
+    out.clip_position.z = clamp(normalized_z, 0.0, 1.0);
+
     out.uv = uv;
     out.texture_id = input.texture_id;
     out.transparent = input.transparent;
@@ -515,9 +518,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let tex = ui_textures[parent_index];
         let samp = ui_samplers[parent_index];
 
-        let uv_min = info.uv_min.xy;
-        let uv_max = info.uv_max.xy;
-        let atlas_uv = uv_min + (uv_max - uv_min) * input.uv;
+        let atlas_uv = input.uv;
         sampled = textureSample(tex, samp, atlas_uv);
     }
 
