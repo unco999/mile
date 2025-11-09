@@ -1613,34 +1613,20 @@ fn build_demo_panel_with_uuid(panel_uuid: &'static str) -> Result<PanelRuntimeHa
                 .fragment_shader(|_flow| wvec4(0.0, 0.0, 0.0, 0.0))
                 .events()
                 .on_event(
-                    UiEventKind::Click,
-                    |flow: &mut EventFlow<'_, TestCustomData>| {
+                    UiEventKind::Drag,
+                    |flow| {
                         let data = flow.payload();
                         data.count += 1;
                         println!("内部点击事件 {}", data.count);
 
-                        let intensity = data.count as f32;
-                        flow.request_fragment_shader(move |_scope| frag_template(intensity));
-                        flow.set_state(UiState(1));
+                        // let intensity = data.count as f32;
+                        // flow.request_fragment_shader(move |_scope| frag_template(intensity));
+                        // flow.set_state(UiState(1));
                     },
                 )
                 .finish()
                 .state_transform_fade(0.2);
-            state
-                .events()
-                .on_event(UiEventKind::Drag, |flow| {
-                    {
-                        let data = flow.payload();
-                        data.count += 1;
-                        flow.set_state(UiState(1));
-                    }
-                    flow.push_animation(
-                        AnimBuilder::new(AnimProperty::Size)
-                            .to(vec2(3.0, 3.0))
-                            .build(),
-                    );
-                })
-                .finish()
+                state
         })
         .state(UiState(1), |state| {
             state

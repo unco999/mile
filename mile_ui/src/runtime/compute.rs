@@ -29,6 +29,7 @@ pub struct FrameComputeContext<'a> {
 pub struct ComputePipelines {
     pub interaction: InteractionComputeStage,
     pub relations: RelationComputeStage,
+    pub panel_delta: PanelDeltaStage,
     pub animation: AnimationComputeStage,
 }
 
@@ -42,6 +43,7 @@ impl ComputePipelines {
         Self {
             interaction: InteractionComputeStage::new(device, buffers, global_uniform, event_hub),
             relations: RelationComputeStage::new(device, buffers),
+            panel_delta: PanelDeltaStage::new(device, buffers),
             animation: AnimationComputeStage::new(device, buffers, global_uniform),
         }
     }
@@ -52,14 +54,26 @@ impl ComputePipelines {
         buffers: &BufferViewSet<'_>,
         ctx: &FrameComputeContext<'_>,
     ) {
+        let mut delta_needed = false;
         if self.interaction.is_dirty() {
             self.interaction.encode(pass, buffers, ctx);
+            delta_needed = true;
         }
         if self.relations.is_dirty() {
             self.relations.encode(pass, buffers, ctx);
+            delta_needed = true;
         }
         if self.animation.is_dirty() {
             self.animation.encode(pass, buffers, ctx);
+            delta_needed = true;
+        }
+
+        if delta_needed {
+            self.panel_delta.set_dirty();
+        }
+
+        if self.panel_delta.is_dirty() {
+            self.panel_delta.encode(pass, buffers, ctx);
         }
     }
 
@@ -97,7 +111,10 @@ impl ComputePipelines {
 
     #[inline]
     pub fn is_any_dirty(&self) -> bool {
-        self.interaction.is_dirty() || self.relations.is_dirty() || self.animation.is_dirty()
+        self.interaction.is_dirty()
+            || self.relations.is_dirty()
+            || self.animation.is_dirty()
+            || self.panel_delta.is_dirty()
     }
 
     pub fn rebuild_interaction_bind_group(
@@ -109,6 +126,7 @@ impl ComputePipelines {
         self.interaction
             .rebuild_bind_group(device, buffers, global_uniform);
         self.interaction.set_dirty();
+        self.panel_delta.rebuild_bind_group(device, buffers);
     }
 
     pub fn rebuild_animation_bind_group(
@@ -120,6 +138,7 @@ impl ComputePipelines {
         self.animation
             .rebuild_bind_groups(device, buffers, global_uniform);
         self.animation.set_dirty();
+        self.panel_delta.rebuild_bind_group(device, buffers);
     }
 
     pub fn update_animation_count(&mut self, count: u32) {
@@ -900,6 +919,130 @@ impl RelationComputeStage {
         _queue: &wgpu::Queue,
         _ctx: &FrameComputeContext<'_>,
     ) {
+    }
+}
+
+pub struct PanelDeltaStage {
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    dirty: bool,
+}
+
+impl PanelDeltaStage {
+    const WORKGROUP_SIZE: u32 = 64;
+
+    pub fn new(device: &wgpu::Device, buffers: &BufferArena) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui::panel-delta-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ui::panel-delta-pipeline-layout"),
+            bind_group_layouts: &[&layout],
+            push_constant_ranges: &[],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ui::panel-delta-apply"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("panel_delta_apply.wgsl").into()),
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("ui::panel-delta-apply"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::panel-delta-bind-group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.panel_anim_delta.as_entire_binding(),
+                },
+            ],
+        });
+
+        Self {
+            pipeline,
+            bind_group,
+            dirty: false,
+        }
+    }
+
+    pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, buffers: &BufferArena) {
+        let layout = self.pipeline.get_bind_group_layout(0);
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::panel-delta-bind-group"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffers.instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.panel_anim_delta.as_entire_binding(),
+                },
+            ],
+        });
+        self.dirty = true;
+    }
+
+    #[inline]
+    pub fn set_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    #[inline]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub fn encode(
+        &mut self,
+        pass: &mut wgpu::ComputePass<'_>,
+        _buffers: &BufferViewSet<'_>,
+        ctx: &FrameComputeContext<'_>,
+    ) {
+        if !self.dirty || ctx.panel_count == 0 {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        let workgroups = (ctx.panel_count + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
+        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+        self.dirty = false;
     }
 }
 

@@ -61,7 +61,7 @@ const REL_LAYOUT_MASK: u32 = 0xFu;
 const REL_TRANSITION_IMMEDIATE: u32 = 0u;
 const REL_TRANSITION_TIMED: u32 = 1u;
 
-fn layout_position(item: RelWorkItem) -> vec2<f32> {
+fn layout_offset(item: RelWorkItem) -> vec2<f32> {
     let idx = f32(item.order);
     var pos = item.origin;
     switch (item.relation_flags & REL_LAYOUT_MASK) {
@@ -86,6 +86,13 @@ fn layout_position(item: RelWorkItem) -> vec2<f32> {
     return pos;
 }
 
+fn fetch_container_delta(container_id: u32) -> vec2<f32> {
+    if (container_id >= arrayLength(&panel_deltas)) {
+        return vec2<f32>(0.0);
+    }
+    return panel_deltas[container_id].delta_position;
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -99,7 +106,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let _target = layout_position(item);
-    panel_deltas[panel_index].delta_position = _target;
+    let layout_pos = layout_offset(item);
+    let container_delta = fetch_container_delta(item.container_id);
+    let final_delta = layout_pos + container_delta;
+
+    panel_deltas[panel_index].delta_position = final_delta;
     panel_deltas[panel_index].delta_size = item.slot_size;
 }

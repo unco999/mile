@@ -188,13 +188,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let mouse = global_uniform.mouse_pos;
     let screen = vec2<f32>(global_uniform.screen_size);
 
-    let hovered = mouse_inside(panel, mouse);
     let mouse_pressed = (global_uniform.mouse_state & MOUSE_LEFT_HELD) != 0u;
     let mouse_released = (global_uniform.mouse_state & MOUSE_LEFT_RELEASED) != 0u;
     let press_duration = global_uniform.press_duration;
-        
+    let hovered = mouse_inside(panel, mouse);
+    let was_dragging = frame_cache[0].drag_id == panel.id;
+    let is_dragging = frame_cache[1].drag_id == panel.id;
 
-    if (!hovered) {
+    if (!hovered && !was_dragging && !is_dragging) {
         return;
     }
 
@@ -221,7 +222,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (claim_drag(panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].drag_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
-            frame_cache[1].event_point = mouse - panel.position;
+            if (!was_dragging) {
+                frame_cache[1].event_point = mouse - panel.position;
+            }
+        }
+    }
+
+    if ((panel.interaction & INTERACTION_DRAG) != 0u) {
+        let active_drag_id = frame_cache[1].drag_id;
+        if (active_drag_id == panel.id && panel.id < arrayLength(&panel_anim_delta)) {
+            let anchor = frame_cache[1].event_point;
+            let _target = mouse - anchor;
+            let delta = _target - panel.position;
+            panel_anim_delta[panel.id].delta_position = delta;
         }
     }
 }
