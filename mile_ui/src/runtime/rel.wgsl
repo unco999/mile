@@ -20,13 +20,18 @@ struct PanelAnimDelta {
 
 struct RelWorkItem {
     panel_id: u32,
+    container_id: u32,
     relation_flags: u32,
     order: u32,
     total: u32,
+    _pad0: u32,
     origin: vec2<f32>,
     container_size: vec2<f32>,
     slot_size: vec2<f32>,
     spacing: vec2<f32>,
+    padding: vec4<f32>,
+    percent: vec2<f32>,
+    scale: vec2<f32>,
 };
 
 struct RelArgs {
@@ -46,11 +51,14 @@ var<uniform> rel_args: RelArgs;
 const REL_LAYOUT_FREE: u32 = 0u;
 const REL_LAYOUT_HORIZONTAL: u32 = 1u;
 const REL_LAYOUT_VERTICAL: u32 = 2u;
+const REL_LAYOUT_GRID: u32 = 3u;
+const REL_LAYOUT_RING: u32 = 4u;
+const REL_LAYOUT_MASK: u32 = 0xFu;
 
 fn layout_position(item: RelWorkItem) -> vec2<f32> {
     let idx = f32(item.order);
     var pos = item.origin;
-    switch (item.relation_flags & 0xFu) {
+    switch (item.relation_flags & REL_LAYOUT_MASK) {
         case REL_LAYOUT_HORIZONTAL: {
             let step = item.slot_size.x + item.spacing.x;
             pos.x = item.origin.x + idx * step;
@@ -58,6 +66,12 @@ fn layout_position(item: RelWorkItem) -> vec2<f32> {
         case REL_LAYOUT_VERTICAL: {
             let step = item.slot_size.y + item.spacing.y;
             pos.y = item.origin.y + idx * step;
+        }
+        case REL_LAYOUT_GRID: {
+            // Placeholder: treat as free until grid layout is implemented.
+        }
+        case REL_LAYOUT_RING: {
+            // Placeholder for future ring layouts.
         }
         default: {
             // free layout uses origin directly

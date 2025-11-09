@@ -833,13 +833,18 @@ impl RelationComputeStage {
         for item in work.into_iter().take(self.capacity as usize) {
             gpu_items.push(GpuRelationWorkItem {
                 panel_id: item.panel_id,
+                container_id: item.container_id,
                 relation_flags: item.layout_flags,
                 order: item.order,
                 total: if item.total == 0 { 1 } else { item.total },
+                _pad0: 0,
                 origin: item.origin,
                 container_size: item.size,
                 slot_size: item.slot,
                 spacing: item.spacing,
+                padding: item.padding,
+                percent: item.percent,
+                scale: item.scale,
             });
         }
 
