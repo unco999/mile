@@ -1589,10 +1589,14 @@ fn frag_template(intensity: f32) -> Expr {
 fn build_demo_panel_with_uuid(
     panel_uuid: &'static str,
 ) -> Result<Vec<PanelRuntimeHandle>, DbError> {
+    let mut handles = Vec::new();
 
     let test_container = Mui::<TestCustomData>::stateful("demo_container")?
         .default_state(UiState(0))
         .state(UiState(0), |state| {
+            let mut state = state;
+            let mut rel = state.rel();
+
             state
                 .z_index(4)
                 .position(vec2(200.0, 200.0))
@@ -1603,53 +1607,42 @@ fn build_demo_panel_with_uuid(
                 .finish()
         })
         .build()?;
+    handles.push(test_container);
 
-    
-    let runtime = Mui::<TestCustomData>::stateful(panel_uuid)?
-        .default_state(UiState(0))
-        .quad_vertex(QuadBatchKind::UltraVertex)
-        .state(UiState(0), |state: StateStageBuilder<TestCustomData>| {
-            let mut state = state;
-            {
-                let rel = state.rel();
+    let cols = 10;
+    let spacing = vec2(140.0, 140.0);
+    let origin = vec2(80.0, 80.0);
 
-            }
-            let state = state
-                .size(vec2(100.0, 100.0))
-                .position(vec2(333.0, 333.0))
-                .border(BorderStyle {
-                    color: [1.0, 0.0, 0.0, 1.0],
-                    width: 10.0,
-                    radius: 0.0,
-                })
-                .z_index(5)
-                // .vertex_shader(|_flow| {
-                //     let r = cv("time");
-                //     let sin = sin(r);
-                //     let uv = rv("uv").y();
-                //     let scan = IF::of(IF::le(uv - sin, 0.01), 1.0, 0.0);
-                //     wvec4(scan.clone(), 0.0, 1.0, 1.0)
-                // })
-                .events()
-                .on_event(
-                    UiEventKind::Drag,
-                    |flow| {
-                        let data = flow.payload();
-                        data.count += 1;
-                        println!("内部点击事件 {}", data.count);
+    for idx in 0..100 {
+        let row = idx / cols;
+        let col = idx % cols;
+        let position = origin + vec2(col as f32, row as f32) * spacing;
+        let label = Box::leak(format!("{panel_uuid}_{idx}").into_boxed_str());
 
-                        // let intensity = data.count as f32;
-                        // flow.request_fragment_shader(move |_scope| frag_template(intensity));
-                        // flow.set_state(UiState(1));
-                    },
-                )
-                .finish()
-                .state_transform_fade(0.2);
+        let panel = Mui::<TestCustomData>::stateful(label)?
+            .default_state(UiState(0))
+            .quad_vertex(QuadBatchKind::UltraVertex)
+            .state(UiState(0), move |state: StateStageBuilder<TestCustomData>| {
                 state
-        })
-        .build()?;
+                    .size(vec2(100.0, 100.0))
+                    .position(position)
+                    .border(BorderStyle {
+                        color: [1.0, 0.0, 0.0, 1.0],
+                        width: 4.0,
+                        radius: 6.0,
+                    })
+                    .events()
+                    .on_event(UiEventKind::Drag, |flow| {
+                        flow.payload().count += 1;
+                    })
+                    .finish()
+            })
+            .build()?;
 
-    Ok(vec![runtime, test_container])
+        handles.push(panel);
+    }
+
+    Ok(handles)
 }
 
 /// Demonstration that mirrors the existing builder usage.

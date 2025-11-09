@@ -1411,10 +1411,12 @@ impl MuiRuntime {
         }
         let size = size.unwrap_or([100.0, 100.0]);
 
-        let z_value = overrides
+        let base_z = overrides
             .and_then(|o| o.z_index)
             .unwrap_or(desc.snapshot.z_index)
             .max(0) as u32;
+        let z_bias = (desc.key.panel_id & 0x3F) as u32;
+        let z_value = base_z.saturating_add(z_bias).min(0x3FF);
 
         let pass_through = overrides.and_then(|o| o.pass_through).unwrap_or(0);
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
@@ -1790,7 +1792,7 @@ impl MuiRuntime {
 
         if pressed {
             // 持续按下累加时间
-            unitfrom_struct.press_duration += 0.033;
+            unitfrom_struct.press_duration += 0.016;
         }
 
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;

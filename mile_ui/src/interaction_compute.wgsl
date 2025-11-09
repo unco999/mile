@@ -121,7 +121,7 @@ const MOUSE_LEFT_RELEASED: u32 = 32u;
 const INTERACTION_CLICK: u32 = 2u;
 const INTERACTION_HOVER: u32 = 8u;
 const INTERACTION_DRAG: u32 = 4u;
-const DRAG_PRESS_THRESHOLD: f32 = 0.15;
+const DRAG_PRESS_THRESHOLD: f32 = 0.05;
 const DRAG_LOCK_INVALID: u32 = 0xffffffffu;
 
 @group(0) @binding(0) var<storage, read_write> panels: array<Panel>;
