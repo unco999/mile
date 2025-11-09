@@ -686,6 +686,10 @@ pub struct GpuRelationWorkItem {
     pub padding: [f32; 4],
     pub percent: [f32; 2],
     pub scale: [f32; 2],
+    pub entry_mode: u32,
+    pub exit_mode: u32,
+    pub entry_param: f32,
+    pub exit_param: f32,
 }
 
 #[derive(Debug, Clone)]

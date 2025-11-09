@@ -845,6 +845,10 @@ impl RelationComputeStage {
                 padding: item.padding,
                 percent: item.percent,
                 scale: item.scale,
+                entry_mode: item.entry_mode,
+                entry_param: item.entry_param,
+                exit_mode: item.exit_mode,
+                exit_param: item.exit_param,
             });
         }
 

@@ -7,8 +7,8 @@ use std::{
 use crate::{
     mui_prototype::{PanelKey, UiState, panel_numeric_id, registered_panel_keys},
     mui_rel::{
-        RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelParsedGraph, RelNodeState,
-        RelSpace, RelViewKey,
+        RelContainerLinkState, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelParsedGraph,
+        RelNodeState, RelSpace, RelTransition, RelViewKey,
     },
 };
 
@@ -48,6 +48,10 @@ pub struct RelationWorkItem {
     pub padding: [f32; 4],
     pub percent: [f32; 2],
     pub scale: [f32; 2],
+    pub entry_mode: u32,
+    pub entry_param: f32,
+    pub exit_mode: u32,
+    pub exit_param: f32,
 }
 
 impl Default for RelationWorkItem {
@@ -66,6 +70,10 @@ impl Default for RelationWorkItem {
             padding: [0.0; 4],
             percent: [0.0, 0.0],
             scale: [1.0, 1.0],
+            entry_mode: 0,
+            entry_param: 0.0,
+            exit_mode: 0,
+            exit_param: 0.0,
         }
     }
 }
@@ -126,25 +134,25 @@ impl RelationRegistry {
     ) -> Vec<RelationWorkItem> {
         let mut items = Vec::new();
         for node in graph.nodes.values() {
-            if node.container_links.is_empty() {
-                continue;
-            }
-            let Some(container_panel_id) = resolve_panel_id(&node.key) else {
-                continue;
-            };
-            let Some(spec) = self.active_container_spec(container_panel_id) else {
-                eprintln!(
-                    "[mui::rel] panel {panel_id}: container '{}' missing spec; \
+            for link in &node.container_links {
+                let Some(container_panel_id) = resolve_panel_id(&link.target) else {
+                    continue;
+                };
+                let Some(spec) = self.active_container_spec(container_panel_id) else {
+                    eprintln!(
+                        "[mui::rel] panel {panel_id}: container '{}' missing spec; \
                      consider calling container_self on that panel state.",
-                    node.key.panel_uuid
-                );
-                continue;
-            };
-            items.push(self.build_container_work_item(
-                panel_id,
-                container_panel_id,
-                spec,
-            ));
+                        link.target.panel_uuid
+                    );
+                    continue;
+                };
+                items.push(self.build_container_work_item(
+                    panel_id,
+                    container_panel_id,
+                    spec,
+                    link,
+                ));
+            }
         }
         items
     }
@@ -154,6 +162,7 @@ impl RelationRegistry {
         child_panel_id: u32,
         container_panel_id: u32,
         spec: &RelContainerSpec,
+        link: &RelContainerLinkState,
     ) -> RelationWorkItem {
         let (mut layout_flags, spacing) = encode_layout(spec);
         if spec.size_percent_of_parent.is_some() {
@@ -167,6 +176,8 @@ impl RelationRegistry {
             .unwrap_or([0.0f32, 0.0f32]);
         let size = spec.size.unwrap_or(slot);
 
+        let (entry_mode, entry_param) = encode_transition(&link.entry);
+        let (exit_mode, exit_param) = encode_transition(&link.exit);
         RelationWorkItem {
             panel_id: child_panel_id,
             container_id: container_panel_id,
@@ -185,6 +196,10 @@ impl RelationRegistry {
             padding: spec.padding,
             percent: spec.size_percent_of_parent.unwrap_or([0.0, 0.0]),
             scale: spec.element_scale,
+            entry_mode,
+            entry_param,
+            exit_mode,
+            exit_param,
         }
     }
 
@@ -209,14 +224,13 @@ impl RelationRegistry {
                 continue;
             };
             for node in graph.nodes.values() {
-                if node.container_links.is_empty() {
-                    continue;
-                }
-                if let Some(container_panel_id) = resolve_panel_id(&node.key) {
-                    self.container_members
-                        .entry(container_panel_id)
-                        .or_default()
-                        .push(panel_id);
+                for link in &node.container_links {
+                    if let Some(container_panel_id) = resolve_panel_id(&link.target) {
+                        self.container_members
+                            .entry(container_panel_id)
+                            .or_default()
+                            .push(panel_id);
+                    }
                 }
             }
         }
@@ -363,6 +377,16 @@ fn encode_space(space: RelSpace) -> u32 {
         RelSpace::Screen => layout_flags::SPACE_SCREEN,
         RelSpace::Parent => layout_flags::SPACE_PARENT,
         RelSpace::Local => layout_flags::SPACE_LOCAL,
+    }
+}
+
+const TRANSITION_MODE_IMMEDIATE: u32 = 0;
+const TRANSITION_MODE_TIMED: u32 = 1;
+
+fn encode_transition(transition: &RelTransition) -> (u32, f32) {
+    match transition {
+        RelTransition::Immediate => (TRANSITION_MODE_IMMEDIATE, 0.0),
+        RelTransition::Timed(duration) => (TRANSITION_MODE_TIMED, *duration),
     }
 }
 

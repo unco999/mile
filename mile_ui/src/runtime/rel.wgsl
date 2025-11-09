@@ -32,6 +32,10 @@ struct RelWorkItem {
     padding: vec4<f32>,
     percent: vec2<f32>,
     scale: vec2<f32>,
+    entry_mode: u32,
+    exit_mode: u32,
+    entry_param: f32,
+    exit_param: f32,
 };
 
 struct RelArgs {
@@ -54,6 +58,8 @@ const REL_LAYOUT_VERTICAL: u32 = 2u;
 const REL_LAYOUT_GRID: u32 = 3u;
 const REL_LAYOUT_RING: u32 = 4u;
 const REL_LAYOUT_MASK: u32 = 0xFu;
+const REL_TRANSITION_IMMEDIATE: u32 = 0u;
+const REL_TRANSITION_TIMED: u32 = 1u;
 
 fn layout_position(item: RelWorkItem) -> vec2<f32> {
     let idx = f32(item.order);

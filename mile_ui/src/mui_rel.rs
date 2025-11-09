@@ -126,6 +126,25 @@ impl Default for RelScrollAxis {
     }
 }
 
+/// Describes how a view transitions when entering or exiting a container.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RelTransition {
+    Immediate,
+    Timed(f32),
+}
+
+impl RelTransition {
+    pub fn timed(seconds: f32) -> Self {
+        RelTransition::Timed(seconds.max(0.0))
+    }
+}
+
+impl Default for RelTransition {
+    fn default() -> Self {
+        RelTransition::Immediate
+    }
+}
+
 /// Layout metadata a relation owner can expose for consumers that call `container_with`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RelContainerSpec {
@@ -312,6 +331,8 @@ pub enum RelRule {
     },
     ContainerLink {
         target: RelViewKey,
+        entry: RelTransition,
+        exit: RelTransition,
     },
 }
 
@@ -321,7 +342,7 @@ impl RelRule {
             RelRule::Mutex { target }
             | RelRule::Dependency { target }
             | RelRule::AttachField { target, .. }
-            | RelRule::ContainerLink { target } => Some(target),
+            | RelRule::ContainerLink { target, .. } => Some(target),
         }
     }
 }
@@ -505,7 +526,45 @@ impl RelComposer {
     pub fn container_with<T: 'static>(&mut self, panel_uuid: impl Into<String>) -> &mut Self {
         let panel_uuid = panel_uuid.into();
         let target = RelViewKey::for_panel::<T>(panel_uuid);
-        self.push_rule(RelRule::ContainerLink { target });
+        self.push_rule(RelRule::ContainerLink {
+            target,
+            entry: RelTransition::Immediate,
+            exit: RelTransition::Immediate,
+        });
+        self
+    }
+
+    pub fn with_container_entry<T: 'static>(
+        &mut self,
+        panel_uuid: impl Into<String>,
+        transition: RelTransition,
+    ) -> &mut Self {
+        let panel_uuid = panel_uuid.into();
+        let key = RelViewKey::for_panel::<T>(panel_uuid);
+        if !self.modify_container_link(&key, |entry, _| *entry = transition.clone()) {
+            self.push_rule(RelRule::ContainerLink {
+                target: key,
+                entry: transition,
+                exit: RelTransition::Immediate,
+            });
+        }
+        self
+    }
+
+    pub fn with_container_exit<T: 'static>(
+        &mut self,
+        panel_uuid: impl Into<String>,
+        transition: RelTransition,
+    ) -> &mut Self {
+        let panel_uuid = panel_uuid.into();
+        let key = RelViewKey::for_panel::<T>(panel_uuid);
+        if !self.modify_container_link(&key, |_, exit| *exit = transition.clone()) {
+            self.push_rule(RelRule::ContainerLink {
+                target: key,
+                entry: RelTransition::Immediate,
+                exit: transition,
+            });
+        }
         self
     }
 
@@ -516,7 +575,12 @@ impl RelComposer {
         let panel_uuid = panel_uuid.into();
         let key = RelViewKey::for_panel::<T>(panel_uuid);
         self.remove_matching(
-            |rule| matches!(rule, RelRule::ContainerLink { target } if target == &key),
+            |rule| {
+                matches!(
+                    rule,
+                    RelRule::ContainerLink { target, .. } if target == &key
+                )
+            },
         );
         self
     }
@@ -674,6 +738,26 @@ impl RelComposer {
         self.rules.retain(|entry| !predicate(&entry.rule));
     }
 
+    fn modify_container_link<F>(&mut self, key: &RelViewKey, mut apply: F) -> bool
+    where
+        F: FnOnce(&mut RelTransition, &mut RelTransition),
+    {
+        for rule_entry in &mut self.rules {
+            if let RelRule::ContainerLink {
+                target,
+                entry,
+                exit,
+            } = &mut rule_entry.rule
+            {
+                if target == key {
+                    apply(entry, exit);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn push_rule(&mut self, rule: RelRule) -> RelRuleId {
         let id = RelRuleId::new(self.next_rule_id);
         self.next_rule_id += 1;
@@ -710,7 +794,7 @@ pub struct RelNodeState {
     pub dependencies: Vec<RelRuleId>,
     pub mutex_group: Vec<RelRuleId>,
     pub attached_fields: Vec<RelRuleId>,
-    pub container_links: Vec<RelRuleId>,
+    pub container_links: Vec<RelContainerLinkState>,
     pub properties: Vec<RelProperty>,
 }
 
@@ -725,6 +809,14 @@ impl RelNodeState {
             properties: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct RelContainerLinkState {
+    pub rule: RelRuleId,
+    pub target: RelViewKey,
+    pub entry: RelTransition,
+    pub exit: RelTransition,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -820,11 +912,20 @@ impl RelParser {
                 .entry(target_key.clone())
                 .or_insert_with(|| RelNodeState::new(target_key));
 
-            match entry.rule {
+            match &entry.rule {
                 RelRule::Mutex { .. } => node.mutex_group.push(entry.id),
                 RelRule::Dependency { .. } => node.dependencies.push(entry.id),
                 RelRule::AttachField { .. } => node.attached_fields.push(entry.id),
-                RelRule::ContainerLink { .. } => node.container_links.push(entry.id),
+                RelRule::ContainerLink {
+                    target,
+                    entry: entry_transition,
+                    exit: exit_transition,
+                } => node.container_links.push(RelContainerLinkState {
+                    rule: entry.id,
+                    target: target.clone(),
+                    entry: entry_transition.clone(),
+                    exit: exit_transition.clone(),
+                }),
             }
         }
 
