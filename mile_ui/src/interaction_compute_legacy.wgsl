@@ -183,6 +183,10 @@ struct PanelAnimDelta {
      delta_texture_id: i32,     // 可选，整型存 texture 变化
      _pad2: u32,           // 补齐 16 字节
      _pad3: u32,           // 补齐 16 字节
+
+    // --- 起始位置 ---
+     start_position: vec2<f32>,
+     container_origin: vec2<f32>,
 }
 
 // fn try_set_click_layout(inst_id: u32, pass_through: u32) -> bool {

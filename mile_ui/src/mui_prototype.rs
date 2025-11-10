@@ -1,6 +1,9 @@
 use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
-    mui_rel::{RelComposer, RelGraphDefinition, RelLayoutKind, RelSpace, RelViewKey, panel_field},
+    mui_rel::{
+        RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis, RelSpace,
+        RelViewKey, panel_field,
+    },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         QuadBatchKind, register_payload_refresh,
@@ -1305,12 +1308,149 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
             .unwrap_or_else(|err| panic!("failed to load style '{key}': {err}"))
     }
 
+    pub fn container_style(mut self) -> ContainerStyleBuilder<TPayload> {
+        let spec = self.rel.container_spec().cloned();
+        ContainerStyleBuilder {
+            parent: self,
+            spec,
+            dirty: false,
+        }
+    }
+
     pub fn events(self) -> InteractionStageBuilder<TPayload> {
         InteractionStageBuilder {
             parent: self,
             stage: InteractionStage::default(),
             last_event: None,
         }
+    }
+}
+
+pub struct ContainerStyleBuilder<TPayload: PanelPayload> {
+    parent: StateStageBuilder<TPayload>,
+    spec: Option<RelContainerSpec>,
+    dirty: bool,
+}
+
+impl<TPayload: PanelPayload> ContainerStyleBuilder<TPayload> {
+    fn spec_mut(&mut self) -> &mut RelContainerSpec {
+        self.dirty = true;
+        self.spec.get_or_insert_with(RelContainerSpec::default)
+    }
+
+    pub fn space(mut self, space: RelSpace) -> Self {
+        self.spec_mut().space = space;
+        self
+    }
+
+    pub fn origin(mut self, origin: Vec2) -> Self {
+        self.spec_mut().origin = [origin.x, origin.y];
+        self
+    }
+
+    pub fn size(mut self, size: Vec2) -> Self {
+        self.spec_mut().size = Some([size.x, size.y]);
+        self
+    }
+
+    pub fn clear_size(mut self) -> Self {
+        if let Some(spec) = self.spec.as_mut() {
+            if spec.size.is_some() {
+                spec.size = None;
+                self.dirty = true;
+            }
+        }
+        self
+    }
+
+    pub fn size_percent_of_parent(mut self, percent: Vec2) -> Self {
+        self.spec_mut().size_percent_of_parent = Some([percent.x, percent.y]);
+        self
+    }
+
+    pub fn clear_size_percent(mut self) -> Self {
+        if let Some(spec) = self.spec.as_mut() {
+            if spec.size_percent_of_parent.is_some() {
+                spec.size_percent_of_parent = None;
+                self.dirty = true;
+            }
+        }
+        self
+    }
+
+    pub fn padding(mut self, padding: [f32; 4]) -> Self {
+        self.spec_mut().padding = padding;
+        self
+    }
+
+    pub fn clip_content(mut self, clip: bool) -> Self {
+        self.spec_mut().clip_content = clip;
+        self
+    }
+
+    pub fn scroll_axis(mut self, axis: RelScrollAxis) -> Self {
+        self.spec_mut().scroll_axis = axis;
+        self
+    }
+
+    pub fn layout(mut self, layout: RelLayoutKind) -> Self {
+        self.spec_mut().layout = layout;
+        self
+    }
+
+    pub fn configure_layout<F>(mut self, configure: F) -> Self
+    where
+        F: FnOnce(&mut RelLayoutKind),
+    {
+        configure(&mut self.spec_mut().layout);
+        self
+    }
+
+    pub fn slot_size(mut self, slot: Vec2) -> Self {
+        self.spec_mut().slot_size = Some([slot.x, slot.y]);
+        self
+    }
+
+    pub fn clear_slot_size(mut self) -> Self {
+        if let Some(spec) = self.spec.as_mut() {
+            if spec.slot_size.is_some() {
+                spec.slot_size = None;
+                self.dirty = true;
+            }
+        }
+        self
+    }
+
+    pub fn element_scale(mut self, scale: Vec2) -> Self {
+        self.spec_mut().element_scale = [scale.x, scale.y];
+        self
+    }
+
+    pub fn reset_element_scale(mut self) -> Self {
+        self.spec_mut().element_scale = [1.0, 1.0];
+        self
+    }
+
+    pub fn disable(mut self) -> Self {
+        self.spec = None;
+        self.dirty = true;
+        self
+    }
+
+    pub fn finish(mut self) -> StateStageBuilder<TPayload> {
+        if self.dirty {
+            match self.spec.take() {
+                Some(spec) => {
+                    self.parent
+                        .rel
+                        .container_self(move |target| *target = spec);
+                }
+                None => {
+                    self.parent.rel.clear_container_self();
+                }
+            }
+        }
+        self.parent
     }
 }
 
@@ -1595,10 +1735,12 @@ fn build_demo_panel_with_uuid(
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             let mut state = state;
-            let mut rel = state.rel();
 
             state
                 .z_index(4)
+                .container_style()
+                    .size(vec2(100.0, 100.0))
+                    .finish()
                 .position(vec2(200.0, 200.0))
                 .texture("backgound.png")
                 .size(vec2(500.0, 500.0))

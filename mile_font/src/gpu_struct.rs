@@ -1,5 +1,7 @@
 // Cargo.toml: bytemuck = "1", bitflags = "2", ahash = "0.8"
 
+use std::collections::HashMap;
+
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
 
@@ -29,6 +31,41 @@ bitflags! {
         const STRIKE     = 1 << 2; // line-through
         // 预留位
     }
+}
+
+/**
+ * 每个instance 负责一个字构造
+ * 每个面板一个字 最主要的是动态大小的这个偏移索引
+ * 所谓的索引 就是我们 字形印版 在  sdf纹理里面的坐标
+ * 我们只要一个连续的索引在buffer中的位置 
+ * 如果 这个缓冲区满了 我们把长期有效记录 更新到持久缓存的位置
+ */
+pub struct GpuGlyphInfo<'a>{
+    pub offset_range:&'a GpuOffsetRange
+}
+
+
+/**
+ * 这个其实也是  字形文件的key  为什么呢  
+ * 因为他的buffer的偏移是唯一的
+ * 每个buffer 片段可以拿这个做唯一标识
+ */
+#[derive(Hash,PartialEq, Eq, PartialOrd, Ord)]
+pub struct GpuOffsetRange{
+    pub offset_start:wgpu::BufferAddress,
+    pub end_start:wgpu::BufferAddress
+}
+
+pub struct FontSDFIndexDynamicArea<'a>{
+      // 字形信息缓冲区（环形缓冲区）
+    pub glyph_buffer: HashMap<GpuOffsetRange,GpuGlyphInfo<'a>>,  
+      // 持久缓存区
+    pub persistent_cache: HashMap<GpuOffsetRange,GpuGlyphInfo<'a>>,
+    
+    pub head_idx: usize,   // 热缓存的头部索引
+    pub tail_idx: usize,   // 热缓存的尾部索引
+    pub hot_cache_capacity: usize,  // 热缓存区的容量
+    pub valid_size: usize, // 当前有效数据的大小
 }
 
 // ---- GPU 端可直接写入的样式（全部数值化）----

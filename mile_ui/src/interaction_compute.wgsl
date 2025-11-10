@@ -53,7 +53,7 @@ struct PanelAnimDelta {
     _pad2: vec2<f32>,
 
     start_position: vec2<f32>,
-    _pad3: vec2<f32>,
+    container_origin: vec2<f32>,
 }
 
 struct GlobalUniform {

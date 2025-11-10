@@ -642,7 +642,7 @@ pub struct PanelAnimDelta {
 
     // --- 起始位置 ---
     pub start_position: [f32; 2],
-    pub _pad3: [f32; 2], // ✅ 对齐补齐
+    pub container_origin: [f32; 2], // ✅ 对齐补齐
 }
 
 impl PanelAnimDelta {
