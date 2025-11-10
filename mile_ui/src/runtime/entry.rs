@@ -1,6 +1,6 @@
-//! High level UI runtime orchestrator.
+﻿//! High level UI runtime orchestrator.
 //!
-//! This module exposes `MuiRuntime`, a lightweight façade that ties together the new
+//! This module exposes `MuiRuntime`, a lightweight fa莽ade that ties together the new
 //! runtime building blocks (buffer arena, render batches, CPU state) while also wiring
 //! in the global event bus and UI database.  The goal is to offer a centralized entry
 //! point that gradually replaces the gigantic `GpuUi` struct in `mui.rs`.
@@ -19,8 +19,8 @@ use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
     relations::{
-        RelationWorkItem, clear_panel_relations, inject_relation_work, layout_flags,
-        set_panel_active_state,
+        RelationWorkItem, clear_panel_relations, flush_pending_relations, inject_relation_work,
+        layout_flags, set_panel_active_state,
     },
     render::{QuadBatchKind, RenderPipelines},
     state::{
@@ -202,11 +202,13 @@ pub struct MuiRuntime {
     shader_events: EventStream<KennelResultIdxEvent>,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
+    panel_index_lookup: Vec<u32>,
     panel_instances_dirty: bool,
     transitioning_panels: HashMap<u32, f32>,
     animation_descriptor: GpuAnimationDes,
     animation_field_cache: HashMap<(u32, u32), u32>,
     pub trace: RefCell<GpuDebug>,
+    pending_relation_flush: bool,
 }
 
 impl Renderable for MuiRuntime {
@@ -334,16 +336,18 @@ impl MuiRuntime {
             shader_events,
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
+            panel_index_lookup: vec![u32::MAX; (arena_cfg.max_panels as usize).max(1)],
             panel_instances_dirty: true,
             transitioning_panels: HashMap::new(),
             animation_descriptor: GpuAnimationDes::default(),
             animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime_render")),
+            pending_relation_flush: false,
         }
     }
 
     /**
-     * 调用图片材质总合成入�?     */
+     * 璋冪敤鍥剧墖鏉愯川鎬诲悎鎴愬叆锟?     */
     pub fn read_all_texture(&mut self) {
         self.texture_atlas_store.read_all_image();
     }
@@ -369,11 +373,23 @@ impl MuiRuntime {
                 size: [slot[0] * total as f32, slot[1]],
                 slot,
                 spacing,
+                flags: 0,
                 ..RelationWorkItem::default()
             });
         }
         inject_relation_work(items);
-        self.compute.borrow_mut().relations.set_dirty();
+    }
+
+    pub fn schedule_relation_flush(&mut self) {
+        self.pending_relation_flush = true;
+    }
+
+    pub fn flush_relation_work_if_needed(&mut self, queue: &Queue) {
+        if self.pending_relation_flush {
+            flush_pending_relations();
+            self.compute.borrow_mut().ingest_relation_work(queue);
+            self.pending_relation_flush = false;
+        }
     }
 
     #[inline]
@@ -533,6 +549,8 @@ impl MuiRuntime {
         queue.write_buffer(&self.buffers.instance, offset, cast_slice(panels));
         self.compute.borrow_mut().mark_interaction_dirty();
     }
+
+
 
     pub fn refresh_registered_payloads(&mut self, device: &Device, queue: &Queue) {
         let registry = payload_registry().lock().unwrap();
@@ -748,7 +766,6 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
-        self.compute.borrow_mut().ingest_relation_work(queue);
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -806,6 +823,7 @@ impl MuiRuntime {
         if let Some(instance) = self.panel_instances.get_mut(instance_index) {
             instance.state = transition.new_state.0;
         }
+        self.schedule_relation_flush();
     }
 
     fn enqueue_style_transition(
@@ -941,7 +959,6 @@ impl MuiRuntime {
         let panel_offset = Self::panel_offset(instance_index);
         let field_offset = offset_of!(Panel, state) as wgpu::BufferAddress;
         dbg!(
-            "写入状态 {} => {} :{}",
             panel_offset,
             field_offset,
             new_state
@@ -1088,7 +1105,7 @@ impl MuiRuntime {
                         resource: trace
                             .buffer
                             .as_ref()
-                            .expect("没有绑定trace-buffer")
+                            .expect("娌℃湁缁戝畾trace-buffer")
                             .as_entire_binding(),
                     },
                 ],
@@ -1273,13 +1290,12 @@ impl MuiRuntime {
                 }),
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: DepthBiasState::default(),
-                }),
-
+                      format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                      depth_write_enabled: true,
+                      depth_compare: wgpu::CompareFunction::Less,
+                      stencil: wgpu::StencilState::default(),
+                      bias: DepthBiasState::default(),
+                  }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
@@ -1411,13 +1427,13 @@ impl MuiRuntime {
         }
         let size = size.unwrap_or([100.0, 100.0]);
 
-        let base_z = overrides
-            .and_then(|o| o.z_index)
-            .unwrap_or(desc.snapshot.z_index)
-            .max(0) as u32;
-        let z_bias = (desc.key.panel_id & 0x3F) as u32;
-        let z_value = base_z.saturating_add(z_bias).min(0x3FF);
-
+        // let base_z = overrides
+        //     .and_then(|o| o.z_index)
+        //     .unwrap_or(desc.snapshot.z_index)
+        //     .max(0) as u32;
+        // let z_bias = (desc.key.panel_id & 0x3F) as u32;
+        // let z_value = base_z.saturating_add(z_bias).min(0x3FF);
+        let z_value = overrides.and_then(|o| o.z_index).unwrap_or(5) as u32;
         let pass_through = overrides.and_then(|o| o.pass_through).unwrap_or(0);
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
         let event_mask = overrides.and_then(|o| o.event_mask).unwrap_or(0);
@@ -1764,12 +1780,11 @@ impl MuiRuntime {
             & (MouseState::LEFT_DOWN.bits() | MouseState::RIGHT_DOWN.bits()))
             != 0;
         if !pressed {
-            // 弹起，重置按下时间
-            unitfrom_struct.press_duration = 0.0;
+            // 寮硅捣锛岄噸缃寜涓嬫椂闂?            unitfrom_struct.press_duration = 0.0;
             unitfrom_struct.mouse_state = MouseState::DEFAULT.bits();
         }
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;
-        // 写入 GPU buffer
+        // 鍐欏叆 GPU buffer
         queue.write_buffer(
             &buffer,
             offset,
@@ -1791,12 +1806,12 @@ impl MuiRuntime {
             != 0;
 
         if pressed {
-            // 持续按下累加时间
+            // 鎸佺画鎸変笅绱姞鏃堕棿
             unitfrom_struct.press_duration += 0.016;
         }
 
         let offset = offset_of!(GlobalUniform, press_duration) as wgpu::BufferAddress;
-        // 写入 GPU buffer
+        // 鍐欏叆 GPU buffer
         queue.write_buffer(
             &buffer,
             offset,
@@ -1928,8 +1943,8 @@ impl MuiRuntime {
         //             let old_frame = data[0];
         //             let new_frame = data[1];
 
-        //             // println!("cpu记录�?{:?}", frame);
-        //             // println!("显卡记录�?{:?}", new_frame.frame);
+        //             // println!("cpu璁板綍锟?{:?}", frame);
+        //             // println!("鏄惧崱璁板綍锟?{:?}", new_frame.frame);
 
         //             if new_frame.click_id != u32::MAX {
         //                 // hub.push(CpuPanelEvent::Click((
@@ -1962,7 +1977,7 @@ impl MuiRuntime {
 
         //             if (new_frame.hover_id != old_frame.hover_id) {
         //                 println!(
-        //                     "当前退出了out {:?} {:?}",
+        //                     "褰撳墠閫€鍑轰簡out {:?} {:?}",
         //                     old_frame.hover_id, old_frame.trigger_panel_state
         //                 );
         //                 // hub.push(CpuPanelEvent::OUT((
@@ -2091,3 +2106,4 @@ fn refresh_payload<T: PanelPayload>(
 ) {
     let _ = runtime.refresh_panel_cache::<T>(keys, device, queue);
 }
+

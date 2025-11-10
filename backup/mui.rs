@@ -1384,6 +1384,7 @@ impl GpuUi {
                         )));
                     }
                     if new_frame.drag_id != u32::MAX {
+                        println("当前拖拽的目标 {:?}",new_frame.drag_id);
                         hub.push(CpuPanelEvent::Drag((
                             new_frame.frame,
                             UiInteractionScope {

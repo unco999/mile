@@ -591,7 +591,6 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if any(compute_color != vec4<f32>(0.0)) {
         final_color = compute_color;
     }
-
     return final_color;
     // 淇濇寔鍘熸湁閫忔槑搴?
 }

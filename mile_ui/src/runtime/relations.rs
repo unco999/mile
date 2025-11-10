@@ -18,6 +18,7 @@ pub struct RelationRegistry {
     dirty: HashSet<u32>,
     manual: Vec<RelationWorkItem>,
     container_members: HashMap<u32, Vec<u32>>,
+    active_links: HashMap<u32, u32>,
 }
 
 #[derive(Default)]
@@ -33,14 +34,16 @@ impl PanelRelationEntry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct RelationWorkItem {
     pub panel_id: u32,
     pub container_id: u32,
+    pub container_uuid: String,
     pub layout_flags: u32,
     pub order: u32,
     pub total: u32,
-    pub _pad0: u32,
+    pub flags: u32,
+    pub is_container: bool,
     pub origin: [f32; 2],
     pub size: [f32; 2],
     pub slot: [f32; 2],
@@ -54,15 +57,21 @@ pub struct RelationWorkItem {
     pub exit_param: f32,
 }
 
+const WORK_FLAG_ENTER_CONTAINER: u32 = 1 << 0;
+const WORK_FLAG_EXIT_CONTAINER: u32 = 1 << 1;
+const INVALID_CONTAINER_ID: u32 = u32::MAX;
+
 impl Default for RelationWorkItem {
     fn default() -> Self {
         Self {
             panel_id: 0,
-            container_id: 0,
+            container_id: INVALID_CONTAINER_ID,
+            container_uuid: String::new(),
             layout_flags: 0,
             order: 0,
             total: 0,
-             _pad0: 0,
+            flags: 0,
+            is_container: false,
             origin: [0.0, 0.0],
             size: [0.0, 0.0],
             slot: [0.0, 0.0],
@@ -95,6 +104,7 @@ impl RelationRegistry {
 
     pub fn clear_panel(&mut self, panel_id: u32) {
         self.panels.remove(&panel_id);
+        self.active_links.remove(&panel_id);
         self.dirty.insert(panel_id);
         self.rebuild_memberships();
         self.mark_all_container_children_dirty();
@@ -115,9 +125,31 @@ impl RelationRegistry {
         let dirty_ids: Vec<u32> = self.dirty.drain().collect();
         let mut items: Vec<RelationWorkItem> = Vec::new();
         for panel_id in dirty_ids {
-            if let Some(entry) = self.panels.get(&panel_id) {
-                if let Some(graph) = entry.active_graph() {
-                    items.extend(self.build_work_items(panel_id, graph));
+            let active_graph = self
+                .panels
+                .get(&panel_id)
+                .and_then(|entry| entry.active_graph().cloned());
+            match active_graph {
+                Some(graph) => {
+                    let built = self.build_work_items(panel_id, &graph);
+                    if built.is_empty() {
+                        items.push(RelationWorkItem {
+                            panel_id,
+                            flags: WORK_FLAG_EXIT_CONTAINER,
+                            is_container: self.is_panel_container(panel_id),
+                            ..RelationWorkItem::default()
+                        });
+                    } else {
+                        items.extend(built);
+                    }
+                }
+                None => {
+                    items.push(RelationWorkItem {
+                        panel_id,
+                        flags: WORK_FLAG_EXIT_CONTAINER,
+                        is_container: self.is_panel_container(panel_id),
+                        ..RelationWorkItem::default()
+                    });
                 }
             }
         }
@@ -128,30 +160,66 @@ impl RelationRegistry {
     }
 
     fn build_work_items(
-        &self,
+        &mut self,
         panel_id: u32,
         graph: &RelParsedGraph,
     ) -> Vec<RelationWorkItem> {
+        if panel_id == 0 {
+            let (active_state, has_container) = self
+                .panels
+                .get(&panel_id)
+                .map(|entry| (entry.active_state, entry.active_graph().is_some()))
+                .unwrap_or((None, false));
+            println!(
+                "panel 0 状态: {:?}, 是否有容器: {}",
+                active_state, has_container
+            );
+        }
         let mut items = Vec::new();
+        let mut has_links = false;
         for node in graph.nodes.values() {
             for link in &node.container_links {
                 let Some(container_panel_id) = resolve_panel_id(&link.target) else {
                     continue;
                 };
                 let Some(spec) = self.active_container_spec(container_panel_id) else {
-                    eprintln!(
-                        "[mui::rel] panel {panel_id}: container '{}' missing spec; \
-                     consider calling container_self on that panel state.",
-                        link.target.panel_uuid
-                    );
+    
                     continue;
                 };
-                items.push(self.build_container_work_item(
+                has_links = true;
+                let mut item = self.build_container_work_item(
                     panel_id,
                     container_panel_id,
                     spec,
                     link,
-                ));
+                );
+                let previous = self.active_links.get(&panel_id).copied();
+                if previous != Some(container_panel_id) {
+                    item.flags |= WORK_FLAG_ENTER_CONTAINER;
+                    println!("哪个Panel 被链接到哪个 {} -> {}",panel_id,container_panel_id);
+
+                    self.active_links.insert(panel_id, container_panel_id);
+                }
+                items.push(item);
+            }
+        }
+        let enters = items
+            .iter()
+            .filter(|item| (item.flags & WORK_FLAG_ENTER_CONTAINER) != 0);
+        let total = enters.clone().count();
+        let containers = enters.filter(|item| item.is_container).count();
+        println!(
+            "多少个面板进入了 {:?}, 其中容器 {:?}",
+            total, containers
+        );
+        if !has_links {
+            if self.active_links.remove(&panel_id).is_some() {
+                items.push(RelationWorkItem {
+                    panel_id,
+                    flags: WORK_FLAG_EXIT_CONTAINER,
+                    is_container: self.is_panel_container(panel_id),
+                    ..RelationWorkItem::default()
+                });
             }
         }
         items
@@ -181,6 +249,7 @@ impl RelationRegistry {
         RelationWorkItem {
             panel_id: child_panel_id,
             container_id: container_panel_id,
+            container_uuid: link.target.panel_uuid.clone(),
             layout_flags,
             order: self.container_order(container_panel_id, child_panel_id) as u32,
             total: self
@@ -188,7 +257,7 @@ impl RelationRegistry {
                 .get(&container_panel_id)
                 .map(|children| children.len() as u32)
                 .unwrap_or(1),
-            _pad0: 0,
+            flags: 0,
             origin: spec.origin,
             size,
             slot,
@@ -200,6 +269,7 @@ impl RelationRegistry {
             entry_param,
             exit_mode,
             exit_param,
+            is_container: self.is_panel_container(child_panel_id),
         }
     }
 
@@ -208,6 +278,10 @@ impl RelationRegistry {
             .get(&panel_id)
             .and_then(|entry| entry.active_graph())
             .and_then(|graph| graph.container.as_ref())
+    }
+
+    fn is_panel_container(&self, panel_id: u32) -> bool {
+        self.active_container_spec(panel_id).is_some()
     }
 
     fn container_order(&self, container_panel_id: u32, child: u32) -> usize {
@@ -259,18 +333,10 @@ impl RelationRegistry {
 
     fn log_parser_diagnostics(&self, panel_id: u32, state: UiState, graph: &RelParsedGraph) {
         for warning in &graph.diagnostics.warnings {
-            eprintln!(
-                "[mui::rel] panel {panel_id} state {} warning: {warning}",
-                state.0
-            );
+    
         }
         for conflict in &graph.diagnostics.conflicts {
-            eprintln!(
-                "[mui::rel] panel {panel_id} state {} conflict (rule {}): {}",
-                state.0,
-                conflict.rule.raw(),
-                conflict.message
-            );
+
         }
     }
 
@@ -286,13 +352,7 @@ impl RelationRegistry {
 
             let scope = node.key.scope.as_deref().unwrap_or("<default>");
             let kinds = summarize_relation_kinds(node);
-            eprintln!(
-                "[mui::rel] panel {panel_id} state {}: missing relation target '{}'<{}> scope={scope}. \
-                 kinds={kinds}. Relation will remain inactive until the target panel is registered.",
-                state.0,
-                node.key.panel_uuid,
-                node.key.payload_name,
-            );
+  
         }
     }
 
@@ -403,11 +463,29 @@ pub fn relation_registry() -> &'static Mutex<RelationRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(RelationRegistry::default()))
 }
 
+fn pending_relations() -> &'static Mutex<Vec<(u32, UiState, RelGraphDefinition)>> {
+    static PENDING: OnceLock<Mutex<Vec<(u32, UiState, RelGraphDefinition)>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 pub fn register_panel_relations(panel_id: u32, state: UiState, definition: RelGraphDefinition) {
-    relation_registry()
+    pending_relations()
         .lock()
         .unwrap()
-        .register(panel_id, state, definition);
+        .push((panel_id, state, definition));
+}
+
+pub fn flush_pending_relations() {
+    let pending = pending_relations();
+    let mut queue = pending.lock().unwrap();
+    if queue.is_empty() {
+        return;
+    }
+
+    let mut registry = relation_registry().lock().unwrap();
+    for (panel_id, state, definition) in queue.drain(..) {
+        registry.register(panel_id, state, definition);
+    }
 }
 
 pub fn clear_panel_relations(panel_id: u32) {

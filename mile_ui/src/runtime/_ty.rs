@@ -642,7 +642,7 @@ pub struct PanelAnimDelta {
 
     // --- 起始位置 ---
     pub start_position: [f32; 2],
-    pub _pad3: [f32; 2], // ✅ 对齐补齐
+    pub container_origin: [f32; 2], // ✅ 对齐补齐
 }
 
 impl PanelAnimDelta {
@@ -670,7 +670,7 @@ impl PanelAnimDelta {
     }
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct GpuRelationWorkItem {
     pub panel_id: u32,
@@ -678,6 +678,8 @@ pub struct GpuRelationWorkItem {
     pub relation_flags: u32,
     pub order: u32,
     pub total: u32,
+    pub flags: u32,
+    pub is_container: u32,
     pub _pad0: u32,
     pub origin: [f32; 2],
     pub container_size: [f32; 2],

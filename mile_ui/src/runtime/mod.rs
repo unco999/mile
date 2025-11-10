@@ -27,3 +27,11 @@ pub use state::{
     StateConfigDes, StateNetWorkConfigDes, StateOpenCall, StateTransition, UIEventHub,
     UiInteractionScope, WgslResult,
 };
+
+use crate::runtime::_ty::PanelAnimDelta;
+
+
+#[test]
+fn test(){
+    println!("PanelAnimDelta {:?}",std::mem::size_of::<PanelAnimDelta>());
+}
