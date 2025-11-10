@@ -1739,12 +1739,14 @@ fn build_demo_panel_with_uuid(
             .state(UiState(0), move |mut state: StateStageBuilder<TestCustomData>| {
                 let rel = state.rel();
                 rel.container_with::<TestCustomData>("demo_container");
-                rel.clear_position();
                 println!("注册{:?}",vec2(i as f32 * 10.0, i as f32 * 10.0));
                 state
                     .z_index(5)
                     .position(vec2(i as f32 * 10.0, i as f32 * 10.0))
                     .size(vec2(100.0, 50.0))
+                    .events()
+                    .on_event(UiEventKind::Drag, |_|{})
+                    .finish()
                     .border(BorderStyle {
                         color: [0.0, 1.0, 0.0, 1.0],
                         width: 9.0,
@@ -1769,9 +1771,12 @@ fn build_demo_panel_with_uuid(
                 .layout(RelLayoutKind::horizontal(8.0))
                 .finish()
                 .z_index(1)
-                .position(vec2(100.0, 100.0))
+                .position(vec2(0.0, 0.0))
                 .texture("backgound.png")
                 .size(vec2(500.0, 500.0))
+                .events()
+                    .on_event(UiEventKind::Drag, |_|{})
+                    .finish()
                 // .events()
                 // .on_event(UiEventKind::Drag, |_| {})
                 // .finish()
@@ -1828,7 +1833,7 @@ fn panel_id_pool() -> &'static PanelIdPool {
     static POOL: OnceLock<PanelIdPool> = OnceLock::new();
     POOL.get_or_init(|| PanelIdPool {
         map: Mutex::new(HashMap::new()),
-        next_id: AtomicU32::new(0),
+        next_id: AtomicU32::new(1),
     })
 }
 

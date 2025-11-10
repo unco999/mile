@@ -17,34 +17,44 @@ struct PanelAnimDelta {
     start_position: vec2<f32>,
     container_origin: vec2<f32>,
 };
-
 struct Panel {
-    position: vec2<f32>,
-    size: vec2<f32>,
-    uv_offset: vec2<f32>,
-    uv_scale: vec2<f32>,
+    // === 16-byte 块 1 ===
+    position: vec2<f32>,    // 8 bytes
+    size: vec2<f32>,        // 8 bytes
 
-    z_index: u32,
-    pass_through: u32,
-    id: u32,
-    interaction: u32,
+    // === 16-byte 块 2 ===
+    uv_offset: vec2<f32>,   // 8 bytes  
+    uv_scale: vec2<f32>,    // 8 bytes
 
-    event_mask: u32,
-    state_mask: u32,
-    transparent: f32,
-    texture_id: u32,
+    // === 16-byte 块 3 ===
+    z_index: u32,           // 4 bytes
+    pass_through: u32,      // 4 bytes
+    id: u32,                // 4 bytes
+    interaction: u32,       // 4 bytes
 
-    state: u32,
-    collection_state: u32,
-    fragment_shader_id: u32,
-    vertex_shader_id: u32,
+    // === 16-byte 块 4 ===
+    event_mask: u32,        // 4 bytes
+    state_mask: u32,        // 4 bytes
+    transparent: f32,       // 4 bytes
+    texture_id: u32,        // 4 bytes
 
-    color: vec4<f32>,
-    border_color: vec4<f32>,
-    border_width: f32,
-    border_radius: f32,
-    visible: u32,
-    _pad_border: u32,
+    // === 16-byte 块 5 ===
+    state: u32,             // 4 bytes
+    collection_state: u32,  // 4 bytes
+    fragment_shader_id: u32,// 4 bytes
+    vertex_shader_id: u32,  // 4 bytes
+
+    // === 16-byte 块 6 ===
+    color: vec4<f32>,       // 16 bytes
+
+    // === 16-byte 块 7 ===
+    border_color: vec4<f32>,// 16 bytes
+
+    // === 16-byte 块 8 ===
+    border_width: f32,      // 4 bytes
+    border_radius: f32,     // 4 bytes
+    visible: u32,           // 4 bytes
+    _pad_border: u32,       // 4 bytes (填充)
 };
 
 struct GpuUiDebugReadCallBack {
@@ -147,11 +157,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let current_pos = panels[panel_id].position;
         let container_pos = panels[item.container_id].position;
         let desired_pos = container_pos + item.origin;
-        let delta = desired_pos - current_pos;
-
-        panels[panel_id].position = container_pos;
+        let delta = current_pos - desired_pos ;
+        panels[panel_id].position = desired_pos;
         panel_deltas[panel_id].delta_position = delta;
-        //panel_deltas[panel_id].container_origin = desired_pos;
+        panel_deltas[panel_id].container_origin = desired_pos;
 
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
         work_items[idx] = item;

@@ -164,6 +164,17 @@ impl RelationRegistry {
         panel_id: u32,
         graph: &RelParsedGraph,
     ) -> Vec<RelationWorkItem> {
+        if panel_id == 0 {
+            let (active_state, has_container) = self
+                .panels
+                .get(&panel_id)
+                .map(|entry| (entry.active_state, entry.active_graph().is_some()))
+                .unwrap_or((None, false));
+            println!(
+                "panel 0 状态: {:?}, 是否有容器: {}",
+                active_state, has_container
+            );
+        }
         let mut items = Vec::new();
         let mut has_links = false;
         for node in graph.nodes.values() {
@@ -185,11 +196,22 @@ impl RelationRegistry {
                 let previous = self.active_links.get(&panel_id).copied();
                 if previous != Some(container_panel_id) {
                     item.flags |= WORK_FLAG_ENTER_CONTAINER;
+                    println!("哪个Panel 被链接到哪个 {} -> {}",panel_id,container_panel_id);
+
                     self.active_links.insert(panel_id, container_panel_id);
                 }
                 items.push(item);
             }
         }
+        let enters = items
+            .iter()
+            .filter(|item| (item.flags & WORK_FLAG_ENTER_CONTAINER) != 0);
+        let total = enters.clone().count();
+        let containers = enters.filter(|item| item.is_container).count();
+        println!(
+            "多少个面板进入了 {:?}, 其中容器 {:?}",
+            total, containers
+        );
         if !has_links {
             if self.active_links.remove(&panel_id).is_some() {
                 items.push(RelationWorkItem {
