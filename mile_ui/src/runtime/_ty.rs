@@ -678,7 +678,7 @@ pub struct GpuRelationWorkItem {
     pub relation_flags: u32,
     pub order: u32,
     pub total: u32,
-    pub _pad0: u32,
+    pub flags: u32,
     pub origin: [f32; 2],
     pub container_size: [f32; 2],
     pub slot_size: [f32; 2],

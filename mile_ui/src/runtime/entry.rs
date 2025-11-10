@@ -207,6 +207,7 @@ pub struct MuiRuntime {
     animation_descriptor: GpuAnimationDes,
     animation_field_cache: HashMap<(u32, u32), u32>,
     pub trace: RefCell<GpuDebug>,
+    pending_relation_flush: bool,
 }
 
 impl Renderable for MuiRuntime {
@@ -339,6 +340,7 @@ impl MuiRuntime {
             animation_descriptor: GpuAnimationDes::default(),
             animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime_render")),
+            pending_relation_flush: false,
         }
     }
 
@@ -369,11 +371,23 @@ impl MuiRuntime {
                 size: [slot[0] * total as f32, slot[1]],
                 slot,
                 spacing,
+                flags: 0,
                 ..RelationWorkItem::default()
             });
         }
         inject_relation_work(items);
-        self.compute.borrow_mut().relations.set_dirty();
+    }
+
+    pub fn schedule_relation_flush(&mut self) {
+        self.pending_relation_flush = true;
+    }
+
+    pub fn flush_relation_work_if_needed(&mut self, queue: &Queue) {
+        if self.pending_relation_flush {
+            println!("当前计算了所有panel的rel 组件");
+            self.compute.borrow_mut().ingest_relation_work(queue);
+            self.pending_relation_flush = false;
+        }
     }
 
     #[inline]
@@ -748,7 +762,6 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
-        self.compute.borrow_mut().ingest_relation_work(queue);
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -806,6 +819,7 @@ impl MuiRuntime {
         if let Some(instance) = self.panel_instances.get_mut(instance_index) {
             instance.state = transition.new_state.0;
         }
+        self.schedule_relation_flush();
     }
 
     fn enqueue_style_transition(

@@ -33,14 +33,15 @@ impl PanelRelationEntry {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct RelationWorkItem {
     pub panel_id: u32,
     pub container_id: u32,
+    pub container_uuid: String,
     pub layout_flags: u32,
     pub order: u32,
     pub total: u32,
-    pub _pad0: u32,
+    pub flags: u32,
     pub origin: [f32; 2],
     pub size: [f32; 2],
     pub slot: [f32; 2],
@@ -54,15 +55,18 @@ pub struct RelationWorkItem {
     pub exit_param: f32,
 }
 
+const WORK_FLAG_CLEAR_ORIGIN: u32 = 1 << 0;
+
 impl Default for RelationWorkItem {
     fn default() -> Self {
         Self {
             panel_id: 0,
-            container_id: 0,
+            container_id: u32::MAX,
+            container_uuid: String::new(),
             layout_flags: 0,
             order: 0,
             total: 0,
-             _pad0: 0,
+            flags: 0,
             origin: [0.0, 0.0],
             size: [0.0, 0.0],
             slot: [0.0, 0.0],
@@ -115,15 +119,32 @@ impl RelationRegistry {
         let dirty_ids: Vec<u32> = self.dirty.drain().collect();
         let mut items: Vec<RelationWorkItem> = Vec::new();
         for panel_id in dirty_ids {
-            if let Some(entry) = self.panels.get(&panel_id) {
-                if let Some(graph) = entry.active_graph() {
-                    items.extend(self.build_work_items(panel_id, graph));
+            match self.panels.get(&panel_id).and_then(|entry| entry.active_graph()) {
+                Some(graph) => {
+                    let built = self.build_work_items(panel_id, graph);
+                    if built.is_empty() {
+                        items.push(RelationWorkItem {
+                            panel_id,
+                            flags: WORK_FLAG_CLEAR_ORIGIN,
+                            ..RelationWorkItem::default()
+                        });
+                    } else {
+                        items.extend(built);
+                    }
+                }
+                None => {
+                    items.push(RelationWorkItem {
+                        panel_id,
+                        flags: WORK_FLAG_CLEAR_ORIGIN,
+                        ..RelationWorkItem::default()
+                    });
                 }
             }
         }
         if !self.manual.is_empty() {
             items.extend(self.manual.drain(..));
         }
+        println!("这里的工作线程是多少个 {:?}",items);
         items
     }
 
@@ -181,6 +202,7 @@ impl RelationRegistry {
         RelationWorkItem {
             panel_id: child_panel_id,
             container_id: container_panel_id,
+            container_uuid: link.target.panel_uuid.clone(),
             layout_flags,
             order: self.container_order(container_panel_id, child_panel_id) as u32,
             total: self
@@ -188,7 +210,7 @@ impl RelationRegistry {
                 .get(&container_panel_id)
                 .map(|children| children.len() as u32)
                 .unwrap_or(1),
-            _pad0: 0,
+            flags: 0,
             origin: spec.origin,
             size,
             slot,

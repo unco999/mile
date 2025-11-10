@@ -901,6 +901,7 @@ fn runtime_map<TPayload: PanelPayload>() -> Arc<Mutex<HashMap<PanelKey, PanelRun
 
 fn register_runtime<TPayload: PanelPayload>(key: PanelKey, runtime: PanelRuntime<TPayload>) {
     let arc = runtime_map::<TPayload>();
+    println!("当前构建UI元素 {:?}",key);
     register_panel_key::<TPayload>(&key);
     arc.lock().unwrap().insert(key, runtime);
 }
@@ -1731,47 +1732,24 @@ fn build_demo_panel_with_uuid(
 ) -> Result<Vec<PanelRuntimeHandle>, DbError> {
     let mut handles = Vec::new();
 
-    let test_container = Mui::<TestCustomData>::stateful("demo_container")?
-        .default_state(UiState(0))
-        .state(UiState(0), |state| {
-            let mut state = state;
-
-            state
-                .z_index(4)
-                .container_style()
-                    .size(vec2(100.0, 100.0))
-                    .finish()
-                .position(vec2(200.0, 200.0))
-                .texture("backgound.png")
-                .size(vec2(500.0, 500.0))
-                .events()
-                .on_event(UiEventKind::Drag, |_| {})
-                .finish()
-        })
-        .build()?;
-    handles.push(test_container);
-
-    let cols = 10;
-    let spacing = vec2(140.0, 140.0);
-    let origin = vec2(80.0, 80.0);
-
-    for idx in 0..100 {
-        let row = idx / cols;
-        let col = idx % cols;
-        let position = origin + vec2(col as f32, row as f32) * spacing;
-        let label = Box::leak(format!("{panel_uuid}_{idx}").into_boxed_str());
-
-        let panel = Mui::<TestCustomData>::stateful(label)?
+            let panel = Mui::<TestCustomData>::stateful("测试子元素")?
             .default_state(UiState(0))
             .quad_vertex(QuadBatchKind::UltraVertex)
-            .state(UiState(0), move |state: StateStageBuilder<TestCustomData>| {
+            .state(UiState(0), move |mut state: StateStageBuilder<TestCustomData>| {
+                let rel = state.rel();
+                rel.container_with::<TestCustomData>("demo_container");
+                
+
                 state
-                    .size(vec2(100.0, 100.0))
-                    .position(position)
+                    .z_index(5)
+                    .container_style()
+                        .origin(vec2(50.0, 50.0))
+                        .finish()
+                    .size(vec2(100.0, 50.0))
                     .border(BorderStyle {
-                        color: [1.0, 0.0, 0.0, 1.0],
-                        width: 4.0,
-                        radius: 6.0,
+                        color: [0.0, 1.0, 0.0, 1.0],
+                        width: 9.0,
+                        radius: 15.0,
                     })
                     .events()
                     .on_event(UiEventKind::Drag, |flow| {
@@ -1782,7 +1760,30 @@ fn build_demo_panel_with_uuid(
             .build()?;
 
         handles.push(panel);
-    }
+        
+    let test_container = Mui::<TestCustomData>::stateful("demo_container")?
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            state
+                .container_style()
+                .space(RelSpace::Local)
+                .origin(vec2(30.0, 30.0))
+                .slot_size(vec2(64.0, 32.0))
+                .layout(RelLayoutKind::horizontal(8.0))
+                .finish()
+                .z_index(4)
+                .position(vec2(200.0, 200.0))
+                .texture("backgound.png")
+                .size(vec2(500.0, 500.0))
+                .events()
+                .on_event(UiEventKind::Drag, |_| {})
+                .finish()
+        })
+        .build()?;
+    handles.push(test_container);
+
+
+
 
     Ok(handles)
 }

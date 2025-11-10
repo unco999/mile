@@ -54,13 +54,12 @@ impl ComputePipelines {
         buffers: &BufferViewSet<'_>,
         ctx: &FrameComputeContext<'_>,
     ) {
-        let mut delta_needed = false;
+        let mut delta_needed = true;
         if self.interaction.is_dirty() {
             self.interaction.encode(pass, buffers, ctx);
             delta_needed = true;
         }
-        if self.relations.is_dirty() {
-            self.relations.encode(pass, buffers, ctx);
+        if self.relations.encode(pass, buffers, ctx) {
             delta_needed = true;
         }
         if self.animation.is_dirty() {
@@ -93,6 +92,7 @@ impl ComputePipelines {
         self.interaction.set_dirty();
     }
 
+    #[inline]
     pub fn ingest_relation_work(&mut self, queue: &wgpu::Queue) {
         self.relations.ingest(queue);
     }
@@ -105,16 +105,15 @@ impl ComputePipelines {
     #[inline]
     pub fn mark_all_dirty(&mut self) {
         self.interaction.set_dirty();
-        self.relations.set_dirty();
         self.animation.set_dirty();
     }
 
     #[inline]
     pub fn is_any_dirty(&self) -> bool {
         self.interaction.is_dirty()
-            || self.relations.is_dirty()
             || self.animation.is_dirty()
             || self.panel_delta.is_dirty()
+            || self.relations.has_work()
     }
 
     pub fn rebuild_interaction_bind_group(
@@ -732,7 +731,7 @@ pub struct RelationComputeStage {
     work_buffer: wgpu::Buffer,
     work_count: u32,
     capacity: u32,
-    dirty: bool,
+    trace: GpuDebug,
 }
 
 #[repr(C)]
@@ -763,7 +762,7 @@ impl RelationComputeStage {
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -774,6 +773,16 @@ impl RelationComputeStage {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -809,6 +818,14 @@ impl RelationComputeStage {
             mapped_at_creation: false,
         });
 
+        let mut trace = GpuDebug::new("ui::relation-compute");
+        trace.create_buffer(device);
+        let trace_buffer = trace
+            .buffer
+            .as_ref()
+            .expect("relation trace buffer not created")
+            .clone();
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::relation-bind-group"),
             layout: &layout,
@@ -825,6 +842,10 @@ impl RelationComputeStage {
                     binding: 2,
                     resource: args_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: trace_buffer.as_entire_binding(),
+                },
             ],
         });
 
@@ -835,7 +856,7 @@ impl RelationComputeStage {
             work_buffer: buffers.relation_work.clone(),
             work_count: 0,
             capacity: buffers.capacities.max_relations,
-            dirty: false,
+            trace,
         }
     }
 
@@ -844,45 +865,66 @@ impl RelationComputeStage {
         let work = registry.take_dirty();
         drop(registry);
 
-        if work.is_empty() {
+        if !work.is_empty() {
+            let mut gpu_items = Vec::with_capacity(work.len().min(self.capacity as usize));
+            // let mut trace_items = Vec::with_capacity(work.len());
+            for item in work.into_iter().take(self.capacity as usize) {
+                gpu_items.push(GpuRelationWorkItem {
+                    panel_id: item.panel_id,
+                    container_id: item.container_id,
+                    relation_flags: item.layout_flags,
+                    order: item.order,
+                    total: if item.total == 0 { 1 } else { item.total },
+                    flags: item.flags,
+                    origin: item.origin,
+                    container_size: item.size,
+                    slot_size: item.slot,
+                    spacing: item.spacing,
+                    padding: item.padding,
+                    percent: item.percent,
+                    scale: item.scale,
+                    entry_mode: item.entry_mode,
+                    entry_param: item.entry_param,
+                    exit_mode: item.exit_mode,
+                    exit_param: item.exit_param,
+                });
+            }
+
+            if gpu_items.is_empty() {
+                self.work_count = 0;
+                queue.write_buffer(
+                    &self.args_buffer,
+                    0,
+                    bytemuck::bytes_of(&RelDispatchArgs {
+                        work_count: 0,
+                        _pad: [0; 3],
+                    }),
+                );
+                return;
+            }
+
+            queue.write_buffer(&self.work_buffer, 0, bytemuck::cast_slice(&gpu_items));
+            let args = RelDispatchArgs {
+                work_count: gpu_items.len() as u32,
+                _pad: [0; 3],
+            };
+            queue.write_buffer(&self.args_buffer, 0, bytemuck::bytes_of(&args));
+            self.work_count = args.work_count;
+
+            
             return;
         }
 
-        let mut gpu_items = Vec::with_capacity(work.len().min(self.capacity as usize));
-        for item in work.into_iter().take(self.capacity as usize) {
-            gpu_items.push(GpuRelationWorkItem {
-                panel_id: item.panel_id,
-                container_id: item.container_id,
-                relation_flags: item.layout_flags,
-                order: item.order,
-                total: if item.total == 0 { 1 } else { item.total },
-                _pad0: 0,
-                origin: item.origin,
-                container_size: item.size,
-                slot_size: item.slot,
-                spacing: item.spacing,
-                padding: item.padding,
-                percent: item.percent,
-                scale: item.scale,
-                entry_mode: item.entry_mode,
-                entry_param: item.entry_param,
-                exit_mode: item.exit_mode,
-                exit_param: item.exit_param,
-            });
+        if self.work_count == 0 {
+            queue.write_buffer(
+                &self.args_buffer,
+                0,
+                bytemuck::bytes_of(&RelDispatchArgs {
+                    work_count: 0,
+                    _pad: [0; 3],
+                }),
+            );
         }
-
-        if gpu_items.is_empty() {
-            return;
-        }
-
-        queue.write_buffer(&self.work_buffer, 0, bytemuck::cast_slice(&gpu_items));
-        let args = RelDispatchArgs {
-            work_count: gpu_items.len() as u32,
-            _pad: [0; 3],
-        };
-        queue.write_buffer(&self.args_buffer, 0, bytemuck::bytes_of(&args));
-        self.work_count = args.work_count;
-        self.dirty = true;
     }
 
     pub fn encode(
@@ -890,35 +932,29 @@ impl RelationComputeStage {
         pass: &mut wgpu::ComputePass<'_>,
         _buffers: &BufferViewSet<'_>,
         _ctx: &FrameComputeContext<'_>,
-    ) {
-        if !self.dirty || self.work_count == 0 {
-            self.dirty = false;
-            return;
+    ) -> bool {
+        if self.work_count == 0 {
+            return false;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         let workgroups = (self.work_count + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
         pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        self.dirty = false;
-        self.work_count = 0;
+        true
     }
 
     #[inline]
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    #[inline]
-    pub fn set_dirty(&mut self) {
-        self.dirty = true;
+    pub fn has_work(&self) -> bool {
+        self.work_count > 0
     }
 
     pub fn readback(
         &mut self,
-        _device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         _ctx: &FrameComputeContext<'_>,
     ) {
+        self.trace.debug(device, queue);
     }
 }
 

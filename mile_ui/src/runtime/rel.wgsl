@@ -18,13 +18,18 @@ struct PanelAnimDelta {
     container_origin: vec2<f32>,
 };
 
+struct GpuUiDebugReadCallBack {
+    floats: array<f32, 32>,
+    uints: array<u32, 32>,
+};
+
 struct RelWorkItem {
     panel_id: u32,
     container_id: u32,
     relation_flags: u32,
     order: u32,
     total: u32,
-    _pad0: u32,
+    flags: u32,
     origin: vec2<f32>,
     container_size: vec2<f32>,
     slot_size: vec2<f32>,
@@ -39,18 +44,20 @@ struct RelWorkItem {
 };
 
 struct RelArgs {
-    work_count: u32,
-    _pad: vec3<u32>,
+    data: vec4<u32>,
 };
 
 @group(0) @binding(0)
 var<storage, read_write> panel_deltas: array<PanelAnimDelta>;
 
 @group(0) @binding(1)
-var<storage, read> work_items: array<RelWorkItem>;
+var<storage, read_write> work_items: array<RelWorkItem>;
 
 @group(0) @binding(2)
 var<uniform> rel_args: RelArgs;
+
+@group(0) @binding(3)
+var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 
 const REL_LAYOUT_FREE: u32 = 0u;
 const REL_LAYOUT_HORIZONTAL: u32 = 1u;
@@ -60,10 +67,12 @@ const REL_LAYOUT_RING: u32 = 4u;
 const REL_LAYOUT_MASK: u32 = 0xFu;
 const REL_TRANSITION_IMMEDIATE: u32 = 0u;
 const REL_TRANSITION_TIMED: u32 = 1u;
+const REL_WORK_FLAG_CLEAR_ORIGIN: u32 = 1u << 0u;
 
 fn layout_offset(item: RelWorkItem) -> vec2<f32> {
     let idx = f32(item.order);
     var pos = item.origin;
+
     switch (item.relation_flags & REL_LAYOUT_MASK) {
         case REL_LAYOUT_HORIZONTAL: {
             let step = item.slot_size.x + item.spacing.x;
@@ -87,22 +96,36 @@ fn layout_offset(item: RelWorkItem) -> vec2<f32> {
 }
 
 fn fetch_container_delta(container_id: u32) -> vec2<f32> {
-    if (container_id >= arrayLength(&panel_deltas)) {
+    if (container_id == 0xffffffffu || container_id >= arrayLength(&panel_deltas)) {
         return vec2<f32>(0.0);
     }
+    
     return panel_deltas[container_id].delta_position;
 }
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
-    if (idx >= rel_args.work_count) {
+    
+
+    if (idx >= rel_args.data.x) {
         return;
     }
 
     let item = work_items[idx];
+
+    
+
+
     let panel_index = item.panel_id;
     if (panel_index >= arrayLength(&panel_deltas)) {
+        return;
+    }
+
+    if ((item.flags & REL_WORK_FLAG_CLEAR_ORIGIN) != 0u) {
+        debug_buffer.uints[0] = debug_buffer.uints[0] + 1;
+        panel_deltas[panel_index].container_origin = vec2<f32>(0.0);
+        work_items[idx].flags &= ~REL_WORK_FLAG_CLEAR_ORIGIN;
         return;
     }
 
@@ -110,6 +133,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let container_delta = fetch_container_delta(item.container_id);
     let final_delta = layout_pos + container_delta;
 
+    
     panel_deltas[panel_index].delta_position = final_delta;
     panel_deltas[panel_index].delta_size = item.slot_size;
+    panel_deltas[panel_index].container_origin = item.origin + container_delta;
 }

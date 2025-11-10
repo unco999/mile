@@ -84,7 +84,7 @@ impl App {
 
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
-
+        runtime.flush_relation_work_if_needed(&ctx.queue);
         if !runtime.panel_cache.is_empty() {
             runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
@@ -352,6 +352,7 @@ impl ApplicationHandler<AppEvent> for App {
                             let mut runtime = runtime_cell.borrow_mut();
                             runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
                             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+                            runtime.schedule_relation_flush();
                              for panel in runtime.panel_instances() {
                                  println!("panel {:?} at {:?}", panel.id, panel.position);
                              }
