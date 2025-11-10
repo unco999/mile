@@ -65,12 +65,18 @@ impl GpuOffsetRange {
     }
 }
 
+#[derive(Clone)]
+pub struct SdfInfo{
+    texture_x:u32,
+    texture_y:u32
+}
+
 pub struct FontSDFIndexDynamicArea<'a> {
-    pub area:Vec<u32>,
+    pub area:Vec<[u32;2]>,
     // 字形信息缓冲区（环形缓冲区）
     pub glyph_buffer: HashMap<&'a GpuOffsetRange, GpuGlyphInfo<'a>>,
 
-    pub movable_type_printing:HashMap<char,u32>,
+    pub movable_type_printing:HashMap<char,SdfInfo>,
     // 持久缓存区
     pub persistent_cache: HashMap<&'a GpuOffsetRange, GpuGlyphInfo<'a>>,
 
@@ -109,13 +115,35 @@ impl<'a> FontSDFIndexDynamicArea<'a> {
      * 他发一个字符串序列过来  然后我们来找到字符对应在gpu sdf里面的位置
      * 然后把这个变成一个新的range  range指定的位置是buffer
      */
-    pub fn font_text_entry(&mut self, str: &'a str) -> Result<(), TextError> {
+    fn font_text_entry(&mut self, str: &'a str) -> Result<Vec<SdfInfo>, TextError> {
+        let mut font_sdf_info: Vec<SdfInfo> = Vec::new();
         for c in str.chars() {
-            self.movable_type_printing
+            let item = self.movable_type_printing
                 .get(&c)
                 .ok_or_else(|| TextError::GlyphNotFound { character: c.into() })?;
+            font_sdf_info.push(item.clone());
         }
+        Ok(font_sdf_info)
+    }
+
+    fn batch(&mut self, str: &'a str) -> Result<(), TextError> {
+        let sdf_info = self.font_text_entry(str)?;
+        for info in sdf_info{
+
+        }
+
+
         Ok(())
+    }
+
+    /**
+     * 插入字符在sdf里面的位置
+     */
+    pub fn font_record(&mut self,char:&char,x:u32,y:u32){
+        self.movable_type_printing.insert(*char, SdfInfo{
+            texture_x: x,
+            texture_y: y,
+        });
     }
 
     // 更新缓冲区并处理热缓存区满时的数据迁移

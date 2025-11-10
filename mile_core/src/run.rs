@@ -353,9 +353,6 @@ impl ApplicationHandler<AppEvent> for App {
                             runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
                             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
                             runtime.schedule_relation_flush();
-                             for panel in runtime.panel_instances() {
-                                 println!("panel {:?} at {:?}", panel.id, panel.position);
-                             }
                         }
                     }
                 }

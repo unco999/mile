@@ -11,7 +11,7 @@ use crate::{
     },
     structs::{GpuUiCollection, GpuUiIdInfo, GpuUiInfluence},
 };
-use bytemuck::bytes_of;
+use bytemuck::{bytes_of, cast_slice};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 /// Tunable limits for GPU resource allocation.
@@ -70,6 +70,8 @@ impl BufferArena {
         });
 
         let panel_anim_delta = PanelAnimDelta::global_init(&device);
+        let panel_index_stride = (cfg.max_panels as usize).max(1);
+        let panel_index_init = vec![u32::MAX; panel_index_stride];
 
         let animation_field_size = (cfg.max_animation_fields as u64
             * std::mem::size_of::<AnimtionFieldOffsetPtr>() as u64)

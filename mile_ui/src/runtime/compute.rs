@@ -7,7 +7,7 @@
 use std::{cell::RefCell, sync::Arc};
 
 use bytemuck::{bytes_of, cast_slice};
-use wgpu::util::DownloadBuffer;
+use wgpu::{util::DownloadBuffer, wgc::device::queue};
 
 use crate::runtime::{
     _ty::{GpuInteractionFrame, GpuRelationWorkItem},
@@ -15,7 +15,7 @@ use crate::runtime::{
     relations::relation_registry,
     state::{CpuPanelEvent, UIEventHub, UiInteractionScope},
 };
-use mile_api::interface::GpuDebug;
+use mile_api::{GpuDebugReadCallBack, interface::GpuDebug};
 
 /// Per-frame context values shared with compute stages.
 #[derive(Debug, Default, Clone, Copy)]
@@ -85,6 +85,7 @@ impl ComputePipelines {
         self.interaction.readback(device, queue, ctx);
         self.relations.readback(device, queue, ctx);
         self.animation.readback(device, queue, ctx);
+        self.panel_delta.readback(device, queue);
     }
 
     #[inline]
@@ -559,6 +560,16 @@ impl AnimationComputeStage {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -659,6 +670,10 @@ impl AnimationComputeStage {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: buffers.relations.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: buffers.instance.as_entire_binding(),
                 },
             ],
         })
@@ -772,7 +787,7 @@ impl RelationComputeStage {
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -780,6 +795,16 @@ impl RelationComputeStage {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -840,10 +865,14 @@ impl RelationComputeStage {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: args_buffer.as_entire_binding(),
+                    resource: buffers.instance.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
+                    resource: args_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: trace_buffer.as_entire_binding(),
                 },
             ],
@@ -869,17 +898,21 @@ impl RelationComputeStage {
             let mut gpu_items = Vec::with_capacity(work.len().min(self.capacity as usize));
             // let mut trace_items = Vec::with_capacity(work.len());
             for item in work.into_iter().take(self.capacity as usize) {
-                gpu_items.push(GpuRelationWorkItem {
-                    panel_id: item.panel_id,
-                    container_id: item.container_id,
-                    relation_flags: item.layout_flags,
-                    order: item.order,
-                    total: if item.total == 0 { 1 } else { item.total },
-                    flags: item.flags,
-                    origin: item.origin,
-                    container_size: item.size,
-                    slot_size: item.slot,
-                    spacing: item.spacing,
+
+
+            let gpu_item = GpuRelationWorkItem {
+                panel_id: item.panel_id,
+                container_id: item.container_id,
+                relation_flags: item.layout_flags,
+                order: item.order,
+                total: if item.total == 0 { 1 } else { item.total },
+                flags: item.flags,
+                is_container: item.is_container as u32,
+                _pad0: 0,
+                origin: item.origin,
+                container_size: item.size,
+                slot_size: item.slot,
+                spacing: item.spacing,
                     padding: item.padding,
                     percent: item.percent,
                     scale: item.scale,
@@ -887,8 +920,10 @@ impl RelationComputeStage {
                     entry_param: item.entry_param,
                     exit_mode: item.exit_mode,
                     exit_param: item.exit_param,
-                });
+                };
+            gpu_items.push(gpu_item);
             }
+
 
             if gpu_items.is_empty() {
                 self.work_count = 0;
@@ -959,6 +994,7 @@ impl RelationComputeStage {
 }
 
 pub struct PanelDeltaStage {
+    trace:GpuDebug,
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     dirty: bool,
@@ -991,6 +1027,16 @@ impl PanelDeltaStage {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1013,6 +1059,8 @@ impl PanelDeltaStage {
             compilation_options: Default::default(),
             cache: None,
         });
+        let mut trace = GpuDebug::new("panel-delta-stage");
+        trace.create_buffer(device);
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::panel-delta-bind-group"),
@@ -1026,14 +1074,24 @@ impl PanelDeltaStage {
                     binding: 1,
                     resource: buffers.panel_anim_delta.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: trace.buffer.as_ref().unwrap().as_entire_binding(),
+                },
             ],
         });
 
+
         Self {
+            trace:trace,
             pipeline,
             bind_group,
             dirty: false,
         }
+    }
+
+    pub fn readback(&mut self,device:&wgpu::Device,queue:&wgpu::Queue){
+        self.trace.debug(device, queue);
     }
 
     pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, buffers: &BufferArena) {
@@ -1121,4 +1179,10 @@ impl NoopStage {
         _ctx: &FrameComputeContext<'_>,
     ) {
     }
+}
+
+
+#[test]
+fn output_gpu_struct_size(){
+    println!("当前的数据大小 {:?}",std::mem::size_of::<GpuRelationWorkItem>())
 }

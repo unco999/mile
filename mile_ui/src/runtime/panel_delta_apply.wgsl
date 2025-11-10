@@ -27,6 +27,14 @@ struct Panel {
     _pad_border: u32,
 };
 
+struct GpuUiDebugReadCallBack {
+    floats: array<f32, 32>,
+    uints: array<u32, 32>,
+};
+
+@group(0) @binding(2)
+var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
+
 struct PanelAnimDelta {
     delta_position: vec2<f32>,
     delta_size: vec2<f32>,
@@ -62,6 +70,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let panel = panels[idx];
     let panel_id = panel.id;
+
+    
     if (panel_id >= arrayLength(&panel_deltas)) {
         return;
     }

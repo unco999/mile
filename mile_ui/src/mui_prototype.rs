@@ -1732,34 +1732,31 @@ fn build_demo_panel_with_uuid(
 ) -> Result<Vec<PanelRuntimeHandle>, DbError> {
     let mut handles = Vec::new();
 
-            let panel = Mui::<TestCustomData>::stateful("测试子元素")?
+        for i in 0..50{
+         let panel = Mui::<TestCustomData>::stateful(Box::leak(format!("测试子元素{}", i).into_boxed_str()))?
             .default_state(UiState(0))
             .quad_vertex(QuadBatchKind::UltraVertex)
             .state(UiState(0), move |mut state: StateStageBuilder<TestCustomData>| {
                 let rel = state.rel();
                 rel.container_with::<TestCustomData>("demo_container");
-                
-
+                rel.clear_position();
+                println!("注册{:?}",vec2(i as f32 * 10.0, i as f32 * 10.0));
                 state
                     .z_index(5)
-                    .container_style()
-                        .origin(vec2(50.0, 50.0))
-                        .finish()
+                    .position(vec2(i as f32 * 10.0, i as f32 * 10.0))
                     .size(vec2(100.0, 50.0))
                     .border(BorderStyle {
                         color: [0.0, 1.0, 0.0, 1.0],
                         width: 9.0,
                         radius: 15.0,
                     })
-                    .events()
-                    .on_event(UiEventKind::Drag, |flow| {
-                        flow.payload().count += 1;
-                    })
-                    .finish()
+
             })
             .build()?;
 
-        handles.push(panel);
+            handles.push(panel);
+        }
+    
         
     let test_container = Mui::<TestCustomData>::stateful("demo_container")?
         .default_state(UiState(0))
@@ -1767,17 +1764,17 @@ fn build_demo_panel_with_uuid(
             state
                 .container_style()
                 .space(RelSpace::Local)
-                .origin(vec2(30.0, 30.0))
+                .origin(vec2(0.0, 0.0))
                 .slot_size(vec2(64.0, 32.0))
                 .layout(RelLayoutKind::horizontal(8.0))
                 .finish()
-                .z_index(4)
-                .position(vec2(200.0, 200.0))
+                .z_index(1)
+                .position(vec2(100.0, 100.0))
                 .texture("backgound.png")
                 .size(vec2(500.0, 500.0))
-                .events()
-                .on_event(UiEventKind::Drag, |_| {})
-                .finish()
+                // .events()
+                // .on_event(UiEventKind::Drag, |_| {})
+                // .finish()
         })
         .build()?;
     handles.push(test_container);
