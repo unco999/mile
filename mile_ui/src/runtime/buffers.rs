@@ -42,6 +42,7 @@ impl Default for BufferArenaConfig {
 #[derive(Debug)]
 pub struct BufferArena {
     pub instance: wgpu::Buffer,
+    pub snapshot: wgpu::Buffer,
     pub panel_anim_delta: wgpu::Buffer,
     pub animation_fields: wgpu::Buffer,
     pub animation_values: wgpu::Buffer,
@@ -66,6 +67,15 @@ impl BufferArena {
             usage: wgpu::BufferUsages::VERTEX
                 | wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let snapshot = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui::panel-snapshots"),
+            size: instance_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -158,6 +168,7 @@ impl BufferArena {
 
         Self {
             instance,
+            snapshot,
             panel_anim_delta,
             animation_fields,
             animation_values,
@@ -190,6 +201,7 @@ impl BufferArena {
     pub fn staging_guard(&self) -> BufferViewSet<'_> {
         BufferViewSet {
             instance: self.instance.slice(..),
+            snapshot: self.snapshot.slice(..),
             panel_anim_delta: self.panel_anim_delta.slice(..),
             animation_fields: self.animation_fields.slice(..),
             animation_values: self.animation_values.slice(..),
@@ -207,6 +219,7 @@ impl BufferArena {
 /// Lightweight collection of buffer bindings passed into compute/render stages.
 pub struct BufferViewSet<'a> {
     pub instance: wgpu::BufferSlice<'a>,
+    pub snapshot: wgpu::BufferSlice<'a>,
     pub panel_anim_delta: wgpu::BufferSlice<'a>,
     pub animation_fields: wgpu::BufferSlice<'a>,
     pub animation_values: wgpu::BufferSlice<'a>,

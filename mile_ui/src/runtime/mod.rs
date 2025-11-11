@@ -30,8 +30,7 @@ pub use state::{
 
 use crate::runtime::_ty::PanelAnimDelta;
 
-
 #[test]
-fn test(){
-    println!("PanelAnimDelta {:?}",std::mem::size_of::<PanelAnimDelta>());
+fn test() {
+    println!("PanelAnimDelta {:?}", std::mem::size_of::<PanelAnimDelta>());
 }

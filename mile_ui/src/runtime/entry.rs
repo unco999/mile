@@ -1,4 +1,4 @@
-﻿//! High level UI runtime orchestrator.
+//! High level UI runtime orchestrator.
 //!
 //! This module exposes `MuiRuntime`, a lightweight fa莽ade that ties together the new
 //! runtime building blocks (buffer arena, render batches, CPU state) while also wiring
@@ -202,6 +202,7 @@ pub struct MuiRuntime {
     shader_events: EventStream<KennelResultIdxEvent>,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
+    pub panel_snapshots: Vec<Panel>,
     panel_index_lookup: Vec<u32>,
     panel_instances_dirty: bool,
     transitioning_panels: HashMap<u32, f32>,
@@ -336,6 +337,7 @@ impl MuiRuntime {
             shader_events,
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
+            panel_snapshots: Vec::new(),
             panel_index_lookup: vec![u32::MAX; (arena_cfg.max_panels as usize).max(1)],
             panel_instances_dirty: true,
             transitioning_panels: HashMap::new(),
@@ -550,7 +552,49 @@ impl MuiRuntime {
         self.compute.borrow_mut().mark_interaction_dirty();
     }
 
+    pub fn write_snapshot_panel(&self, queue: &Queue, index: u32, panel: &Panel) {
+        let offset = Self::panel_offset(index);
+        queue.write_buffer(&self.buffers.snapshot, offset, bytes_of(panel));
+    }
 
+    pub fn write_snapshot_panels(&self, queue: &Queue, start_index: u32, panels: &[Panel]) {
+        if panels.is_empty() {
+            return;
+        }
+        let offset = Self::panel_offset(start_index);
+        queue.write_buffer(&self.buffers.snapshot, offset, cast_slice(panels));
+    }
+
+    pub fn write_snapshot_bytes(
+        &self,
+        queue: &Queue,
+        panel_offset_bytes: wgpu::BufferAddress,
+        data: &[u8],
+    ) {
+        queue.write_buffer(&self.buffers.snapshot, panel_offset_bytes, data);
+    }
+
+    pub fn restore_panel_from_snapshot(&mut self, queue: &Queue, index: usize) -> bool {
+        if let Some(snapshot) = self.panel_snapshots.get(index).copied() {
+            self.write_panel(queue, index as u32, &snapshot);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn commit_panel_snapshot(&mut self, queue: &Queue, index: usize) -> bool {
+        if let Some(panel) = self.panel_instances.get(index).copied() {
+            if self.panel_snapshots.len() <= index {
+                self.panel_snapshots.resize(index + 1, Panel::default());
+            }
+            self.panel_snapshots[index] = panel;
+            self.write_snapshot_panel(queue, index as u32, &panel);
+            true
+        } else {
+            false
+        }
+    }
 
     pub fn refresh_registered_payloads(&mut self, device: &Device, queue: &Queue) {
         let registry = payload_registry().lock().unwrap();
@@ -740,10 +784,12 @@ impl MuiRuntime {
             self.render.set_indirect_count(kind, 0);
         }
 
+        self.panel_snapshots = panels.clone();
         self.panel_instances = panels;
 
         if !self.panel_instances.is_empty() {
             self.write_panels(queue, 0, &self.panel_instances);
+            self.write_snapshot_panels(queue, 0, &self.panel_snapshots);
         }
 
         self.panel_instances_dirty = false;
@@ -958,11 +1004,7 @@ impl MuiRuntime {
     fn update_panel_state_field(&self, instance_index: u32, new_state: u32, queue: &Queue) {
         let panel_offset = Self::panel_offset(instance_index);
         let field_offset = offset_of!(Panel, state) as wgpu::BufferAddress;
-        dbg!(
-            panel_offset,
-            field_offset,
-            new_state
-        );
+        dbg!(panel_offset, field_offset, new_state);
         queue.write_buffer(
             &self.buffers.instance,
             panel_offset + field_offset,
@@ -1301,12 +1343,12 @@ impl MuiRuntime {
                 }),
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: Some(wgpu::DepthStencilState {
-                      format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
-                      depth_write_enabled: true,
-                      depth_compare: wgpu::CompareFunction::Less,
-                      stencil: wgpu::StencilState::default(),
-                      bias: DepthBiasState::default(),
-                  }),
+                    format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
                 cache: None,
@@ -2117,4 +2159,3 @@ fn refresh_payload<T: PanelPayload>(
 ) {
     let _ = runtime.refresh_panel_cache::<T>(keys, device, queue);
 }
-

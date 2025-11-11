@@ -11,7 +11,7 @@ use mile_gpu_dsl::prelude::{
 };
 use mile_graphics::structs::WGPUContext;
 use mile_ui::{
-    mui_prototype::{build_demo_panel, PanelRuntimeHandle},
+    mui_prototype::{PanelRuntimeHandle, build_demo_panel},
     prelude::*,
     runtime::{BufferArenaConfig, MuiRuntime},
 };
@@ -345,17 +345,17 @@ impl ApplicationHandler<AppEvent> for App {
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
                 {
                     if let Some(runtime_cell) = &self.mui_runtime {
-                    if runtime_cell.borrow().panel_instances.is_empty() {
-                        if let Ok(handles) = build_demo_panel() {
-                            self.demo_panel_handles = handles;
-                            let ctx = self.wgpu_context.as_ref().unwrap();
-                            let mut runtime = runtime_cell.borrow_mut();
-                            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
-                            runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-                            runtime.schedule_relation_flush();
+                        if runtime_cell.borrow().panel_instances.is_empty() {
+                            if let Ok(handles) = build_demo_panel() {
+                                self.demo_panel_handles = handles;
+                                let ctx = self.wgpu_context.as_ref().unwrap();
+                                let mut runtime = runtime_cell.borrow_mut();
+                                runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+                                runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+                                runtime.schedule_relation_flush();
+                            }
                         }
                     }
-                }
                 }
             }
             _ => {}

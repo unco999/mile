@@ -574,14 +574,12 @@ impl RelComposer {
     ) -> &mut Self {
         let panel_uuid = panel_uuid.into();
         let key = RelViewKey::for_panel::<T>(panel_uuid);
-        self.remove_matching(
-            |rule| {
-                matches!(
-                    rule,
-                    RelRule::ContainerLink { target, .. } if target == &key
-                )
-            },
-        );
+        self.remove_matching(|rule| {
+            matches!(
+                rule,
+                RelRule::ContainerLink { target, .. } if target == &key
+            )
+        });
         self
     }
 
