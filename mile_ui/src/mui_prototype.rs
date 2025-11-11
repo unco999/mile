@@ -1349,7 +1349,7 @@ impl<TPayload: PanelPayload> ContainerStyleBuilder<TPayload> {
         self
     }
 
-    pub fn size(mut self, size: Vec2) -> Self {
+    pub fn size_container(mut self, size: Vec2) -> Self {
         self.spec_mut().size = Some([size.x, size.y]);
         self
     }
@@ -1749,8 +1749,8 @@ fn build_demo_panel_with_uuid(
                     .finish()
                     .border(BorderStyle {
                         color: [0.0, 1.0, 0.0, 1.0],
-                        width: 9.0,
-                        radius: 15.0,
+                        width: 1.0,
+                        radius: 0.0,
                     })
 
             })
@@ -1765,10 +1765,10 @@ fn build_demo_panel_with_uuid(
         .state(UiState(0), |state| {
             state
                 .container_style()
-                .space(RelSpace::Local)
-                .origin(vec2(0.0, 0.0))
-                .slot_size(vec2(64.0, 32.0))
-                .layout(RelLayoutKind::horizontal(8.0))
+                .origin(vec2(55.0, 55.0))
+                .size_container(vec2(300.0,300.0))
+                .slot_size(vec2(100.0, 50.0))
+                .layout(RelLayoutKind::ring(300.0))
                 .finish()
                 .z_index(1)
                 .position(vec2(0.0, 0.0))
