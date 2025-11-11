@@ -1,5 +1,5 @@
 use crate::{
-    mui_anim::{AnimBuilder, AnimProperty, AnimationSpec},
+    mui_anim::{AnimBuilder, AnimProperty, AnimationSpec, Easing},
     mui_rel::{
         RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis, RelSpace,
         RelViewKey, panel_field,
@@ -1746,6 +1746,24 @@ fn build_demo_panel_with_uuid(
                     .size(vec2(100.0, 50.0))
                     .events()
                     .on_event(UiEventKind::Drag, |_|{})
+                    .on_event(UiEventKind::Hover, |flow|{
+                             flow.push_animation(
+                                 AnimBuilder::new(AnimProperty::Size)
+                                     .from_current()
+                                     .to(vec2(200.0, 100.0)) // 往上弹 16px
+                                     .duration(0.334)
+                                     .easing(Easing::BackOut)
+                                     .build(),
+                             );
+                            flow.push_animation(
+                                 AnimBuilder::new(AnimProperty::Opacity)
+                                     .from_current()
+                                     .to(0.0) // 往上弹 16px
+                                     .duration(0.334)
+                                     .easing(Easing::BackOut)
+                                     .build(),
+                             );
+                    })
                     .finish()
                     .border(BorderStyle {
                         color: [0.0, 1.0, 0.0, 1.0],
@@ -1768,7 +1786,7 @@ fn build_demo_panel_with_uuid(
                 .origin(vec2(55.0, 55.0))
                 .size_container(vec2(300.0,300.0))
                 .slot_size(vec2(100.0, 50.0))
-                .layout(RelLayoutKind::ring(300.0))
+                .layout(RelLayoutKind::grid([0.0,0.0]))
                 .finish()
                 .z_index(1)
                 .position(vec2(0.0, 0.0))

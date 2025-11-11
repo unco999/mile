@@ -1029,16 +1029,27 @@ impl MuiRuntime {
             return;
         };
 
-        {
-            let panel = &mut self.panel_instances[index];
-            match stage {
-                ShaderStage::Fragment => panel.fragment_shader_id = event.kennel_id,
-                ShaderStage::Vertex => panel.vertex_shader_id = event.kennel_id,
+        let panel = &mut self.panel_instances[index];
+        let (field_offset, value) = match stage {
+            ShaderStage::Fragment => {
+                panel.fragment_shader_id = event.kennel_id;
+                (
+                    offset_of!(Panel, fragment_shader_id) as wgpu::BufferAddress,
+                    panel.fragment_shader_id,
+                )
             }
-        }
+            ShaderStage::Vertex => {
+                panel.vertex_shader_id = event.kennel_id;
+                (
+                    offset_of!(Panel, vertex_shader_id) as wgpu::BufferAddress,
+                    panel.vertex_shader_id,
+                )
+            }
+        };
 
-        let panel = &self.panel_instances[index];
-        self.write_panel(queue, index as u32, panel);
+        let buffer_offset = Self::panel_offset(index as u32) + field_offset;
+        self.write_panel_bytes(queue, buffer_offset, bytes_of(&value));
+        self.compute.borrow_mut().mark_interaction_dirty();
     }
 
     pub fn panel_instances(&self) -> &[Panel] {
