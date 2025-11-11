@@ -294,8 +294,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    if (anim.panel_id == 0u) {
+        animations[idx].death = 1u;
+        return;
+    }
+
+    let panel_index = anim.panel_id - 1u;
     let total_panels = arrayLength(&panels);
-    if (anim.panel_id >= total_panels) {
+    if (panel_index >= total_panels) {
         animations[idx].death = 1u;
         return;
     }
@@ -309,7 +315,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     animations[idx].elapsed = new_elapsed;
 
     if (anim.hold != 0u && previous_elapsed == 0.0) {
-        let current = read_panel_field(anim.panel_id, anim.field_id);
+        let current = read_panel_field(panel_index, anim.field_id);
         animations[idx].start_value = current;
     }
 
@@ -319,7 +325,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let start_value = animations[idx].start_value;
     let target_value = animations[idx].target_value;
-    let panel_id = animations[idx].panel_id;
+    let panel_id = panel_index;
     let field_id = animations[idx].field_id;
     let easing = animations[idx].easy_fn;
 

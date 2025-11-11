@@ -1662,6 +1662,7 @@ impl MuiRuntime {
         let panel = self.descriptor_to_panel(descriptor);
         for spec in specs {
             if let Some(info) = animation_spec_to_transform(&panel, &spec) {
+                println!("动画响应 {:?}",panel.id);
                 self.enqueue_animation(queue, panel.id, info);
             } else {
                 eprintln!(
