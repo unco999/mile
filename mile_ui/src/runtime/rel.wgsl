@@ -107,12 +107,21 @@ const INVALID_ID: u32 = 0xffffffffu;
 const REL_WORK_FLAG_ENTER_CONTAINER: u32 = 1u << 0u;
 const REL_WORK_FLAG_EXIT_CONTAINER: u32 = 1u << 1u;
 
+const REL_LAYOUT_TYPE_MASK: u32 = 0xffu;
+const REL_LAYOUT_FREE: u32 = 0u;
+const REL_LAYOUT_HORIZONTAL: u32 = 1u;
+const REL_LAYOUT_VERTICAL: u32 = 2u;
+const REL_LAYOUT_GRID: u32 = 3u;
+const REL_LAYOUT_RING: u32 = 4u;
+const REL_LAYOUT_ALIGN_CENTER: u32 = 1u << 12u;
+const TAU: f32 = 6.28318530718;
+
 fn is_valid_panel(id: u32) -> bool {
-    return id != INVALID_ID && id < arrayLength(&panels);
+    return id != INVALID_ID && (id - 1) < arrayLength(&panels);
 }
 
 fn is_valid_delta(id: u32) -> bool {
-    return id != INVALID_ID && id < arrayLength(&panel_deltas);
+    return id != INVALID_ID && (id - 1) < arrayLength(&panel_deltas);
 }
 
 fn fetch_container_delta(container_id: u32) -> vec2<f32> {
@@ -120,6 +129,93 @@ fn fetch_container_delta(container_id: u32) -> vec2<f32> {
         return vec2<f32>(0.0);
     }
     return panel_deltas[container_id].delta_position;
+}
+
+fn clamp_order(order: u32, total: u32) -> u32 {
+    let safe_total = max(total, 1u);
+    return min(order, safe_total - 1u);
+}
+
+fn resolve_container_size(item: RelWorkItem) -> vec2<f32> {
+    var size = item.container_size;
+    if (all(size == vec2<f32>(0.0)) && is_valid_panel(item.container_id)) {
+        size = panels[item.container_id].size;
+    }
+    return size;
+}
+
+fn resolve_slot_size(item: RelWorkItem, panel_id: u32) -> vec2<f32> {
+    var slot = item.slot_size;
+    if (all(slot == vec2<f32>(0.0))) {
+        slot = panels[panel_id].size;
+    }
+    return slot * item.scale;
+}
+
+fn align_axis_offset(
+    start_pad: f32,
+    end_pad: f32,
+    extent: f32,
+    slot_extent: f32,
+    center: bool,
+) -> f32 {
+    let available = max(extent - start_pad - end_pad, 0.0);
+    if (center) {
+        let slack = max(available - slot_extent, 0.0);
+        return start_pad + slack * 0.5;
+    }
+    return start_pad;
+}
+
+fn compute_layout_offset(panel_id: u32, item: RelWorkItem) -> vec2<f32> {
+
+    let layout_kind = item.relation_flags & REL_LAYOUT_TYPE_MASK;
+    if (layout_kind == REL_LAYOUT_FREE) {
+        return vec2<f32>(0.0);
+    }
+
+    let slot = resolve_slot_size(item, panel_id);
+    let container_size = resolve_container_size(item);
+    let align_center = (item.relation_flags & REL_LAYOUT_ALIGN_CENTER) != 0u;
+    let left_pad = item.padding.x;
+    let top_pad = item.padding.y;
+    let right_pad = item.padding.z;
+    let bottom_pad = item.padding.w;
+    let order = clamp_order(item.order, item.total);
+
+    var offset = vec2<f32>(left_pad, top_pad);
+    if (layout_kind == REL_LAYOUT_HORIZONTAL) {
+        let stride = slot.x + item.spacing.x;
+        offset.x += f32(order) * stride;
+        offset.y = align_axis_offset(top_pad, bottom_pad, container_size.y, slot.y, align_center);
+    } else if (layout_kind == REL_LAYOUT_VERTICAL) {
+        let stride = slot.y + item.spacing.y;
+        offset.y += f32(order) * stride;
+        offset.x = align_axis_offset(left_pad, right_pad, container_size.x, slot.x, align_center);
+    } else if (layout_kind == REL_LAYOUT_GRID) {
+        let stride = slot + item.spacing;
+        let available_width = max(container_size.x - left_pad - right_pad, stride.x);
+        let columns = max(u32(available_width / stride.x), 1u);
+        let col = order % columns;
+        let row = order / columns;
+        offset.x += f32(col) * stride.x;
+        offset.y += f32(row) * stride.y;
+    } else if (layout_kind == REL_LAYOUT_RING) {
+        let radius = abs(item.spacing.x);
+        let dir = select(-1.0, 1.0, item.spacing.x >= 0.0);
+        let start_angle = item.spacing.y;
+        let total = max(item.total, 1u);
+        let angle_step = TAU / f32(total);
+        let angle = start_angle + dir * angle_step * f32(order);
+        let inner_width = max(container_size.x - left_pad - right_pad, radius * 2.0);
+        let inner_height = max(container_size.y - top_pad - bottom_pad, radius * 2.0);
+        let center = vec2<f32>(
+            left_pad + inner_width * 0.5,
+            top_pad + inner_height * 0.5,
+        );
+        offset = center + vec2<f32>(cos(angle), sin(angle)) * radius - slot * 0.5;
+    }
+    return offset;
 }
 
 @compute @workgroup_size(64)
@@ -155,11 +251,19 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             debug_buffer.uints[9] = 99999;
         }
         let current_pos = panels[panel_id].position;
+        if (!is_valid_panel(item.container_id)) {
+            return;
+        }
         let container_pos = panels[item.container_id].position;
-        let desired_pos = container_pos + item.origin;
+        let layout_offset = compute_layout_offset(panel_id, item);
+
+
+        let desired_pos = container_pos + item.origin + layout_offset;
+
         let delta = current_pos - desired_pos ;
+
+
         panels[panel_id].position = desired_pos;
-        panel_deltas[panel_id].delta_position = delta;
         panel_deltas[panel_id].container_origin = desired_pos;
 
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
