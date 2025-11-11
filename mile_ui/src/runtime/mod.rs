@@ -11,6 +11,7 @@ pub mod compute;
 pub mod entry;
 pub mod relations;
 pub mod render;
+pub mod snapshot_registry;
 pub mod state;
 
 pub use buffers::{BufferArena, BufferArenaConfig, BufferViewSet};
@@ -21,6 +22,7 @@ pub use relations::{
     layout_flags, register_panel_relations, relation_registry, set_panel_active_state,
 };
 pub use render::{QuadBatchKind, RenderBatches, RenderPipelines};
+pub use snapshot_registry::{panel_position, set_panel_position};
 pub use state::{
     ClickCallback, CpuPanelEvent, EntryCallBack, EntryFragBack, EntryVertexBack, FRAME, FrameState,
     HoverCallback, NetWorkTransition, OutCallBack, PanelEventRegistry, RuntimeState,

@@ -255,27 +255,28 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
         let container_pos = panels[item.container_id].position;
+        let container_origin = container_pos + item.origin;
         let layout_offset = compute_layout_offset(panel_id, item);
-
-
-        let desired_pos = container_pos + item.origin + layout_offset;
+        let desired_pos = container_origin + layout_offset;
 
         let delta = current_pos - desired_pos ;
 
-
+        panel_deltas[panel_id].start_position = current_pos;
         panels[panel_id].position = desired_pos;
-        panel_deltas[panel_id].container_origin = desired_pos;
+        panel_deltas[panel_id].container_origin = container_origin;
 
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
         work_items[idx] = item;
         return;
     }
 
-    if (!is_valid_delta(item.container_id)) {
+    if (!is_valid_delta(item.container_id) || !is_valid_panel(item.container_id)) {
         return;
     }
 
     let container_delta = fetch_container_delta(item.container_id);
     panel_deltas[panel_id].delta_position = container_delta;
-    panel_deltas[panel_id].container_origin = container_delta;
+    let container_pos = panels[item.container_id].position;
+    let container_origin = container_pos + item.origin;
+    panel_deltas[panel_id].container_origin = container_origin;
 }

@@ -317,6 +317,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (anim.hold != 0u && previous_elapsed == 0.0) {
         let current = read_panel_field(panel_index, anim.field_id);
         animations[idx].start_value = current;
+        if (panel_index < arrayLength(&panel_deltas)) {
+            if (anim.field_id == PANEL_FIELD_POSITION_X) {
+                panel_deltas[panel_index].start_position.x = panels[panel_index].position.x;
+            } else if (anim.field_id == PANEL_FIELD_POSITION_Y) {
+                panel_deltas[panel_index].start_position.y = panels[panel_index].position.y;
+            }
+        }
     }
 
     if (new_elapsed < delay) {

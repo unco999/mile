@@ -570,6 +570,16 @@ impl AnimationComputeStage {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -674,6 +684,10 @@ impl AnimationComputeStage {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: buffers.instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.snapshot.as_entire_binding(),
                 },
             ],
         })
@@ -1033,6 +1047,16 @@ impl PanelDeltaStage {
                     },
                     count: None,
                 },
+                                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -1074,6 +1098,10 @@ impl PanelDeltaStage {
                     binding: 2,
                     resource: trace.buffer.as_ref().unwrap().as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.snapshot.as_entire_binding(),
+                },
             ],
         });
 
@@ -1102,6 +1130,14 @@ impl PanelDeltaStage {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: buffers.panel_anim_delta.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.trace.buffer.as_ref().unwrap().as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: buffers.snapshot.as_entire_binding(),
                 },
             ],
         });

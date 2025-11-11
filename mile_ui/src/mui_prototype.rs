@@ -6,7 +6,7 @@ use crate::{
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
-        QuadBatchKind, register_payload_refresh,
+        panel_position, QuadBatchKind, register_payload_refresh,
         relations::register_panel_relations,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
@@ -1017,13 +1017,16 @@ fn trigger_event_internal<TPayload: PanelPayload>(
         runtime.current_state
     };
 
-    let snapshot = match runtime.handle.read() {
+    let mut snapshot = match runtime.handle.read() {
         Ok(record) => record,
         Err(err) => {
             eprintln!("failed to read panel record: {err:?}");
             PanelRecord::<TPayload>::default()
         }
     };
+    if let Some(pos) = panel_position(key.panel_id) {
+        snapshot.snapshot.position = pos;
+    }
 
     let Some(callbacks) = runtime.callbacks.get(&state) else {
         return;
@@ -1830,9 +1833,7 @@ fn build_demo_panel_with_uuid(
             .state(
                 UiState(0),
                 move |mut state: StateStageBuilder<TestCustomData>| {
-                    state
-                        .rel()
-                        .container_with::<TestCustomData>("demo_container");
+                    state.rel().container_with::<TestCustomData>("test_back");
 
                     state
                         .z_index(4 + (idx as i32 % 3))
@@ -1846,7 +1847,7 @@ fn build_demo_panel_with_uuid(
                         .events()
                         .on_event(UiEventKind::Hover, |flow| {
                             flow.position_anim()
-                                .from_snapshot()
+                                .from_current()
                                 .offset(vec2(0.0, -14.0))
                                 .duration(0.18)
                                 .easing(Easing::BackOut)
@@ -1872,6 +1873,7 @@ fn build_demo_panel_with_uuid(
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             state
+                .position(vec2(300.0, 300.0))
                 .container_style()
                 .origin(vec2(32.0, 32.0))
                 .size_container(vec2(560.0, 360.0))
