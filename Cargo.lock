@@ -1528,6 +1528,7 @@ dependencies = [
  "mile_db",
  "mile_gpu_dsl",
  "mile_graphics",
+ "once_cell",
  "serde",
  "serde_json",
  "slotmap",

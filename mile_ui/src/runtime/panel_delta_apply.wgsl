@@ -43,9 +43,6 @@ struct GpuUiDebugReadCallBack {
     uints: array<u32, 32>,
 };
 
-@group(0) @binding(2)
-var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
-
 struct PanelAnimDelta {
     delta_position: vec2<f32>,
     delta_size: vec2<f32>,
@@ -72,6 +69,12 @@ var<storage, read_write> panels: array<Panel>;
 @group(0) @binding(1)
 var<storage, read_write> panel_deltas: array<PanelAnimDelta>;
 
+@group(0) @binding(2)
+var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
+
+@group(0) @binding(3)
+var<storage, read_write> panel_snapshots: array<Panel>;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -92,4 +95,5 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         panels[idx].position += delta;
         panel_deltas[panel_id].delta_position = vec2<f32>(0.0);
     }
+    panel_snapshots[idx] = panels[idx];
 }

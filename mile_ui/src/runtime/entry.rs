@@ -22,6 +22,7 @@ use super::{
         RelationWorkItem, clear_panel_relations, flush_pending_relations, inject_relation_work,
         layout_flags, set_panel_active_state,
     },
+    snapshot_registry,
     render::{QuadBatchKind, RenderPipelines},
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
@@ -784,6 +785,9 @@ impl MuiRuntime {
 
         self.panel_snapshots = panels.clone();
         self.panel_instances = panels;
+        for panel in &self.panel_instances {
+            snapshot_registry::set_panel_position(panel.id, panel.position);
+        }
 
         if !self.panel_instances.is_empty() {
             self.write_panels(queue, 0, &self.panel_instances);
@@ -1662,7 +1666,7 @@ impl MuiRuntime {
         let panel = self.descriptor_to_panel(descriptor);
         for spec in specs {
             if let Some(info) = animation_spec_to_transform(&panel, &spec) {
-                println!("动画响应 {:?}",panel.id);
+                println!("动画响应 {:?}", panel.id);
                 self.enqueue_animation(queue, panel.id, info);
             } else {
                 eprintln!(
