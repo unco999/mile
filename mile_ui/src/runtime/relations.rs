@@ -7,8 +7,8 @@ use std::{
 use crate::{
     mui_prototype::{PanelKey, UiState, panel_numeric_id, registered_panel_keys},
     mui_rel::{
-        RelContainerLinkState, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelParsedGraph,
-        RelNodeState, RelSpace, RelTransition, RelViewKey,
+        RelContainerLinkState, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelNodeState,
+        RelParsedGraph, RelSpace, RelTransition, RelViewKey,
     },
 };
 
@@ -34,7 +34,7 @@ impl PanelRelationEntry {
     }
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct RelationWorkItem {
     pub panel_id: u32,
     pub container_id: u32,
@@ -159,11 +159,7 @@ impl RelationRegistry {
         items
     }
 
-    fn build_work_items(
-        &mut self,
-        panel_id: u32,
-        graph: &RelParsedGraph,
-    ) -> Vec<RelationWorkItem> {
+    fn build_work_items(&mut self, panel_id: u32, graph: &RelParsedGraph) -> Vec<RelationWorkItem> {
         if panel_id == 0 {
             let (active_state, has_container) = self
                 .panels
@@ -183,20 +179,18 @@ impl RelationRegistry {
                     continue;
                 };
                 let Some(spec) = self.active_container_spec(container_panel_id) else {
-    
                     continue;
                 };
                 has_links = true;
-                let mut item = self.build_container_work_item(
-                    panel_id,
-                    container_panel_id,
-                    spec,
-                    link,
-                );
+                let mut item =
+                    self.build_container_work_item(panel_id, container_panel_id, spec, link);
                 let previous = self.active_links.get(&panel_id).copied();
                 if previous != Some(container_panel_id) {
                     item.flags |= WORK_FLAG_ENTER_CONTAINER;
-                    println!("哪个Panel 被链接到哪个 {} -> {}",panel_id,container_panel_id);
+                    println!(
+                        "哪个Panel 被链接到哪个 {} -> {}",
+                        panel_id, container_panel_id
+                    );
 
                     self.active_links.insert(panel_id, container_panel_id);
                 }
@@ -208,10 +202,7 @@ impl RelationRegistry {
             .filter(|item| (item.flags & WORK_FLAG_ENTER_CONTAINER) != 0);
         let total = enters.clone().count();
         let containers = enters.filter(|item| item.is_container).count();
-        println!(
-            "多少个面板进入了 {:?}, 其中容器 {:?}",
-            total, containers
-        );
+        println!("多少个面板进入了 {:?}, 其中容器 {:?}", total, containers);
         if !has_links {
             if self.active_links.remove(&panel_id).is_some() {
                 items.push(RelationWorkItem {
@@ -238,10 +229,7 @@ impl RelationRegistry {
         }
         layout_flags |= encode_space(spec.space);
 
-        let slot = spec
-            .slot_size
-            .or(spec.size)
-            .unwrap_or([0.0f32, 0.0f32]);
+        let slot = spec.slot_size.or(spec.size).unwrap_or([0.0f32, 0.0f32]);
         let size = spec.size.unwrap_or(slot);
 
         let (entry_mode, entry_param) = encode_transition(&link.entry);
@@ -332,12 +320,8 @@ impl RelationRegistry {
     }
 
     fn log_parser_diagnostics(&self, panel_id: u32, state: UiState, graph: &RelParsedGraph) {
-        for warning in &graph.diagnostics.warnings {
-    
-        }
-        for conflict in &graph.diagnostics.conflicts {
-
-        }
+        for warning in &graph.diagnostics.warnings {}
+        for conflict in &graph.diagnostics.conflicts {}
     }
 
     fn warn_unknown_targets(&self, panel_id: u32, state: UiState, graph: &RelParsedGraph) {
@@ -352,15 +336,10 @@ impl RelationRegistry {
 
             let scope = node.key.scope.as_deref().unwrap_or("<default>");
             let kinds = summarize_relation_kinds(node);
-  
         }
     }
 
-    fn view_exists(
-        &self,
-        cache: &mut HashMap<TypeId, Vec<PanelKey>>,
-        key: &RelViewKey,
-    ) -> bool {
+    fn view_exists(&self, cache: &mut HashMap<TypeId, Vec<PanelKey>>, key: &RelViewKey) -> bool {
         let entries = cache
             .entry(key.payload)
             .or_insert_with(|| registered_panel_keys(key.payload));
@@ -504,15 +483,12 @@ pub fn inject_relation_work(items: Vec<RelationWorkItem>) {
 }
 
 pub fn active_panel_relations(panel_id: u32) -> Option<RelParsedGraph> {
-    relation_registry()
-        .lock()
-        .ok()
-        .and_then(|registry| {
-            registry
-                .panels
-                .get(&panel_id)
-                .and_then(|entry| entry.active_graph().cloned())
-        })
+    relation_registry().lock().ok().and_then(|registry| {
+        registry
+            .panels
+            .get(&panel_id)
+            .and_then(|entry| entry.active_graph().cloned())
+    })
 }
 
 pub mod layout_flags {

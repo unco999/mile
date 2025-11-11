@@ -753,6 +753,16 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         self.record.pending_animations.push(animation);
     }
 
+    pub fn position_anim(&mut self) -> PositionAnimFlow<TPayload> {
+        let base = Vec2::from_array(self.args.record_snapshot.snapshot.position);
+        PositionAnimFlow::<TPayload> {
+            builder: AnimBuilder::new(AnimProperty::Position).from_current(),
+            base,
+            target: None,
+            _marker: PhantomData,
+        }
+    }
+
     pub fn args(&self) -> &PanelEventArgs<TPayload> {
         self.args
     }
@@ -812,6 +822,85 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
 
     fn take_override(&mut self) -> Option<UiState> {
         self.override_state.take()
+    }
+}
+
+pub struct PositionAnimFlow<TPayload: PanelPayload> {
+    builder: AnimBuilder,
+    base: Vec2,
+    target: Option<Vec2>,
+    _marker: PhantomData<TPayload>,
+}
+
+impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
+    pub fn offset(mut self, delta: Vec2) -> Self {
+        self.target = Some(self.base + delta);
+        self
+    }
+
+    pub fn to_offset(self, delta: Vec2) -> Self {
+        self.offset(delta)
+    }
+
+    pub fn to_snapshot(mut self) -> Self {
+        self.target = Some(self.base);
+        self
+    }
+
+    pub fn to(mut self, target: Vec2) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub fn from_snapshot(mut self) -> Self {
+        self.builder = self.builder.from(self.base);
+        self
+    }
+
+    pub fn from_current(mut self) -> Self {
+        self.builder = self.builder.from_current();
+        self
+    }
+
+    pub fn from_offset(mut self, delta: Vec2) -> Self {
+        self.builder = self.builder.from(self.base + delta);
+        self
+    }
+
+    pub fn duration(mut self, seconds: f32) -> Self {
+        self.builder = self.builder.duration(seconds);
+        self
+    }
+
+    pub fn delay(mut self, seconds: f32) -> Self {
+        self.builder = self.builder.delay(seconds);
+        self
+    }
+
+    pub fn easing(mut self, easing: Easing) -> Self {
+        self.builder = self.builder.easing(easing);
+        self
+    }
+
+    pub fn loop_count(mut self, count: u32) -> Self {
+        self.builder = self.builder.loop_count(count);
+        self
+    }
+
+    pub fn infinite(mut self) -> Self {
+        self.builder = self.builder.infinite();
+        self
+    }
+
+    pub fn ping_pong(mut self, enabled: bool) -> Self {
+        self.builder = self.builder.ping_pong(enabled);
+        self
+    }
+
+    pub fn push(mut self, flow: &mut EventFlow<'_, TPayload>) {
+        let target = self.target.unwrap_or(self.base);
+        let builder = self.builder.to(target);
+        flow.push_animation(builder.build());
     }
 }
 
@@ -901,7 +990,7 @@ fn runtime_map<TPayload: PanelPayload>() -> Arc<Mutex<HashMap<PanelKey, PanelRun
 
 fn register_runtime<TPayload: PanelPayload>(key: PanelKey, runtime: PanelRuntime<TPayload>) {
     let arc = runtime_map::<TPayload>();
-    println!("当前构建UI元素 {:?}",key);
+    println!("当前构建UI元素 {:?}", key);
     register_panel_key::<TPayload>(&key);
     arc.lock().unwrap().insert(key, runtime);
 }
@@ -990,7 +1079,6 @@ impl PanelRuntimeHandle {
         &self.key
     }
 }
-
 
 /// Flow mode for the builder.
 enum FlowMode<TPayload: PanelPayload> {
@@ -1442,9 +1530,7 @@ impl<TPayload: PanelPayload> ContainerStyleBuilder<TPayload> {
         if self.dirty {
             match self.spec.take() {
                 Some(spec) => {
-                    self.parent
-                        .rel
-                        .container_self(move |target| *target = spec);
+                    self.parent.rel.container_self(move |target| *target = spec);
                 }
                 None => {
                     self.parent.rel.clear_container_self();
@@ -1730,84 +1816,81 @@ fn frag_template(intensity: f32) -> Expr {
 fn build_demo_panel_with_uuid(
     panel_uuid: &'static str,
 ) -> Result<Vec<PanelRuntimeHandle>, DbError> {
-    let mut handles = Vec::new();
+    const ITEM_COUNT: usize = 1;
+    let mut handles = Vec::with_capacity(ITEM_COUNT + 1);
 
-        for i in 0..50{
-         let panel = Mui::<TestCustomData>::stateful(Box::leak(format!("测试子元素{}", i).into_boxed_str()))?
+    for idx in 0..ITEM_COUNT {
+        let slot_position = vec2(
+            48.0 + (idx as f32 % 6.0) * 118.0,
+            72.0 + (idx as f32 / 6.0).floor() * 70.0,
+        );
+        let uuid = format!("demo_entry_{idx}");
+        let panel = Mui::<TestCustomData>::stateful(Box::leak(uuid.into_boxed_str()))?
             .default_state(UiState(0))
-            .quad_vertex(QuadBatchKind::UltraVertex)
-            .state(UiState(0), move |mut state: StateStageBuilder<TestCustomData>| {
-                let rel = state.rel();
-                rel.container_with::<TestCustomData>("demo_container");
-                println!("注册{:?}",vec2(i as f32 * 10.0, i as f32 * 10.0));
-                state
-                    .z_index(5)
-                    .position(vec2(i as f32 * 10.0, i as f32 * 10.0))
-                    .size(vec2(100.0, 50.0))
-                    .events()
-                    .on_event(UiEventKind::Drag, |_|{})
-                    .on_event(UiEventKind::Hover, |flow|{
-                             flow.push_animation(
-                                 AnimBuilder::new(AnimProperty::Size)
-                                     .from_current()
-                                     .to(vec2(200.0, 100.0)) // 往上弹 16px
-                                     .duration(0.334)
-                                     .easing(Easing::BackOut)
-                                     .build(),
-                             );
-                            flow.push_animation(
-                                 AnimBuilder::new(AnimProperty::Opacity)
-                                     .from_current()
-                                     .to(0.0) // 往上弹 16px
-                                     .duration(0.334)
-                                     .easing(Easing::BackOut)
-                                     .build(),
-                             );
-                    })
-                    .finish()
-                    .border(BorderStyle {
-                        color: [0.0, 1.0, 0.0, 1.0],
-                        width: 1.0,
-                        radius: 0.0,
-                    })
+            .state(
+                UiState(0),
+                move |mut state: StateStageBuilder<TestCustomData>| {
+                    state
+                        .rel()
+                        .container_with::<TestCustomData>("demo_container");
 
-            })
+                    state
+                        .z_index(4 + (idx as i32 % 3))
+                        .position(slot_position)
+                        .size(vec2(108.0, 52.0))
+                        .border(BorderStyle {
+                            color: [0.15, 0.8, 0.45, 1.0],
+                            width: 1.0,
+                            radius: 9.0,
+                        })
+                        .events()
+                        .on_event(UiEventKind::Hover, |flow| {
+                            flow.position_anim()
+                                .from_snapshot()
+                                .offset(vec2(0.0, -14.0))
+                                .duration(0.18)
+                                .easing(Easing::BackOut)
+                                .push(flow);
+                        })
+                        .on_event(UiEventKind::Out, |flow| {
+                            flow.position_anim()
+                                .from_current()
+                                .to_snapshot()
+                                .duration(0.22)
+                                .easing(Easing::BackIn)
+                                .push(flow);
+                        })
+                        .finish()
+                },
+            )
             .build()?;
 
-            handles.push(panel);
-        }
-    
-        
-    let test_container = Mui::<TestCustomData>::stateful("demo_container")?
+        handles.push(panel);
+    }
+
+    let test_container = Mui::<TestCustomData>::stateful("test_back")?
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             state
                 .container_style()
-                .origin(vec2(55.0, 55.0))
-                .size_container(vec2(300.0,300.0))
-                .slot_size(vec2(100.0, 50.0))
-                .layout(RelLayoutKind::grid([0.0,0.0]))
+                .origin(vec2(32.0, 32.0))
+                .size_container(vec2(560.0, 360.0))
+                .slot_size(vec2(120.0, 60.0))
+                .layout(RelLayoutKind::grid([12.0, 12.0]))
                 .finish()
                 .z_index(1)
                 .position(vec2(0.0, 0.0))
                 .texture("backgound.png")
-                .size(vec2(500.0, 500.0))
+                .size(vec2(640.0, 420.0))
                 .events()
-                    .on_event(UiEventKind::Drag, |_|{})
-                    .finish()
-                // .events()
-                // .on_event(UiEventKind::Drag, |_| {})
-                // .finish()
+                .on_event(UiEventKind::Drag, |_| {})
+                .finish()
         })
         .build()?;
     handles.push(test_container);
 
-
-
-
     Ok(handles)
 }
-
 /// Demonstration that mirrors the existing builder usage.
 pub fn build_demo_panel() -> Result<Vec<PanelRuntimeHandle>, DbError> {
     build_demo_panel_with_uuid("inventory_panel")
@@ -1914,15 +1997,15 @@ mod tests {
             Some(&UiState(0))
         );
 
-            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
-            record = read_counter_record(runtime_handle.key());
-            assert_eq!(record.current_state, UiState(1));
-            assert_eq!(record.data.count, 1);
-            assert_eq!(record.pending_animations.len(), 1);
+        runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+        record = read_counter_record(runtime_handle.key());
+        assert_eq!(record.current_state, UiState(1));
+        assert_eq!(record.data.count, 1);
+        assert_eq!(record.pending_animations.len(), 1);
 
-            runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
-            record = read_counter_record(runtime_handle.key());
-            assert_eq!(record.current_state, UiState(0));
-            assert_eq!(record.data.count, 2);
-        }
+        runtime_handle.trigger::<UiPanelData>(UiEventKind::Click);
+        record = read_counter_record(runtime_handle.key());
+        assert_eq!(record.current_state, UiState(0));
+        assert_eq!(record.data.count, 2);
+    }
 }

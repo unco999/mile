@@ -37,7 +37,7 @@ bitflags! {
  * 每个instance 负责一个字构造
  * 每个面板一个字 最主要的是动态大小的这个偏移索引
  * 所谓的索引 就是我们 字形印版 在  sdf纹理里面的坐标
- * 我们只要一个连续的索引在buffer中的位置 
+ * 我们只要一个连续的索引在buffer中的位置
  * 如果 这个缓冲区满了 我们把长期有效记录 更新到持久缓存的位置
  */
 use wgpu::BufferAddress;
@@ -45,15 +45,15 @@ use wgpu::BufferAddress;
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct GpuGlyphInfo<'a> {
-    pub is_persistent: bool,  // 标记是否为长期有效字形
-    pub offset_range: &'a GpuOffsetRange,  // 引用 GpuOffsetRange，生命周期一致
+    pub is_persistent: bool,              // 标记是否为长期有效字形
+    pub offset_range: &'a GpuOffsetRange, // 引用 GpuOffsetRange，生命周期一致
 }
 
 #[repr(C)]
 #[derive(Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct GpuOffsetRange {
-    pub offset_start: BufferAddress,  // 起始偏移
-    pub end_start: BufferAddress,     // 结束偏移
+    pub offset_start: BufferAddress, // 起始偏移
+    pub end_start: BufferAddress,    // 结束偏移
 }
 
 impl GpuOffsetRange {
@@ -66,17 +66,17 @@ impl GpuOffsetRange {
 }
 
 #[derive(Clone)]
-pub struct SdfInfo{
-    texture_x:u32,
-    texture_y:u32
+pub struct SdfInfo {
+    texture_x: u32,
+    texture_y: u32,
 }
 
 pub struct FontSDFIndexDynamicArea<'a> {
-    pub area:Vec<[u32;2]>,
+    pub area: Vec<[u32; 2]>,
     // 字形信息缓冲区（环形缓冲区）
     pub glyph_buffer: HashMap<&'a GpuOffsetRange, GpuGlyphInfo<'a>>,
 
-    pub movable_type_printing:HashMap<char,SdfInfo>,
+    pub movable_type_printing: HashMap<char, SdfInfo>,
     // 持久缓存区
     pub persistent_cache: HashMap<&'a GpuOffsetRange, GpuGlyphInfo<'a>>,
 
@@ -92,16 +92,14 @@ pub struct FontSDFIndexDynamicArea<'a> {
 }
 
 pub enum TextError {
-    GlyphNotFound {
-        character: char,
-    },
+    GlyphNotFound { character: char },
 }
 impl<'a> FontSDFIndexDynamicArea<'a> {
     // 创建新的 FontSDFIndexDynamicArea
     pub fn new(hot_cache_capacity: usize) -> Self {
         Self {
-            movable_type_printing:HashMap::new(),
-            area:vec![],
+            movable_type_printing: HashMap::new(),
+            area: vec![],
             glyph_buffer: HashMap::with_capacity(hot_cache_capacity),
             persistent_cache: HashMap::new(),
             head_idx: 0,
@@ -118,9 +116,12 @@ impl<'a> FontSDFIndexDynamicArea<'a> {
     fn font_text_entry(&mut self, str: &'a str) -> Result<Vec<SdfInfo>, TextError> {
         let mut font_sdf_info: Vec<SdfInfo> = Vec::new();
         for c in str.chars() {
-            let item = self.movable_type_printing
-                .get(&c)
-                .ok_or_else(|| TextError::GlyphNotFound { character: c.into() })?;
+            let item =
+                self.movable_type_printing
+                    .get(&c)
+                    .ok_or_else(|| TextError::GlyphNotFound {
+                        character: c.into(),
+                    })?;
             font_sdf_info.push(item.clone());
         }
         Ok(font_sdf_info)
@@ -128,10 +129,7 @@ impl<'a> FontSDFIndexDynamicArea<'a> {
 
     fn batch(&mut self, str: &'a str) -> Result<(), TextError> {
         let sdf_info = self.font_text_entry(str)?;
-        for info in sdf_info{
-
-        }
-
+        for info in sdf_info {}
 
         Ok(())
     }
@@ -139,11 +137,14 @@ impl<'a> FontSDFIndexDynamicArea<'a> {
     /**
      * 插入字符在sdf里面的位置
      */
-    pub fn font_record(&mut self,char:&char,x:u32,y:u32){
-        self.movable_type_printing.insert(*char, SdfInfo{
-            texture_x: x,
-            texture_y: y,
-        });
+    pub fn font_record(&mut self, char: &char, x: u32, y: u32) {
+        self.movable_type_printing.insert(
+            *char,
+            SdfInfo {
+                texture_x: x,
+                texture_y: y,
+            },
+        );
     }
 
     // 更新缓冲区并处理热缓存区满时的数据迁移
@@ -186,23 +187,17 @@ impl<'a> FontSDFIndexDynamicArea<'a> {
 
     // 清空热缓存区
     fn clear_hot_cache(&mut self) {
-        self.glyph_buffer.clear();  // 清空热缓存区
-        self.head_idx = 0;  // 重置头部索引
-        self.tail_idx = 0;  // 重置尾部索引
-        self.valid_size = 0;  // 清空有效数据大小
+        self.glyph_buffer.clear(); // 清空热缓存区
+        self.head_idx = 0; // 重置头部索引
+        self.tail_idx = 0; // 重置尾部索引
+        self.valid_size = 0; // 清空有效数据大小
     }
 
     // 获取持久缓存的字形
     pub fn get_persistent_cache(&self) -> Vec<GpuGlyphInfo<'a>> {
-        self.persistent_cache
-            .values()
-            .cloned()
-            .collect::<Vec<_>>()  // 将持久缓存区的内容转换为 `Vec`
+        self.persistent_cache.values().cloned().collect::<Vec<_>>() // 将持久缓存区的内容转换为 `Vec`
     }
-
 }
-
-
 
 // ---- GPU 端可直接写入的样式（全部数值化）----
 #[repr(C)]
@@ -241,24 +236,24 @@ pub struct TextGpu {
 // 48 字节
 
 #[test]
-fn test(){
+fn test() {
     let mut dynamic_area = FontSDFIndexDynamicArea::new(128);
     dynamic_area.update_glyph_buffer(&[
-        GpuGlyphInfo{
+        GpuGlyphInfo {
             is_persistent: true,
-            offset_range:&GpuOffsetRange{
+            offset_range: &GpuOffsetRange {
                 offset_start: 0,
                 end_start: 128,
             },
         },
-        GpuGlyphInfo{
+        GpuGlyphInfo {
             is_persistent: true,
-            offset_range:&GpuOffsetRange{
+            offset_range: &GpuOffsetRange {
                 offset_start: 128,
                 end_start: 256,
             },
         },
     ]);
     dynamic_area.move_to_persistent_cache();
-    println!("当前的字形索引情况 {:?}",dynamic_area.persistent_cache)
+    println!("当前的字形索引情况 {:?}", dynamic_area.persistent_cache)
 }
