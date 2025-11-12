@@ -946,6 +946,7 @@ impl RelationComputeStage {
                     exit_mode: item.exit_mode,
                     exit_param: item.exit_param,
                 };
+                print!("当前面板 {:?}",gpu_item);
                 gpu_items.push(gpu_item);
             }
 

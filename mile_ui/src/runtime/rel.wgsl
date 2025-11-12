@@ -256,21 +256,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (!is_valid_panel(item.container_id)) {
             return;
         }
-        let container_pos = panels[item.container_id].position;
-        let container_origin = container_pos + item.origin;
+        let container_pos = panels[item.container_id - 1].position;
+        let container_origin = container_pos + work_items[item.container_id - 1].origin;
         let layout_offset = compute_layout_offset(panel_id, item);
-        let desired_pos = container_origin - layout_offset;
+        let desired_pos = container_origin + layout_offset;
         work_items[idx].origin = layout_offset;
-        debug_buffer.floats[0] = work_items[idx].origin.x;
-        debug_buffer.floats[1] = work_items[idx].origin.y;
 
-        let delta = current_pos - desired_pos;
+        panel_deltas[panel_id - 1].start_position = current_pos;
+        //panel_deltas[panel_id].delta_position += delta;
+        panels[panel_id - 1].position = desired_pos;
+        panel_deltas[panel_id - 1].container_origin = container_origin;
+        panel_snapshots[panel_id].position = desired_pos;
 
-        panel_deltas[panel_id].start_position = current_pos;
-        panel_deltas[panel_id].delta_position += delta;
-        panels[panel_id].position = desired_pos;
-        panel_deltas[panel_id].container_origin = container_origin;
-        panel_snapshots[panel_id].position = current_pos + delta;
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
         work_items[idx] = item;
         return;
@@ -285,5 +282,5 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     panel_snapshots[panel_id].position += container_delta;
     let container_pos = panels[item.container_id].position;
     let container_origin = container_pos + item.origin;
-    panel_deltas[panel_id].container_origin = container_origin + work_items[idx].origin;
+    panel_deltas[panel_id].container_origin = container_origin + work_items[item.container_id].origin;
 }

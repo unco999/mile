@@ -133,10 +133,15 @@ impl RelationRegistry {
                 Some(graph) => {
                     let built = self.build_work_items(panel_id, &graph);
                     if built.is_empty() {
+                        let origin = self
+                            .active_container_spec(panel_id)
+                            .map(|spec| spec.origin)
+                            .unwrap_or([0.0, 0.0]);
                         items.push(RelationWorkItem {
                             panel_id,
                             flags: WORK_FLAG_EXIT_CONTAINER,
                             is_container: self.is_panel_container(panel_id),
+                            origin,
                             ..RelationWorkItem::default()
                         });
                     } else {
@@ -144,10 +149,15 @@ impl RelationRegistry {
                     }
                 }
                 None => {
+                    let origin = self
+                        .active_container_spec(panel_id)
+                        .map(|spec| spec.origin)
+                        .unwrap_or([0.0, 0.0]);
                     items.push(RelationWorkItem {
                         panel_id,
                         flags: WORK_FLAG_EXIT_CONTAINER,
                         is_container: self.is_panel_container(panel_id),
+                        origin,
                         ..RelationWorkItem::default()
                     });
                 }
@@ -205,10 +215,15 @@ impl RelationRegistry {
         println!("多少个面板进入了 {:?}, 其中容器 {:?}", total, containers);
         if !has_links {
             if self.active_links.remove(&panel_id).is_some() {
+                let origin = self
+                    .active_container_spec(panel_id)
+                    .map(|spec| spec.origin)
+                    .unwrap_or([0.0, 0.0]);
                 items.push(RelationWorkItem {
                     panel_id,
                     flags: WORK_FLAG_EXIT_CONTAINER,
                     is_container: self.is_panel_container(panel_id),
+                    origin,
                     ..RelationWorkItem::default()
                 });
             }

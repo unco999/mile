@@ -1861,7 +1861,7 @@ fn build_demo_panel_with_uuid(
 
                     state
                         .z_index(4 + (idx as i32 % 3))
-                        .position(vec2(100.0, 100.0))
+                        .position(vec2(0.0, 0.0))
                         .size(vec2(108.0, 52.0))
                         .border(BorderStyle {
                             color: [0.15, 0.8, 0.45, 1.0],
