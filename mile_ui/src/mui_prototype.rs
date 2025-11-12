@@ -761,6 +761,8 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             target: None,
             offset_target: false,
             _marker: PhantomData,
+            mark_from_snapshot: false,
+            mark_to_snapshot: false,
         }
     }
 
@@ -831,6 +833,8 @@ pub struct PositionAnimFlow<TPayload: PanelPayload> {
     base: Vec2,
     target: Option<Vec2>,
     offset_target: bool,
+    mark_from_snapshot: bool,
+    mark_to_snapshot: bool,
     _marker: PhantomData<TPayload>,
 }
 
@@ -848,6 +852,7 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     pub fn to_snapshot(mut self) -> Self {
         self.target = Some(self.base);
         self.offset_target = false;
+        self.mark_to_snapshot = true;
         self
     }
 
@@ -859,16 +864,19 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
 
     pub fn from_snapshot(mut self) -> Self {
         self.builder = self.builder.from(self.base);
+        self.mark_from_snapshot = true;
         self
     }
 
     pub fn from_current(mut self) -> Self {
         self.builder = self.builder.from_current();
+        self.mark_from_snapshot = false;
         self
     }
 
     pub fn from_offset(mut self, delta: Vec2) -> Self {
         self.builder = self.builder.from(self.base + delta);
+        self.mark_from_snapshot = false;
         self
     }
 
@@ -903,13 +911,19 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     }
 
     pub fn push(mut self, flow: &mut EventFlow<'_, TPayload>) {
-        let builder = if self.offset_target {
+        let mut builder = if self.offset_target {
             let delta = self.target.unwrap_or(Vec2::ZERO);
             self.builder.to_offset(delta)
         } else {
             let target = self.target.unwrap_or(self.base);
             self.builder.to(target)
         };
+        if self.mark_from_snapshot {
+            builder = builder.mark_from_snapshot();
+        }
+        if self.mark_to_snapshot {
+            builder = builder.mark_to_snapshot();
+        }
         flow.push_animation(builder.build());
     }
 }

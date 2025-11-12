@@ -11,6 +11,10 @@ const PANEL_FIELD_COLOR_G    : u32 = 0x2000u;
 const PANEL_FIELD_COLOR_B    : u32 = 0x4000u;
 const PANEL_FIELD_COLOR_A    : u32 = 0x8000u;
 
+const FLAG_OFFSET        : u32 = 0x1u;
+const FLAG_FROM_SNAPSHOT : u32 = 0x2u;
+const FLAG_TO_SNAPSHOT   : u32 = 0x4u;
+
 const EASING_LINEAR      : u32 = 0x01u;
 const EASING_IN_QUAD     : u32 = 0x02u;
 const EASING_OUT_QUAD    : u32 = 0x04u;
@@ -74,7 +78,7 @@ struct AnimtionFieldOffsetPtr {
     panel_id: u32,
     death: u32,
     easy_fn: u32,
-    is_offset: u32,
+    flags: u32,
 };
 
 struct PanelAnimDelta {
@@ -159,6 +163,9 @@ var<uniform> animation_meta: AnimationDescriptor;
 
 @group(0) @binding(5)
 var<storage, read_write> debug_buffer: DebugBuffer;
+
+@group(1) @binding(3)
+var<storage, read_write> panel_snapshots: array<Panel>;
 
 fn apply_easing(mask: u32, t: f32) -> f32 {
     let clamped = clamp(t, 0.0, 1.0);
@@ -280,6 +287,19 @@ fn read_panel_field(panel_index: u32, field: u32) -> f32 {
     return 0.0;
 }
 
+fn read_snapshot_field(panel_index: u32, field: u32) -> f32 {
+    if (panel_index >= arrayLength(&panel_snapshots)) {
+        return read_panel_field(panel_index, field);
+    }
+    if (field == PANEL_FIELD_POSITION_X) {
+        return panel_snapshots[panel_index].position.x;
+    }
+    if (field == PANEL_FIELD_POSITION_Y) {
+        return panel_snapshots[panel_index].position.y;
+    }
+    return read_panel_field(panel_index, field);
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -316,6 +336,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
     let delta_index = panel_slot;
 
+    let flags = anim.flags;
+    let use_offset = (flags & FLAG_OFFSET) != 0u;
+    let use_from_snapshot = (flags & FLAG_FROM_SNAPSHOT) != 0u;
+    let use_to_snapshot = (flags & FLAG_TO_SNAPSHOT) != 0u;
+
     let delay = anim.delay;
     let duration = max(anim.duration, 0.00001);
     let dt = animation_meta.delta_time;
@@ -339,17 +364,22 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let current_value = read_panel_field(panel_index, anim.field_id);
+    let field_id = animations[idx].field_id;
+    let snapshot_value = read_snapshot_field(panel_index + 1, field_id);
     var start_value = 0.0;
-    if (anim.is_offset != 0u) {
+     if (use_offset) {
         start_value = current_value;
+    } else if (use_from_snapshot) {
+        start_value = snapshot_value;
     } else {
         start_value = animations[idx].start_value;
     };
     var target_value = animations[idx].target_value;
-    if (anim.is_offset != 0u) {
+    if (use_to_snapshot) {
+        target_value = snapshot_value;
+    } else if (use_offset) {
         target_value = start_value + target_value;
     }
-    let field_id = animations[idx].field_id;
     let easing = animations[idx].easy_fn;
 
     let raw_t = (new_elapsed - delay) / duration;

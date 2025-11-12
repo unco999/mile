@@ -103,6 +103,9 @@ var<uniform> rel_args: RelArgs;
 @group(0) @binding(4)
 var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 
+@group(0) @binding(5)
+var<storage, read_write> panel_snapshots: array<Panel>;
+
 const INVALID_ID: u32 = 0xffffffffu;
 const REL_WORK_FLAG_ENTER_CONTAINER: u32 = 1u << 0u;
 const REL_WORK_FLAG_EXIT_CONTAINER: u32 = 1u << 1u;
@@ -264,7 +267,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         panel_deltas[panel_id].start_position = current_pos;
         panels[panel_id].position = desired_pos;
         panel_deltas[panel_id].container_origin = container_origin;
-
+        panel_snapshots[panel_id].position = desired_pos;
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
         work_items[idx] = item;
         return;
@@ -276,6 +279,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let container_delta = fetch_container_delta(item.container_id);
     panel_deltas[panel_id].delta_position += container_delta;
+    panel_snapshots[panel_id].position += container_delta;
+    debug_buffer.floats[0] = panel_snapshots[panel_id].position.x;
     let container_pos = panels[item.container_id].position;
     let container_origin = container_pos + item.origin;
     panel_deltas[panel_id].container_origin = container_origin;

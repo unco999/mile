@@ -76,6 +76,10 @@ pub struct AnimationSpec {
     #[serde(default)]
     pub from_current: bool,
     #[serde(default)]
+    pub from_snapshot: bool,
+    #[serde(default)]
+    pub to_snapshot: bool,
+    #[serde(default)]
     pub is_offset: bool,
     pub duration: f32,
     pub delay: f32,
@@ -90,6 +94,8 @@ impl AnimationSpec {
             from: None,
             to,
             from_current: false,
+            from_snapshot: false,
+            to_snapshot: false,
             duration: 0.0,
             delay: 0.0,
             easing: Easing::Linear,
@@ -131,6 +137,16 @@ impl AnimBuilder {
     pub fn to_offset(mut self, value: impl Into<AnimTargetValue>) -> Self {
         self.spec.to = value.into();
         self.spec.is_offset = true;
+        self
+    }
+
+    pub fn mark_from_snapshot(mut self) -> Self {
+        self.spec.from_snapshot = true;
+        self
+    }
+
+    pub fn mark_to_snapshot(mut self) -> Self {
+        self.spec.to_snapshot = true;
         self
     }
 
