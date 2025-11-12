@@ -11,6 +11,10 @@ const PANEL_FIELD_COLOR_G    : u32 = 0x2000u;
 const PANEL_FIELD_COLOR_B    : u32 = 0x4000u;
 const PANEL_FIELD_COLOR_A    : u32 = 0x8000u;
 
+const FLAG_OFFSET        : u32 = 0x1u;
+const FLAG_FROM_SNAPSHOT : u32 = 0x2u;
+const FLAG_TO_SNAPSHOT   : u32 = 0x4u;
+
 const EASING_LINEAR      : u32 = 0x01u;
 const EASING_IN_QUAD     : u32 = 0x02u;
 const EASING_OUT_QUAD    : u32 = 0x04u;
@@ -74,7 +78,7 @@ struct AnimtionFieldOffsetPtr {
     panel_id: u32,
     death: u32,
     easy_fn: u32,
-    _pad: u32,
+    flags: u32,
 };
 
 struct PanelAnimDelta {
@@ -160,6 +164,9 @@ var<uniform> animation_meta: AnimationDescriptor;
 @group(0) @binding(5)
 var<storage, read_write> debug_buffer: DebugBuffer;
 
+@group(1) @binding(3)
+var<storage, read_write> panel_snapshots: array<Panel>;
+
 fn apply_easing(mask: u32, t: f32) -> f32 {
     let clamped = clamp(t, 0.0, 1.0);
     if ((mask & EASING_IN_QUAD) != 0u) {
@@ -237,15 +244,15 @@ fn write_panel_field(panel_index: u32, field: u32, value: f32) {
 
 fn write_delta(panel_index: u32, field: u32, delta: f32) {
     if (field == PANEL_FIELD_POSITION_X) {
-        panel_deltas[panel_index].delta_position.x = delta;
+        panel_deltas[panel_index].delta_position.x += delta;
     } else if (field == PANEL_FIELD_POSITION_Y) {
-        panel_deltas[panel_index].delta_position.y = delta;
+        panel_deltas[panel_index].delta_position.y += delta;
     } else if (field == PANEL_FIELD_SIZE_X) {
-        panel_deltas[panel_index].delta_size.x = delta;
+        panel_deltas[panel_index].delta_size.x += delta;
     } else if (field == PANEL_FIELD_SIZE_Y) {
-        panel_deltas[panel_index].delta_size.y = delta;
+        panel_deltas[panel_index].delta_size.y += delta;
     } else if (field == PANEL_FIELD_TRANSPARENT) {
-        panel_deltas[panel_index].delta_transparent = delta;
+        panel_deltas[panel_index].delta_transparent += delta;
     }
 }
 
@@ -280,6 +287,19 @@ fn read_panel_field(panel_index: u32, field: u32) -> f32 {
     return 0.0;
 }
 
+fn read_snapshot_field(panel_index: u32, field: u32) -> f32 {
+    if (panel_index >= arrayLength(&panel_snapshots)) {
+        return read_panel_field(panel_index, field);
+    }
+    if (field == PANEL_FIELD_POSITION_X) {
+        return panel_snapshots[panel_index].position.x;
+    }
+    if (field == PANEL_FIELD_POSITION_Y) {
+        return panel_snapshots[panel_index].position.y;
+    }
+    return read_panel_field(panel_index, field);
+}
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -299,12 +319,27 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let panel_index = anim.panel_id - 1u;
+    let panel_slot = anim.panel_id;
+    if (panel_slot == 0u) {
+        animations[idx].death = 1u;
+        return;
+    }
+    let panel_index = panel_slot - 1u;
     let total_panels = arrayLength(&panels);
     if (panel_index >= total_panels) {
         animations[idx].death = 1u;
         return;
     }
+    if (panel_slot >= arrayLength(&panel_deltas)) {
+        animations[idx].death = 1u;
+        return;
+    }
+    let delta_index = panel_slot;
+
+    let flags = anim.flags;
+    let use_offset = (flags & FLAG_OFFSET) != 0u;
+    let use_from_snapshot = (flags & FLAG_FROM_SNAPSHOT) != 0u;
+    let use_to_snapshot = (flags & FLAG_TO_SNAPSHOT) != 0u;
 
     let delay = anim.delay;
     let duration = max(anim.duration, 0.00001);
@@ -317,12 +352,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (anim.hold != 0u && previous_elapsed == 0.0) {
         let current = read_panel_field(panel_index, anim.field_id);
         animations[idx].start_value = current;
-        if (panel_index < arrayLength(&panel_deltas)) {
-            if (anim.field_id == PANEL_FIELD_POSITION_X) {
-                panel_deltas[panel_index].start_position.x = panels[panel_index].position.x;
-            } else if (anim.field_id == PANEL_FIELD_POSITION_Y) {
-                panel_deltas[panel_index].start_position.y = panels[panel_index].position.y;
-            }
+        if (anim.field_id == PANEL_FIELD_POSITION_X) {
+            panel_deltas[delta_index].start_position.x = panels[panel_index].position.x;
+        } else if (anim.field_id == PANEL_FIELD_POSITION_Y) {
+            panel_deltas[delta_index].start_position.y = panels[panel_index].position.y;
         }
     }
 
@@ -330,10 +363,23 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let start_value = animations[idx].start_value;
-    let target_value = animations[idx].target_value;
-    let panel_id = panel_index;
+    let current_value = read_panel_field(panel_index, anim.field_id);
     let field_id = animations[idx].field_id;
+    let snapshot_value = read_snapshot_field(panel_index + 1, field_id);
+    var start_value = 0.0;
+     if (use_offset) {
+        start_value = current_value;
+    } else if (use_from_snapshot) {
+        start_value = snapshot_value;
+    } else {
+        start_value = animations[idx].start_value;
+    };
+    var target_value = animations[idx].target_value;
+    if (use_to_snapshot) {
+        target_value = snapshot_value;
+    } else if (use_offset) {
+        target_value = start_value + target_value;
+    }
     let easing = animations[idx].easy_fn;
 
     let raw_t = (new_elapsed - delay) / duration;
@@ -341,10 +387,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let t = clamp(safe_t, 0.0, 1.0);
     let eased = apply_easing(easing, t);
     let value = mix(start_value, target_value, eased);
-    let delta = value - read_panel_field(panel_id, field_id);
+    let delta = value - current_value;
     let slot = global_uniform.frame & 31u; // frame % 32
-    write_panel_field(panel_id, field_id, value);
-    write_delta(panel_id, field_id, delta);
+    if (field_id == PANEL_FIELD_POSITION_X || field_id == PANEL_FIELD_POSITION_Y) {
+        write_delta(delta_index, field_id, delta);
+    } else {
+        write_panel_field(panel_index, field_id, value);
+        write_delta(delta_index, field_id, delta);
+    }
 
     if (new_elapsed >= delay + duration) {
         animations[idx].death = 1u;

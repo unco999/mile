@@ -896,6 +896,9 @@ impl MuiRuntime {
                 loop_count: 0,
                 ping_pong: 0,
                 on_complete: 0,
+                offset_target: false,
+                from_snapshot: false,
+                to_snapshot: false,
             };
             self.enqueue_animation(queue, target.id, info);
             enqueued = true;
@@ -914,6 +917,9 @@ impl MuiRuntime {
                 loop_count: 0,
                 ping_pong: 0,
                 on_complete: 0,
+                offset_target: false,
+                from_snapshot: false,
+                to_snapshot: false,
             };
             self.enqueue_animation(queue, target.id, info);
             enqueued = true;
@@ -932,6 +938,9 @@ impl MuiRuntime {
                 loop_count: 0,
                 ping_pong: 0,
                 on_complete: 0,
+                offset_target: false,
+                from_snapshot: false,
+                to_snapshot: false,
             };
             self.enqueue_animation(queue, target.id, info);
             enqueued = true;
@@ -954,6 +963,9 @@ impl MuiRuntime {
                 loop_count: 0,
                 ping_pong: 0,
                 on_complete: 0,
+                offset_target: false,
+                from_snapshot: false,
+                to_snapshot: false,
             };
             self.enqueue_animation(queue, target.id, info);
             enqueued = true;
@@ -2114,6 +2126,9 @@ fn animation_spec_to_transform(
         loop_count: spec.loop_config.count.unwrap_or(0),
         ping_pong: if spec.loop_config.ping_pong { 1 } else { 0 },
         on_complete: 0,
+        offset_target: spec.is_offset,
+        from_snapshot: spec.from_snapshot,
+        to_snapshot: spec.to_snapshot,
     })
 }
 

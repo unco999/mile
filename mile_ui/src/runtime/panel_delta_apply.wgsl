@@ -95,5 +95,4 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         panels[idx].position += delta;
         panel_deltas[panel_id].delta_position = vec2<f32>(0.0);
     }
-    panel_snapshots[idx] = panels[idx];
 }

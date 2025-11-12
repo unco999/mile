@@ -59,17 +59,17 @@ impl ComputePipelines {
             self.interaction.encode(pass, buffers, ctx);
             delta_needed = true;
         }
-        if self.relations.encode(pass, buffers, ctx) {
-            delta_needed = true;
-        }
         if self.animation.is_dirty() {
             self.animation.encode(pass, buffers, ctx);
             delta_needed = true;
         }
+        if self.relations.encode(pass, buffers, ctx) {
+            delta_needed = true;
+        }
+
 
         if delta_needed {
-            self.panel_delta.set_dirty();
-        }
+            self.panel_delta.set_dirty();        }
 
         if self.panel_delta.is_dirty() {
             self.panel_delta.encode(pass, buffers, ctx);
@@ -827,6 +827,16 @@ impl RelationComputeStage {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -889,6 +899,10 @@ impl RelationComputeStage {
                     binding: 4,
                     resource: trace_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: buffers.snapshot.as_entire_binding(),
+                },
             ],
         });
 
@@ -933,6 +947,7 @@ impl RelationComputeStage {
                     exit_mode: item.exit_mode,
                     exit_param: item.exit_param,
                 };
+                print!("当前面板 {:?}",gpu_item);
                 gpu_items.push(gpu_item);
             }
 

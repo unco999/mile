@@ -29,7 +29,7 @@ pub struct GlobalUiState {
 
     // Mouse button state mask
     pub mouse_state: u32, // 4 bytes
-    pub _pad0: u32,       // 4 bytes padding 对齐
+    pub _pad0: u32,       // 4 bytes padding ����
 
     // Hover panel ID
     pub hover_id: u32,      // 4 bytes, atomic
@@ -45,7 +45,7 @@ pub struct GlobalUiState {
     pub current_depth: u32, // 4 bytes
     pub _pad2: u32,         // 4 bytes padding
 
-    // Clicked panel ID (最后一次点击)
+    // Clicked panel ID (���һ�ε��)
     pub click_id: u32,      // 4 bytes
     pub click_blocked: u32, // 4 bytes
 
@@ -147,7 +147,7 @@ const MULTI_QUAD_VERTICES: [Vertex; 16] = [
 ];
 
 const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
-    // 第一行
+    // ��һ��
     Vertex {
         pos: [0.0, 0.0],
         uv: [0.0, 0.0],
@@ -180,7 +180,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.0],
         uv: [1.0, 0.0],
     },
-    // 第二行
+    // �ڶ���
     Vertex {
         pos: [0.0, 0.14285715],
         uv: [0.0, 0.14285715],
@@ -213,7 +213,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.14285715],
         uv: [1.0, 0.14285715],
     },
-    // 第三行
+    // ������
     Vertex {
         pos: [0.0, 0.2857143],
         uv: [0.0, 0.2857143],
@@ -246,7 +246,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.2857143],
         uv: [1.0, 0.2857143],
     },
-    // 第四行
+    // ������
     Vertex {
         pos: [0.0, 0.42857143],
         uv: [0.0, 0.42857143],
@@ -279,7 +279,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.42857143],
         uv: [1.0, 0.42857143],
     },
-    // 第五行
+    // ������
     Vertex {
         pos: [0.0, 0.5714286],
         uv: [0.0, 0.5714286],
@@ -312,7 +312,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.5714286],
         uv: [1.0, 0.5714286],
     },
-    // 第六行
+    // ������
     Vertex {
         pos: [0.0, 0.7142857],
         uv: [0.0, 0.7142857],
@@ -345,7 +345,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.7142857],
         uv: [1.0, 0.7142857],
     },
-    // 第七行
+    // ������
     Vertex {
         pos: [0.0, 0.85714287],
         uv: [0.0, 0.85714287],
@@ -378,7 +378,7 @@ const ULTRA_QUAD_VERTICES: [Vertex; 64] = [
         pos: [1.0, 0.85714287],
         uv: [1.0, 0.85714287],
     },
-    // 第八行
+    // �ڰ���
     Vertex {
         pos: [0.0, 1.0],
         uv: [0.0, 1.0],
@@ -504,39 +504,39 @@ pub(super) fn quad_index_len(kind: QuadBatchKind) -> u32 {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct Panel {
-    // === 16-byte 块 1 ===
+    // === 16-byte �� 1 ===
     pub position: [f32; 2], // 8
     pub size: [f32; 2],     // 8
 
-    // === 16-byte 块 2 ===
+    // === 16-byte �� 2 ===
     pub uv_offset: [f32; 2], // 8
     pub uv_scale: [f32; 2],  // 8
 
-    // === 16-byte 块 3 ===
+    // === 16-byte �� 3 ===
     pub z_index: u32,      // 4
     pub pass_through: u32, // 4
     pub id: u32,           // 4
     pub interaction: u32,  // 4
 
-    // === 16-byte 块 4 ===
+    // === 16-byte �� 4 ===
     pub event_mask: u32,  // 4
     pub state_mask: u32,  // 4
     pub transparent: f32, // 4
     pub texture_id: u32,  // 4
 
-    // === 16-byte 块 5 ===
+    // === 16-byte �� 5 ===
     pub state: u32, // 4
     pub collection_state: u32,
-    pub fragment_shader_id: u32, // 12, 补齐到 16
-    pub vertex_shader_id: u32,   // 12, 补齐到 16
+    pub fragment_shader_id: u32, // 12, ���뵽 16
+    pub vertex_shader_id: u32,   // 12, ���뵽 16
 
-    // === 16-byte 块 6 ===
+    // === 16-byte �� 6 ===
     pub color: [f32; 4],
 
-    // === 16-byte 块 7 ===
+    // === 16-byte �� 7 ===
     pub border_color: [f32; 4],
 
-    // === 16-byte 块 8 ===
+    // === 16-byte �� 8 ===
     pub border_width: f32,
     pub border_radius: f32,
     pub visible: u32,
@@ -627,26 +627,26 @@ pub struct PanelAnimDelta {
     pub delta_z_index: i32,
     pub delta_pass_through: i32,
     pub panel_id: u32,
-    pub _pad0: u32, // 对齐填充
+    pub _pad0: u32, // �������
 
-    // --- 状态相关 ---
+    // --- ״̬��� ---
     pub delta_interaction: u32,
     pub delta_event_mask: u32,
     pub delta_state_mask: u32,
-    pub _pad1: u32, // 对齐填充
+    pub _pad1: u32, // �������
 
-    // --- 透明度/texture ---
+    // --- ͸����/texture ---
     pub delta_transparent: f32,
     pub delta_texture_id: i32,
-    pub _pad2: [f32; 2], // ✅ 对齐到16字节
+    pub _pad2: [f32; 2], // ? ���뵽16�ֽ�
 
-    // --- 起始位置 ---
+    // --- ��ʼλ�� ---
     pub start_position: [f32; 2],
-    pub container_origin: [f32; 2], // ✅ 对齐补齐
+    pub container_origin: [f32; 2], // ? ���벹��
 }
 
 impl PanelAnimDelta {
-    /// 转成 GPU buffer
+    /// ת�� GPU buffer
     pub fn write_to_buffer(
         &self,
         queue: &wgpu::Queue,
@@ -657,7 +657,7 @@ impl PanelAnimDelta {
         queue.write_buffer(buffer, offset, raw_bytes);
     }
 
-    /// 全局初始化 GPU buffer，固定 1024 个元素
+    /// ȫ�ֳ�ʼ�� GPU buffer���̶� 1024 ��Ԫ��
     pub fn global_init(device: &wgpu::Device) -> wgpu::Buffer {
         let buffer_size = 1024 * std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress;
 
@@ -695,26 +695,29 @@ pub struct GpuRelationWorkItem {
 }
 
 #[derive(Debug, Clone)]
-/// 单字段动画描述
+/// ���ֶζ�������
 pub struct TransformAnimFieldInfo {
-    pub field_id: u32,          // PanelField 位标记
-    pub start_value: Vec<f32>,  // 起始值
-    pub target_value: Vec<f32>, // 结束值
-    pub duration: f32,          // 持续时间
-    pub easing: EasingMask,     // 渐变函数
-    pub op: AnimOp,             // 叠加方式
-    pub hold: u32,              // 动画结束后是否保持最后值
-    pub delay: f32,             // 延迟时间
-    pub loop_count: u32,        // 循环次数，0 = 无限
-    pub ping_pong: u32,         // 往返动画
-    pub on_complete: u32,       // 完成回调，参数 panel_id
+    pub field_id: u32,          // PanelField λ���
+    pub start_value: Vec<f32>,  // ��ʼֵ
+    pub target_value: Vec<f32>, // ����ֵ
+    pub duration: f32,          // ����ʱ��
+    pub easing: EasingMask,     // ���亯��
+    pub op: AnimOp,             // ���ӷ�ʽ
+    pub hold: u32,              // �����������Ƿ񱣳����ֵ
+    pub delay: f32,             // �ӳ�ʱ��
+    pub loop_count: u32,        // ѭ��������0 = ����
+    pub ping_pong: u32,         // ��������
+    pub on_complete: u32,       // ��ɻص������� panel_id
+    pub offset_target: bool,
+    pub from_snapshot: bool,
+    pub to_snapshot: bool,
 }
 
 impl TransformAnimFieldInfo {
-    /// 拆分多位 field_id，生成 GPU 用偏移指针
-    /// cache_start_offset: 动画缓存起始偏移
+    /// ��ֶ�λ field_id������ GPU ��ƫ��ָ��
+    /// cache_start_offset: ����������ʼƫ��
     ///
-    /// 拆分多位 field_id，并生成 GPU buffer 原始 f32 数组
+    /// ��ֶ�λ field_id�������� GPU buffer ԭʼ f32 ����
     pub fn split_write_field(&self, panel_id: u32) -> Vec<AnimtionFieldOffsetPtr> {
         let mut result = Vec::new();
         let mut mask = self.field_id;
@@ -723,6 +726,16 @@ impl TransformAnimFieldInfo {
 
         while mask != 0 {
             if mask & 1 != 0 {
+                let mut flags = 0u32;
+                if self.offset_target {
+                    flags |= 0x1;
+                }
+                if self.from_snapshot {
+                    flags |= 0x2;
+                }
+                if self.to_snapshot {
+                    flags |= 0x4;
+                }
                 result.push(AnimtionFieldOffsetPtr {
                     field_id: 1 << bit_index,
                     start_value: self.start_value[value_index],
@@ -738,7 +751,7 @@ impl TransformAnimFieldInfo {
                     panel_id,
                     death: 0,
                     easy_fn: self.easing.bits(),
-                    _pad: [0],
+                    flags,
                 });
 
                 value_index += 1;
@@ -752,29 +765,30 @@ impl TransformAnimFieldInfo {
     }
 }
 
-//这里是每个实例 分配一个GPU线程
-//我们把TransformAnim的字段 分拆这个实例
-//比如TransformAnim里面有N个字段的动画 在TransformAnim里面写成一个实例
-//但是实际上分拆N个AnimtionFieldOffsetPtr
-//我们就可以方便的去调用buffer
+//������ÿ��ʵ�� ����һ��GPU�߳�
+//���ǰ�TransformAnim���ֶ� �ֲ����ʵ��
+//����TransformAnim������N���ֶεĶ��� ��TransformAnim����д��һ��ʵ��
+//����ʵ���Ϸֲ�N��AnimtionFieldOffsetPtr
+//���ǾͿ��Է����ȥ����buffer
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 pub struct AnimtionFieldOffsetPtr {
-    pub field_id: u32,     // 字段标识
-    pub start_value: f32,  // 起始值
-    pub target_value: f32, // 目标值
-    pub elapsed: f32,      // 已经过的时间
-    pub duration: f32,     // 动画持续时间
-    pub op: u32,           // 操作类型（SET/ADD/MUL/…）
-    pub hold: u32,         // hold 时间
-    pub delay: f32,        // 延迟时间
-    pub loop_count: u32,   // 循环次数
-    pub ping_pong: u32,    // 往返标记
-    pub on_complete: u32,  // 回调标识
+    pub field_id: u32,     // �ֶα�ʶ
+    pub start_value: f32,  // ��ʼֵ
+    pub target_value: f32, // Ŀ��ֵ
+    pub elapsed: f32,      // �Ѿ�����ʱ��
+    pub duration: f32,     // ��������ʱ��
+    pub op: u32,           // �������ͣ�SET/ADD/MUL/����
+    pub hold: u32,         // hold ʱ��
+    pub delay: f32,        // �ӳ�ʱ��
+    pub loop_count: u32,   // ѭ������
+    pub ping_pong: u32,    // �������
+    pub on_complete: u32,  // �ص���ʶ
     pub panel_id: u32,     // Panel ID
     pub death: u32,        // 是否结束
     pub easy_fn: u32,      // easing 函数标识
-    pub _pad: [u32; 1],    // 补齐16字节对齐
+    pub flags: u32,        // bit0: offset, bit1: from snapshot, bit2: to snapshot
+    // 1 ��ʾ target ��ƫ����
 }
 
 #[repr(C, align(16))]
@@ -802,3 +816,4 @@ impl GpuAnimationDes {
         queue.write_buffer(buffer, 0, bytes_of(self));
     }
 }
+

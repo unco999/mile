@@ -759,7 +759,10 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             builder: AnimBuilder::new(AnimProperty::Position).from_current(),
             base,
             target: None,
+            offset_target: false,
             _marker: PhantomData,
+            mark_from_snapshot: false,
+            mark_to_snapshot: false,
         }
     }
 
@@ -829,12 +832,16 @@ pub struct PositionAnimFlow<TPayload: PanelPayload> {
     builder: AnimBuilder,
     base: Vec2,
     target: Option<Vec2>,
+    offset_target: bool,
+    mark_from_snapshot: bool,
+    mark_to_snapshot: bool,
     _marker: PhantomData<TPayload>,
 }
 
 impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     pub fn offset(mut self, delta: Vec2) -> Self {
-        self.target = Some(self.base + delta);
+        self.target = Some(delta);
+        self.offset_target = true;
         self
     }
 
@@ -844,26 +851,32 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
 
     pub fn to_snapshot(mut self) -> Self {
         self.target = Some(self.base);
+        self.offset_target = false;
+        self.mark_to_snapshot = true;
         self
     }
 
     pub fn to(mut self, target: Vec2) -> Self {
         self.target = Some(target);
+        self.offset_target = false;
         self
     }
 
     pub fn from_snapshot(mut self) -> Self {
         self.builder = self.builder.from(self.base);
+        self.mark_from_snapshot = true;
         self
     }
 
     pub fn from_current(mut self) -> Self {
         self.builder = self.builder.from_current();
+        self.mark_from_snapshot = false;
         self
     }
 
     pub fn from_offset(mut self, delta: Vec2) -> Self {
         self.builder = self.builder.from(self.base + delta);
+        self.mark_from_snapshot = false;
         self
     }
 
@@ -898,8 +911,19 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     }
 
     pub fn push(mut self, flow: &mut EventFlow<'_, TPayload>) {
-        let target = self.target.unwrap_or(self.base);
-        let builder = self.builder.to(target);
+        let mut builder = if self.offset_target {
+            let delta = self.target.unwrap_or(Vec2::ZERO);
+            self.builder.to_offset(delta)
+        } else {
+            let target = self.target.unwrap_or(self.base);
+            self.builder.to(target)
+        };
+        if self.mark_from_snapshot {
+            builder = builder.mark_from_snapshot();
+        }
+        if self.mark_to_snapshot {
+            builder = builder.mark_to_snapshot();
+        }
         flow.push_animation(builder.build());
     }
 }
@@ -1837,7 +1861,7 @@ fn build_demo_panel_with_uuid(
 
                     state
                         .z_index(4 + (idx as i32 % 3))
-                        .position(slot_position)
+                        .position(vec2(0.0, 0.0))
                         .size(vec2(108.0, 52.0))
                         .border(BorderStyle {
                             color: [0.15, 0.8, 0.45, 1.0],
@@ -1878,7 +1902,7 @@ fn build_demo_panel_with_uuid(
                 .origin(vec2(32.0, 32.0))
                 .size_container(vec2(560.0, 360.0))
                 .slot_size(vec2(120.0, 60.0))
-                .layout(RelLayoutKind::grid([12.0, 12.0]))
+                .layout(RelLayoutKind::grid([0.0, 0.0]))
                 .finish()
                 .z_index(1)
                 .position(vec2(0.0, 0.0))
