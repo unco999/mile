@@ -198,7 +198,8 @@ impl WGPUContext {
 
         let required_features = wgpu::Features::TEXTURE_BINDING_ARRAY
             | wgpu::Features::VERTEX_WRITABLE_STORAGE
-            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+            | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
+            | wgpu::Features::PUSH_CONSTANTS;
 
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,

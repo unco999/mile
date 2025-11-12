@@ -6,8 +6,8 @@
 
 use crate::{
     runtime::_ty::{
-        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrameCache, GpuUiDebugReadCallBack,
-        Panel, PanelAnimDelta,
+        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrameCache, GpuRelationDispatchArgs,
+        GpuUiDebugReadCallBack, Panel, PanelAnimDelta,
     },
     structs::{GpuUiCollection, GpuUiIdInfo, GpuUiInfluence},
 };
@@ -51,6 +51,7 @@ pub struct BufferArena {
     pub relations: wgpu::Buffer,
     pub relation_ids: wgpu::Buffer,
     pub relation_work: wgpu::Buffer,
+    pub relation_args: wgpu::Buffer,
     pub indirect_draws: wgpu::Buffer,
     pub interaction_frames: wgpu::Buffer,
     pub debug_buffer: wgpu::Buffer,
@@ -143,6 +144,15 @@ impl BufferArena {
             mapped_at_creation: false,
         });
 
+        let relation_args = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui::relation-args"),
+            size: (cfg.max_relations as u64
+                * std::mem::size_of::<GpuRelationDispatchArgs>() as u64)
+                .max(1),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let indirect_draws = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui::indirect-draws"),
             size: (cfg.max_panels as u64 * std::mem::size_of::<[u32; 5]>() as u64).max(1),
@@ -177,6 +187,7 @@ impl BufferArena {
             relations,
             relation_ids,
             relation_work,
+            relation_args,
             indirect_draws,
             interaction_frames,
             debug_buffer,

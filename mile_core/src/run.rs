@@ -189,6 +189,7 @@ impl App {
             let mut runtime = runtime_cell.borrow_mut();
             runtime.read_all_texture();
             runtime.rebuild_texture_bindings(&ctx.device, &ctx.queue);
+            runtime.upload_textures_to_gpu(&ctx.device, &ctx.queue);
 
             let mut kennel = kennel_cell.borrow_mut();
             if kennel.render_binding_resources().is_none() {
@@ -347,7 +348,6 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(runtime_cell) = &self.mui_runtime {
                         if runtime_cell.borrow().panel_instances.is_empty() {
                             if let Ok(handles) = build_demo_panel() {
-                                self.demo_panel_handles = handles;
                                 let ctx = self.wgpu_context.as_ref().unwrap();
                                 let mut runtime = runtime_cell.borrow_mut();
                                 runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use winit::event_loop::EventLoop;
 pub mod run;
+
 fn main() {
     // Application entry point wires the event loop and GPU/UI subsystems.
     // Event loop dispatches window/user events into our app state.

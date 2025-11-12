@@ -22,8 +22,8 @@ use super::{
         RelationWorkItem, clear_panel_relations, flush_pending_relations, inject_relation_work,
         layout_flags, set_panel_active_state,
     },
-    snapshot_registry,
     render::{QuadBatchKind, RenderPipelines},
+    snapshot_registry,
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
     },
@@ -375,6 +375,7 @@ impl MuiRuntime {
                 slot,
                 spacing,
                 flags: 0,
+                depth: 0,
                 ..RelationWorkItem::default()
             });
         }

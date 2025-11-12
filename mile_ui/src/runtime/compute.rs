@@ -10,7 +10,7 @@ use bytemuck::{bytes_of, cast_slice};
 use wgpu::{util::DownloadBuffer, wgc::device::queue};
 
 use crate::runtime::{
-    _ty::{GpuInteractionFrame, GpuRelationWorkItem},
+    _ty::{GpuInteractionFrame, GpuRelationDispatchArgs, GpuRelationWorkItem},
     buffers::{BufferArena, BufferViewSet},
     relations::relation_registry,
     state::{CpuPanelEvent, UIEventHub, UiInteractionScope},
@@ -67,9 +67,9 @@ impl ComputePipelines {
             delta_needed = true;
         }
 
-
         if delta_needed {
-            self.panel_delta.set_dirty();        }
+            self.panel_delta.set_dirty();
+        }
 
         if self.panel_delta.is_dirty() {
             self.panel_delta.encode(pass, buffers, ctx);
@@ -760,14 +760,8 @@ pub struct RelationComputeStage {
     work_buffer: wgpu::Buffer,
     work_count: u32,
     capacity: u32,
+    levels: Vec<GpuRelationDispatchArgs>,
     trace: GpuDebug,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct RelDispatchArgs {
-    work_count: u32,
-    _pad: [u32; 3],
 }
 
 impl RelationComputeStage {
@@ -811,7 +805,7 @@ impl RelationComputeStage {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -843,7 +837,10 @@ impl RelationComputeStage {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ui::relation-pipeline-layout"),
             bind_group_layouts: &[&layout],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[wgpu::PushConstantRange {
+                stages: wgpu::ShaderStages::COMPUTE,
+                range: 0..4,
+            }],
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -860,13 +857,6 @@ impl RelationComputeStage {
             cache: None,
         });
 
-        let args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ui::relation-args"),
-            size: std::mem::size_of::<RelDispatchArgs>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let mut trace = GpuDebug::new("ui::relation-compute");
         trace.create_buffer(device);
         let trace_buffer = trace
@@ -874,6 +864,7 @@ impl RelationComputeStage {
             .as_ref()
             .expect("relation trace buffer not created")
             .clone();
+        let args_buffer = buffers.relation_args.clone();
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::relation-bind-group"),
@@ -913,78 +904,84 @@ impl RelationComputeStage {
             work_buffer: buffers.relation_work.clone(),
             work_count: 0,
             capacity: buffers.capacities.max_relations,
+            levels: Vec::new(),
             trace,
         }
     }
 
     pub fn ingest(&mut self, queue: &wgpu::Queue) {
         let mut registry = relation_registry().lock().unwrap();
-        let work = registry.take_dirty();
+        let mut work = registry.take_dirty();
         drop(registry);
 
-        if !work.is_empty() {
-            let mut gpu_items = Vec::with_capacity(work.len().min(self.capacity as usize));
-            // let mut trace_items = Vec::with_capacity(work.len());
-            for item in work.into_iter().take(self.capacity as usize) {
-                let gpu_item = GpuRelationWorkItem {
-                    panel_id: item.panel_id,
-                    container_id: item.container_id,
-                    relation_flags: item.layout_flags,
-                    order: item.order,
-                    total: if item.total == 0 { 1 } else { item.total },
-                    flags: item.flags,
-                    is_container: item.is_container as u32,
-                    _pad0: 0,
-                    origin: item.origin,
-                    container_size: item.size,
-                    slot_size: item.slot,
-                    spacing: item.spacing,
-                    padding: item.padding,
-                    percent: item.percent,
-                    scale: item.scale,
-                    entry_mode: item.entry_mode,
-                    entry_param: item.entry_param,
-                    exit_mode: item.exit_mode,
-                    exit_param: item.exit_param,
-                };
-                print!("当前面板 {:?}",gpu_item);
-                gpu_items.push(gpu_item);
-            }
-
-            if gpu_items.is_empty() {
-                self.work_count = 0;
-                queue.write_buffer(
-                    &self.args_buffer,
-                    0,
-                    bytemuck::bytes_of(&RelDispatchArgs {
-                        work_count: 0,
-                        _pad: [0; 3],
-                    }),
-                );
-                return;
-            }
-
-            queue.write_buffer(&self.work_buffer, 0, bytemuck::cast_slice(&gpu_items));
-            let args = RelDispatchArgs {
-                work_count: gpu_items.len() as u32,
-                _pad: [0; 3],
-            };
-            queue.write_buffer(&self.args_buffer, 0, bytemuck::bytes_of(&args));
-            self.work_count = args.work_count;
-
+        if work.is_empty() {
+            self.work_count = 0;
+            self.levels.clear();
             return;
         }
 
-        if self.work_count == 0 {
-            queue.write_buffer(
-                &self.args_buffer,
-                0,
-                bytemuck::bytes_of(&RelDispatchArgs {
-                    work_count: 0,
-                    _pad: [0; 3],
-                }),
-            );
+        work.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then(a.order.cmp(&b.order))
+                .then(a.panel_id.cmp(&b.panel_id))
+        });
+
+        let limit = work.len().min(self.capacity as usize);
+        let mut gpu_items = Vec::with_capacity(limit);
+        self.levels.clear();
+
+        for item in work.into_iter().take(limit) {
+            if self
+                .levels
+                .last()
+                .map(|level| level.depth != item.depth)
+                .unwrap_or(true)
+            {
+                self.levels.push(GpuRelationDispatchArgs {
+                    start: gpu_items.len() as u32,
+                    count: 0,
+                    depth: item.depth,
+                    _pad: 0,
+                });
+            }
+            if let Some(level) = self.levels.last_mut() {
+                level.count += 1;
+            }
+
+            let gpu_item = GpuRelationWorkItem {
+                panel_id: item.panel_id,
+                container_id: item.container_id,
+                relation_flags: item.layout_flags,
+                order: item.order,
+                total: if item.total == 0 { 1 } else { item.total },
+                flags: item.flags,
+                is_container: item.is_container as u32,
+                _pad0: 0,
+                origin: item.origin,
+                container_size: item.size,
+                slot_size: item.slot,
+                spacing: item.spacing,
+                padding: item.padding,
+                percent: item.percent,
+                scale: item.scale,
+                entry_mode: item.entry_mode,
+                entry_param: item.entry_param,
+                exit_mode: item.exit_mode,
+                exit_param: item.exit_param,
+            };
+            gpu_items.push(gpu_item);
         }
+
+        if gpu_items.is_empty() {
+            self.work_count = 0;
+            self.levels.clear();
+            return;
+        }
+
+        self.work_count = gpu_items.len() as u32;
+        queue.write_buffer(&self.work_buffer, 0, bytemuck::cast_slice(&gpu_items));
+        queue.write_buffer(&self.args_buffer, 0, bytemuck::cast_slice(&self.levels));
     }
 
     pub fn encode(
@@ -993,14 +990,24 @@ impl RelationComputeStage {
         _buffers: &BufferViewSet<'_>,
         _ctx: &FrameComputeContext<'_>,
     ) -> bool {
-        if self.work_count == 0 {
+        if self.work_count == 0 || self.levels.is_empty() {
             return false;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        let workgroups = (self.work_count + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
-        pass.dispatch_workgroups(workgroups.max(1), 1, 1);
-        true
+        let mut dispatched = false;
+        for (level_index, level) in self.levels.iter().enumerate() {
+            if level.count == 0 {
+                continue;
+            }
+            let level_idx = level_index as u32;
+            let bytes = bytemuck::bytes_of(&level_idx);
+            pass.set_push_constants(0, bytes);
+            let workgroups = (level.count + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
+            pass.dispatch_workgroups(workgroups.max(1), 1, 1);
+            dispatched = true;
+        }
+        dispatched
     }
 
     #[inline]
@@ -1062,7 +1069,7 @@ impl PanelDeltaStage {
                     },
                     count: None,
                 },
-                                wgpu::BindGroupLayoutEntry {
+                wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {

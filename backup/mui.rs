@@ -2463,12 +2463,12 @@ impl GpuUi {
                     }
 
                     if (to_net_work_collection_id.is_some()) {
-                        self.gpu_change_ui_collection_state_raw(
-                            queue,
-                            device,
-                            PanelCollectionState::EntryCollection,
-                            net_work_evnt.panel_id,
-                        );
+                        // self.gpu_change_ui_collection_state_raw(
+                        //     queue,
+                        //     device,
+                        //     PanelCollectionState::EntryCollection,
+                        //     net_work_evnt.panel_id,
+                        // );
                         if net_work_evnt.state_config_des.immediately_anim
                             && to_net_work_collection_id.is_some()
                         {

@@ -6,7 +6,7 @@ use crate::{
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
-        panel_position, QuadBatchKind, register_payload_refresh,
+        QuadBatchKind, panel_position, register_payload_refresh,
         relations::register_panel_relations,
         state::{
             CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
@@ -15,7 +15,7 @@ use crate::{
     },
     structs::PanelInteraction,
 };
-use glam::{Vec2, Vec4, vec2};
+use glam::{Vec2, Vec4, vec2, vec4};
 use mile_api::{
     global::{global_db, global_event_bus},
     prelude::_ty::PanelId,
@@ -24,7 +24,7 @@ use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
     core::{
         Expr,
-        dsl::{IF, modulo, sin, sqrt, wvec2, wvec4},
+        dsl::{IF, modulo, sin, sqrt, wvec2, wvec3, wvec4},
     },
     dsl::{cv, rv, smoothstep},
     gpu_ast_core::event::{ExprTy, ExprWithIdxEvent},
@@ -1154,7 +1154,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         format!("{}::{}", type_name::<TPayload>(), panel_uuid)
     }
 
-    pub fn stateful(panel_uuid: &'static str) -> Result<Self, DbError> {
+    pub fn new(panel_uuid: &'static str) -> Result<Self, DbError> {
         Self::stateful_with_scope(panel_uuid, Self::derived_scope(panel_uuid))
     }
 
@@ -1829,15 +1829,110 @@ pub struct TestCustomData {
 
 fn frag_template(intensity: f32) -> Expr {
     let uv = rv("uv");
-    let diagonal = uv.x() - uv.y();
-    let offset = Expr::from(intensity * 0.05);
-    let width = Expr::from(0.01f32);
-    let line = smoothstep(
-        offset.clone() - width.clone(),
-        offset.clone() + width,
-        diagonal,
-    );
-    wvec4(line.clone(), 0.0, line, 1.0)
+    let t = cv("time") * 0.1;
+    // 水平方向渐变
+    let base = uv.x() * t.clone();
+    let base1 = uv.y() * t.clone();
+    wvec4(base.clone(), base.clone(), base1, 1.0)
+}
+
+//新增了全局DB数据中心  这个数据中心
+//UI可以在数据流里操作  比如事件响应 点击 拖拽等
+//也可以在别的系统里面 同步获取 &mut
+//让我们来创造这个数据
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+struct DataTest {
+    count: u32,
+}
+
+fn demo_panel() -> Result<(), DbError> {
+    //我们把他当成一个容器 只要写容器描述就可以了
+    Mui::<DataTest>::new("test_panel")?
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            let state = state
+                .position(vec2(200.0, 200.0))
+                .size(vec2(500.0, 500.0))
+                .z_index(5)
+                .color(vec4(0.3, 0.3, 0.5, 0.55))
+                .container_style()
+                .layout(RelLayoutKind::grid([0.0, 0.0]))
+                .size_container(vec2(500.0, 500.0))
+                .slot_size(vec2(80.0, 50.0)) //网格的每个大小
+                .finish() //这里退出容器设置的上下文
+                .border(BorderStyle {
+                    color: [1.0, 1.0, 1.0, 0.66],
+                    width: 3.0,
+                    radius: 0.0,
+                })
+                .events()
+                .on_event(UiEventKind::Drag, |flow| {
+                    let data = flow.payload();
+                    data.count += 1;
+                    println!("data current count {}", data.count);
+                })
+                .finish();
+            state
+        })
+        .build()?;
+
+    //这是子元素  我们让他自己选择主容器进入
+    //这个不同于以往的传统UI设计 因为一些特殊原因(Gpu运算亲和)
+    for idx in 0..36 {
+        let uuid = format!("demo_entry_{idx}");
+        let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
+            .default_state(UiState(0))
+            .state(
+                UiState(0),
+                move |mut state: StateStageBuilder<TestCustomData>| {
+                    let rel = state.rel();
+                    rel.container_with::<DataTest>("test_panel");
+                    //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
+                    let state = state
+                        .size(vec2(80.0, 50.0))
+                        .container_style()
+                        .layout(RelLayoutKind::Free)
+                        .origin(vec2(10.0, 10.0))
+                        .size_container(vec2(80.0, 50.0))
+                        .finish()
+                        .z_index(6)
+                        .color(vec4(0.6, 0.3, 0.5, 1.0))
+                        .border(BorderStyle {
+                            color: [1.0, 1.0, 1.0, 0.66],
+                            width: 3.0,
+                            radius: 0.0,
+                        });
+
+                    state
+                },
+            )
+            .build()?;
+    }
+
+    for idx in 1..2 {
+        let parent = format!("demo_entry_{idx}");
+        let self_id = format!("demo_entry_{idx}_item");
+        let texture = format!("../texture/head ({}).png", idx % 10);
+        let panel = Mui::<TestCustomData>::new(Box::leak(self_id.into_boxed_str()))?
+            .default_state(UiState(0))
+            .state(
+                UiState(0),
+                move |mut state: StateStageBuilder<TestCustomData>| {
+                    let rel = state.rel();
+                    rel.container_with::<TestCustomData>(Box::leak(parent.into_boxed_str()));
+                    //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
+                    let state = state
+                        .size(vec2(50.0, 50.0))
+                        .z_index(7)
+                        .texture("head (1).png")
+                        .size_with_image();
+                    state
+                },
+            )
+            .build()?;
+    }
+    Ok(())
 }
 
 fn build_demo_panel_with_uuid(
@@ -1852,7 +1947,7 @@ fn build_demo_panel_with_uuid(
             72.0 + (idx as f32 / 6.0).floor() * 70.0,
         );
         let uuid = format!("demo_entry_{idx}");
-        let panel = Mui::<TestCustomData>::stateful(Box::leak(uuid.into_boxed_str()))?
+        let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
             .default_state(UiState(0))
             .state(
                 UiState(0),
@@ -1868,6 +1963,7 @@ fn build_demo_panel_with_uuid(
                             width: 1.0,
                             radius: 9.0,
                         })
+                        .fragment_shader(|_| frag_template(1.0))
                         .events()
                         .on_event(UiEventKind::Hover, |flow| {
                             flow.position_anim()
@@ -1893,7 +1989,7 @@ fn build_demo_panel_with_uuid(
         handles.push(panel);
     }
 
-    let test_container = Mui::<TestCustomData>::stateful("test_back")?
+    let test_container = Mui::<TestCustomData>::new("test_back")?
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             state
@@ -1918,8 +2014,10 @@ fn build_demo_panel_with_uuid(
     Ok(handles)
 }
 /// Demonstration that mirrors the existing builder usage.
-pub fn build_demo_panel() -> Result<Vec<PanelRuntimeHandle>, DbError> {
-    build_demo_panel_with_uuid("inventory_panel")
+pub fn build_demo_panel() -> Result<(), DbError> {
+    // build_demo_panel_with_uuid("inventory_panel")
+    demo_panel();
+    Ok(())
 }
 
 /// Pretty print helper to inspect panel record contents.
