@@ -1861,7 +1861,7 @@ fn build_demo_panel_with_uuid(
 
                     state
                         .z_index(4 + (idx as i32 % 3))
-                        .position(slot_position)
+                        .position(vec2(100.0, 100.0))
                         .size(vec2(108.0, 52.0))
                         .border(BorderStyle {
                             color: [0.15, 0.8, 0.45, 1.0],
@@ -1902,7 +1902,7 @@ fn build_demo_panel_with_uuid(
                 .origin(vec2(32.0, 32.0))
                 .size_container(vec2(560.0, 360.0))
                 .slot_size(vec2(120.0, 60.0))
-                .layout(RelLayoutKind::grid([12.0, 12.0]))
+                .layout(RelLayoutKind::grid([0.0, 0.0]))
                 .finish()
                 .z_index(1)
                 .position(vec2(0.0, 0.0))
