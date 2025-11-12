@@ -75,6 +75,8 @@ pub struct AnimationSpec {
     pub to: AnimTargetValue,
     #[serde(default)]
     pub from_current: bool,
+    #[serde(default)]
+    pub is_offset: bool,
     pub duration: f32,
     pub delay: f32,
     pub easing: Easing,
@@ -92,6 +94,7 @@ impl AnimationSpec {
             delay: 0.0,
             easing: Easing::Linear,
             loop_config: LoopConfig::default(),
+            is_offset: false,
         }
     }
 }
@@ -121,6 +124,13 @@ impl AnimBuilder {
 
     pub fn to(mut self, value: impl Into<AnimTargetValue>) -> Self {
         self.spec.to = value.into();
+        self.spec.is_offset = false;
+        self
+    }
+
+    pub fn to_offset(mut self, value: impl Into<AnimTargetValue>) -> Self {
+        self.spec.to = value.into();
+        self.spec.is_offset = true;
         self
     }
 

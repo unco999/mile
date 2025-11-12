@@ -708,6 +708,7 @@ pub struct TransformAnimFieldInfo {
     pub loop_count: u32,        // 循环次数，0 = 无限
     pub ping_pong: u32,         // 往返动画
     pub on_complete: u32,       // 完成回调，参数 panel_id
+    pub offset_target: bool,
 }
 
 impl TransformAnimFieldInfo {
@@ -738,7 +739,7 @@ impl TransformAnimFieldInfo {
                     panel_id,
                     death: 0,
                     easy_fn: self.easing.bits(),
-                    _pad: [0],
+                    is_offset: if self.offset_target { 1 } else { 0 },
                 });
 
                 value_index += 1;
@@ -774,7 +775,7 @@ pub struct AnimtionFieldOffsetPtr {
     pub panel_id: u32,     // Panel ID
     pub death: u32,        // 是否结束
     pub easy_fn: u32,      // easing 函数标识
-    pub _pad: [u32; 1],    // 补齐16字节对齐
+    pub is_offset: u32,    // 1 表示 target 是偏移量
 }
 
 #[repr(C, align(16))]

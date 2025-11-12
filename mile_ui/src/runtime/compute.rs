@@ -68,8 +68,7 @@ impl ComputePipelines {
         }
 
         if delta_needed {
-            self.panel_delta.set_dirty();
-        }
+            self.panel_delta.set_dirty();        }
 
         if self.panel_delta.is_dirty() {
             self.panel_delta.encode(pass, buffers, ctx);

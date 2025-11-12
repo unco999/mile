@@ -275,7 +275,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let container_delta = fetch_container_delta(item.container_id);
-    panel_deltas[panel_id].delta_position = container_delta;
+    panel_deltas[panel_id].delta_position += container_delta;
     let container_pos = panels[item.container_id].position;
     let container_origin = container_pos + item.origin;
     panel_deltas[panel_id].container_origin = container_origin;

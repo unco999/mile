@@ -759,6 +759,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             builder: AnimBuilder::new(AnimProperty::Position).from_current(),
             base,
             target: None,
+            offset_target: false,
             _marker: PhantomData,
         }
     }
@@ -829,12 +830,14 @@ pub struct PositionAnimFlow<TPayload: PanelPayload> {
     builder: AnimBuilder,
     base: Vec2,
     target: Option<Vec2>,
+    offset_target: bool,
     _marker: PhantomData<TPayload>,
 }
 
 impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     pub fn offset(mut self, delta: Vec2) -> Self {
-        self.target = Some(self.base + delta);
+        self.target = Some(delta);
+        self.offset_target = true;
         self
     }
 
@@ -844,11 +847,13 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
 
     pub fn to_snapshot(mut self) -> Self {
         self.target = Some(self.base);
+        self.offset_target = false;
         self
     }
 
     pub fn to(mut self, target: Vec2) -> Self {
         self.target = Some(target);
+        self.offset_target = false;
         self
     }
 
@@ -898,8 +903,13 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     }
 
     pub fn push(mut self, flow: &mut EventFlow<'_, TPayload>) {
-        let target = self.target.unwrap_or(self.base);
-        let builder = self.builder.to(target);
+        let builder = if self.offset_target {
+            let delta = self.target.unwrap_or(Vec2::ZERO);
+            self.builder.to_offset(delta)
+        } else {
+            let target = self.target.unwrap_or(self.base);
+            self.builder.to(target)
+        };
         flow.push_animation(builder.build());
     }
 }
