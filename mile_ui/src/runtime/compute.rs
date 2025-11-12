@@ -59,13 +59,14 @@ impl ComputePipelines {
             self.interaction.encode(pass, buffers, ctx);
             delta_needed = true;
         }
-        if self.relations.encode(pass, buffers, ctx) {
-            delta_needed = true;
-        }
         if self.animation.is_dirty() {
             self.animation.encode(pass, buffers, ctx);
             delta_needed = true;
         }
+        if self.relations.encode(pass, buffers, ctx) {
+            delta_needed = true;
+        }
+
 
         if delta_needed {
             self.panel_delta.set_dirty();        }
