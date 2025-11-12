@@ -694,6 +694,15 @@ pub struct GpuRelationWorkItem {
     pub exit_param: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
+pub struct GpuRelationDispatchArgs {
+    pub start: u32,
+    pub count: u32,
+    pub depth: u32,
+    pub _pad: u32,
+}
+
 #[derive(Debug, Clone)]
 /// ���ֶζ�������
 pub struct TransformAnimFieldInfo {
@@ -788,7 +797,7 @@ pub struct AnimtionFieldOffsetPtr {
     pub death: u32,        // 是否结束
     pub easy_fn: u32,      // easing 函数标识
     pub flags: u32,        // bit0: offset, bit1: from snapshot, bit2: to snapshot
-    // 1 ��ʾ target ��ƫ����
+                           // 1 ��ʾ target ��ƫ����
 }
 
 #[repr(C, align(16))]
@@ -816,4 +825,3 @@ impl GpuAnimationDes {
         queue.write_buffer(buffer, 0, bytes_of(self));
     }
 }
-

@@ -443,6 +443,7 @@ fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {
 fn vs_main(input: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
+
     var instance_pos = input.instance_pos;
     var instance_size = input.instance_size;
     var local_pos = input.pos;
@@ -552,6 +553,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if any(kennel_color != vec4<f32>(0.0)) {
         final_color = kennel_color;
     }
-
+    if(global_uniform.frame < 3){
+        final_color.w = 0.0;
+        return final_color;
+    }
     return final_color;
 }

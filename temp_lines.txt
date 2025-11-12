@@ -1,4 +1,3 @@
-
 struct PanelAnimDelta {
     delta_position: vec2<f32>,
     delta_size: vec2<f32>,
@@ -19,39 +18,39 @@ struct PanelAnimDelta {
     container_origin: vec2<f32>,
 };
 struct Panel {
-    // === 16-byte Âùó 1 ===
+    // === 16-byte Âù?1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte Âùó 2 ===
+    // === 16-byte Âù?2 ===
     uv_offset: vec2<f32>,   // 8 bytes  
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte Âùó 3 ===
+    // === 16-byte Âù?3 ===
     z_index: u32,           // 4 bytes
     pass_through: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte Âùó 4 ===
+    // === 16-byte Âù?4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte Âùó 5 ===
+    // === 16-byte Âù?5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte Âùó 6 ===
+    // === 16-byte Âù?6 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte Âùó 7 ===
+    // === 16-byte Âù?7 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte Âùó 8 ===
+    // === 16-byte Âù?8 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -85,15 +84,8 @@ struct RelWorkItem {
     exit_param: f32,
 };
 
-struct RelDispatchArgs {
-    start: u32,
-    count: u32,
-    depth: u32,
-    _pad: u32,
-};
-
-struct RelDispatchCursor {
-    level: u32,
+struct RelArgs {
+    data: vec4<u32>,
 };
 
 @group(0) @binding(0)
@@ -106,9 +98,7 @@ var<storage, read_write> work_items: array<RelWorkItem>;
 var<storage, read_write> panels: array<Panel>;
 
 @group(0) @binding(3)
-var<storage, read> rel_dispatch_table: array<RelDispatchArgs>;
-
-var<push_constant> rel_dispatch_cursor: RelDispatchCursor;
+var<uniform> rel_args: RelArgs;
 
 @group(0) @binding(4)
 var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
@@ -116,7 +106,7 @@ var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 @group(0) @binding(5)
 var<storage, read_write> panel_snapshots: array<Panel>;
 
-const INVALID_ID: u32 = 4294967295u;
+const INVALID_ID: u32 = 0xffffffffu;
 const REL_WORK_FLAG_ENTER_CONTAINER: u32 = 1u << 0u;
 const REL_WORK_FLAG_EXIT_CONTAINER: u32 = 1u << 1u;
 
@@ -130,14 +120,18 @@ const REL_LAYOUT_ALIGN_CENTER: u32 = 1u << 12u;
 const TAU: f32 = 6.28318530718;
 
 fn is_valid_panel(id: u32) -> bool {
-    return (panels[id - 1].size.x > 0.0) && (panels[id - 1].size.y > 0.0);
+    return id != INVALID_ID && (id - 1) < arrayLength(&panels);
+}
+
+fn is_valid_delta(id: u32) -> bool {
+    return id != INVALID_ID && (id - 1) < arrayLength(&panel_deltas);
 }
 
 fn fetch_container_delta(container_id: u32) -> vec2<f32> {
-    if (!is_valid_panel(container_id)) {
+    if (!is_valid_delta(container_id)) {
         return vec2<f32>(0.0);
     }
-    return panel_deltas[container_id - 1].delta_position;
+    return panel_deltas[container_id].delta_position;
 }
 
 fn clamp_order(order: u32, total: u32) -> u32 {
@@ -229,17 +223,18 @@ fn compute_layout_offset(panel_id: u32, item: RelWorkItem) -> vec2<f32> {
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let level = rel_dispatch_cursor.level;
-    let dispatch = rel_dispatch_table[level];
-    let local_idx = global_id.x;
-    if (local_idx >= dispatch.count) {
+    let idx = global_id.x;
+    if (idx >= rel_args.data.x) {
         return;
     }
-    let idx = dispatch.start + local_idx;
+
     var item = work_items[idx];
     let panel_id = item.panel_id;
 
 
+    if (!is_valid_delta(panel_id) || !is_valid_panel(panel_id)) {
+        return;
+    }
 
  
 
@@ -251,44 +246,41 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     //    work_items[idx] = item;
     //    return;
     //}
-  
-
     if ((item.flags & REL_WORK_FLAG_ENTER_CONTAINER) != 0u) {
-
+    
 
         if(panel_id == 50){
             debug_buffer.uints[9] = 99999;
         }
-
-        let current_pos = panels[panel_id - 1].position;
-        
-
-
+        let current_pos = panels[panel_id].position;
+        if (!is_valid_panel(item.container_id)) {
+            return;
+        }
         let container_pos = panels[item.container_id - 1].position;
-        let container_origin = container_pos + work_items[item.container_id].origin;
-        let layout_offset = compute_layout_offset(panel_id - 1, item);
+        let container_origin = container_pos + work_items[item.container_id - 1].origin;
+        let layout_offset = compute_layout_offset(panel_id, item);
         let desired_pos = container_origin + layout_offset;
         work_items[idx].origin = layout_offset;
-        
+
         panel_deltas[panel_id - 1].start_position = current_pos;
         //panel_deltas[panel_id].delta_position += delta;
         panels[panel_id - 1].position = desired_pos;
         panel_deltas[panel_id - 1].container_origin = container_origin;
-        panel_snapshots[panel_id - 1].position = desired_pos;
-        panels[panel_id - 1].collection_state = 1u;
+        panel_snapshots[panel_id].position = desired_pos;
+
         item.flags &= ~REL_WORK_FLAG_ENTER_CONTAINER;
         work_items[idx] = item;
         return;
     }
 
-    if (!is_valid_panel(item.container_id)) {
+    if (!is_valid_delta(item.container_id) || !is_valid_panel(item.container_id)) {
         return;
     }
 
-    let container_delta = panel_deltas[item.container_id].delta_position;
+    let container_delta = fetch_container_delta(item.container_id);
     panel_deltas[panel_id].delta_position += container_delta;
     panel_snapshots[panel_id].position += container_delta;
     let container_pos = panels[item.container_id].position;
     let container_origin = container_pos + item.origin;
-    panel_deltas[panel_id].container_origin = container_origin + work_items[item.container_id - 1].origin;
+    panel_deltas[panel_id].container_origin = container_origin + work_items[item.container_id].origin;
 }

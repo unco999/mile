@@ -19,6 +19,7 @@ pub struct RelationRegistry {
     manual: Vec<RelationWorkItem>,
     container_members: HashMap<u32, Vec<u32>>,
     active_links: HashMap<u32, u32>,
+    panel_depths: HashMap<u32, u32>,
 }
 
 #[derive(Default)]
@@ -55,6 +56,7 @@ pub struct RelationWorkItem {
     pub entry_param: f32,
     pub exit_mode: u32,
     pub exit_param: f32,
+    pub depth: u32,
 }
 
 const WORK_FLAG_ENTER_CONTAINER: u32 = 1 << 0;
@@ -83,6 +85,7 @@ impl Default for RelationWorkItem {
             entry_param: 0.0,
             exit_mode: 0,
             exit_param: 0.0,
+            depth: 0,
         }
     }
 }
@@ -142,6 +145,7 @@ impl RelationRegistry {
                             flags: WORK_FLAG_EXIT_CONTAINER,
                             is_container: self.is_panel_container(panel_id),
                             origin,
+                            depth: self.panel_depth(panel_id),
                             ..RelationWorkItem::default()
                         });
                     } else {
@@ -158,6 +162,7 @@ impl RelationRegistry {
                         flags: WORK_FLAG_EXIT_CONTAINER,
                         is_container: self.is_panel_container(panel_id),
                         origin,
+                        depth: self.panel_depth(panel_id),
                         ..RelationWorkItem::default()
                     });
                 }
@@ -212,7 +217,6 @@ impl RelationRegistry {
             .filter(|item| (item.flags & WORK_FLAG_ENTER_CONTAINER) != 0);
         let total = enters.clone().count();
         let containers = enters.filter(|item| item.is_container).count();
-        println!("多少个面板进入了 {:?}, 其中容器 {:?}", total, containers);
         if !has_links {
             if self.active_links.remove(&panel_id).is_some() {
                 let origin = self
@@ -224,6 +228,7 @@ impl RelationRegistry {
                     flags: WORK_FLAG_EXIT_CONTAINER,
                     is_container: self.is_panel_container(panel_id),
                     origin,
+                    depth: self.panel_depth(panel_id),
                     ..RelationWorkItem::default()
                 });
             }
@@ -273,6 +278,7 @@ impl RelationRegistry {
             exit_mode,
             exit_param,
             is_container: self.is_panel_container(child_panel_id),
+            depth: self.panel_depth(child_panel_id),
         }
     }
 
@@ -315,6 +321,7 @@ impl RelationRegistry {
             children.sort_unstable();
             children.dedup();
         }
+        self.recompute_panel_depths();
     }
 
     fn mark_all_container_children_dirty(&mut self) {
@@ -323,6 +330,58 @@ impl RelationRegistry {
                 self.dirty.insert(child);
             }
         }
+    }
+
+    fn panel_depth(&self, panel_id: u32) -> u32 {
+        self.panel_depths.get(&panel_id).copied().unwrap_or(0)
+    }
+
+    fn recompute_panel_depths(&mut self) {
+        self.panel_depths.clear();
+        if self.panels.is_empty() {
+            return;
+        }
+        let mut parent_map: HashMap<u32, u32> = HashMap::new();
+        for (&container, children) in &self.container_members {
+            for &child in children {
+                parent_map.entry(child).or_insert(container);
+            }
+        }
+        let mut cache: HashMap<u32, u32> = HashMap::new();
+        let mut visiting: HashSet<u32> = HashSet::new();
+        let mut panel_ids: HashSet<u32> = HashSet::new();
+        panel_ids.extend(self.panels.keys().copied());
+        panel_ids.extend(parent_map.keys().copied());
+        panel_ids.extend(self.container_members.keys().copied());
+        for panel_id in panel_ids {
+            visiting.clear();
+            Self::resolve_depth(panel_id, &parent_map, &mut cache, &mut visiting);
+        }
+        self.panel_depths = cache;
+    }
+
+    fn resolve_depth(
+        panel_id: u32,
+        parent_map: &HashMap<u32, u32>,
+        cache: &mut HashMap<u32, u32>,
+        visiting: &mut HashSet<u32>,
+    ) -> u32 {
+        if let Some(&depth) = cache.get(&panel_id) {
+            return depth;
+        }
+        if !visiting.insert(panel_id) {
+            cache.insert(panel_id, 0);
+            return 0;
+        }
+        let depth = match parent_map.get(&panel_id) {
+            Some(&parent) if parent != INVALID_CONTAINER_ID && parent != panel_id => {
+                Self::resolve_depth(parent, parent_map, cache, visiting) + 1
+            }
+            _ => 0,
+        };
+        visiting.remove(&panel_id);
+        cache.insert(panel_id, depth);
+        depth
     }
 
     pub fn inject_manual(&mut self, items: Vec<RelationWorkItem>) {
