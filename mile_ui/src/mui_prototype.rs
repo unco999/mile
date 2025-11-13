@@ -1926,12 +1926,19 @@ fn demo_panel() -> Result<(), DbError> {
                         .size(vec2(50.0, 50.0))
                         .z_index(7)
                         .events()
-                            .on_event(UiEventKind::Click, |flow|{
-                                   flow.request_fragment_shader(|e|{
-                                        wvec4(0.0, 1.0, 1.0, 1.0)
-                                   });                                                 
-                            })
-                            .finish();
+                        .on_event(UiEventKind::Click, |flow| {
+                            flow.request_fragment_shader(|e: &ShaderScope| {
+                                let time = cv("time");
+                                // 青色偏紫的霓虹感颜色
+                                wvec4(
+                                    sin(time),       // R
+                                    0.0,       // G
+                                    0.0, // B
+                                    1.0,           // A
+                                )
+                            });
+                        })
+                        .finish();
                     state
                 },
             )

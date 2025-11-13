@@ -1,7 +1,7 @@
 use bitflags::*;
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, bytes_of, bytes_of_mut};
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     fmt::Debug,
     rc::Rc,
@@ -205,6 +205,28 @@ impl CpuGlobalUniform {
 
     pub fn get_buffer(&self) -> wgpu::Buffer {
         return self.buffer.clone();
+    }
+
+    pub fn borrow(&self) -> std::cell::Ref<'_, GlobalUniform> {
+        self.inner.borrow()
+    }
+
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, GlobalUniform> {
+        self.inner.borrow_mut()
+    }
+
+    pub fn write_field<T: Pod>(&self, queue: &wgpu::Queue, offset: wgpu::BufferAddress, value: &T) {
+        queue.write_buffer(&self.buffer, offset, bytes_of(value));
+        let mut guard = self.inner.borrow_mut();
+        let cpu_bytes = bytes_of_mut(&mut *guard);
+        let start = offset as usize;
+        let end = start + bytes_of(value).len();
+        cpu_bytes[start..end].copy_from_slice(bytes_of(value));
+    }
+
+    pub fn flush(&self, queue: &wgpu::Queue) {
+        let snapshot = self.inner.borrow();
+        queue.write_buffer(&self.buffer, 0, bytes_of(&*snapshot));
     }
 
     pub fn new(device: &wgpu::Device, window: &winit::window::Window) -> Self {

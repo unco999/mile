@@ -230,7 +230,7 @@ impl ApplicationHandler<AppEvent> for App {
         let kennel = Arc::new(RefCell::new(Kennel::new(
             &ctx.device,
             &ctx.queue,
-            Rc::clone(&global_uniform),
+            global_uniform.clone(),
             KennelConfig {
                 compute_config: ComputePipelineConfig {
                     max_nodes: 512,
