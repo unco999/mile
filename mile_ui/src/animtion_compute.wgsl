@@ -365,7 +365,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let current_value = read_panel_field(panel_index, anim.field_id);
     let field_id = animations[idx].field_id;
-    let snapshot_value = read_snapshot_field(panel_index + 1, field_id);
+    let snapshot_value = read_snapshot_field(panel_index, field_id);
     var start_value = 0.0;
      if (use_offset) {
         start_value = current_value;

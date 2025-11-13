@@ -265,7 +265,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 
         let container_pos = panels[item.container_id - 1].position;
-        let container_origin = container_pos + work_items[item.container_id].origin;
+        let container_origin = container_pos + work_items[item.container_id - 1].origin;
         let layout_offset = compute_layout_offset(panel_id - 1, item);
         let desired_pos = container_origin + layout_offset;
         work_items[idx].origin = layout_offset;
@@ -287,8 +287,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let container_delta = panel_deltas[item.container_id].delta_position;
     panel_deltas[panel_id].delta_position += container_delta;
-    panel_snapshots[panel_id].position += container_delta;
-    let container_pos = panels[item.container_id].position;
+    panel_snapshots[panel_id - 1].position += container_delta;
+    let container_pos = panels[item.container_id - 1].position;
     let container_origin = container_pos + item.origin;
-    panel_deltas[panel_id].container_origin = container_origin + work_items[item.container_id - 1].origin;
+    panel_deltas[panel_id - 1].container_origin = container_origin + work_items[item.container_id - 1].origin;
 }
