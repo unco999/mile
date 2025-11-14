@@ -205,11 +205,12 @@ pub struct PanelKey {
 }
 
 impl PanelKey {
-    pub fn new(panel_uuid: &'static str, scope: impl Into<String>) -> Self {
-        let panel_id = panel_id_pool().id_for(panel_uuid);
+    pub fn new(panel_uuid: impl AsRef<str>, scope: impl Into<String>) -> Self {
+        let s = panel_uuid.as_ref();
+        let panel_id = panel_id_pool().id_for(s);
         Self {
             panel_id,
-            panel_uuid: panel_uuid.to_owned(),
+            panel_uuid: s.to_owned(),
             scope: scope.into(),
         }
     }
@@ -449,7 +450,7 @@ impl<TPayload: PanelPayload> Clone for PanelHandle<TPayload> {
 }
 
 impl<TPayload: PanelPayload> PanelHandle<TPayload> {
-    fn new(panel_uuid: &'static str, scope: impl Into<String>) -> Result<Self, DbError> {
+    fn new(panel_uuid: impl AsRef<str>, scope: impl Into<String>) -> Result<Self, DbError> {
         let db = global_db();
         let table = db.bind_table::<PanelBinding<TPayload>>()?;
         Ok(Self {
@@ -1200,20 +1201,21 @@ pub struct Mui<TPayload: PanelPayload> {
 }
 
 impl<TPayload: PanelPayload> Mui<TPayload> {
-    fn derived_scope(panel_uuid: &'static str) -> String {
-        format!("{}::{}", type_name::<TPayload>(), panel_uuid)
+    fn derived_scope<S: AsRef<str>>(panel_uuid: S) -> String {
+        format!("{}::{}", type_name::<TPayload>(), panel_uuid.as_ref())
     }
 
-    pub fn new(panel_uuid: &'static str) -> Result<Self, DbError> {
-        Self::stateful_with_scope(panel_uuid, Self::derived_scope(panel_uuid))
+    pub fn new<S: AsRef<str>>(panel_uuid: S) -> Result<Self, DbError> {
+        let scope = Self::derived_scope(&panel_uuid);
+        Self::stateful_with_scope(panel_uuid, scope)
     }
 
     pub fn stateful_with_scope(
-        panel_uuid: &'static str,
+        panel_uuid: impl AsRef<str>,
         scope: impl Into<String>,
     ) -> Result<Self, DbError> {
         TPayload::register_payload_type();
-        let handle = PanelHandle::<TPayload>::new(panel_uuid, scope)?;
+        let handle = PanelHandle::<TPayload>::new(panel_uuid.as_ref(), scope)?;
         Ok(Self {
             handle,
             mode: FlowMode::Stateful {
@@ -1225,16 +1227,17 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         })
     }
 
-    pub fn stateless(panel_uuid: &'static str) -> Result<Self, DbError> {
-        Self::stateless_with_scope(panel_uuid, Self::derived_scope(panel_uuid))
+    pub fn stateless<S: AsRef<str>>(panel_uuid: S) -> Result<Self, DbError> {
+        let scope = Self::derived_scope(&panel_uuid);
+        Self::stateless_with_scope(panel_uuid, scope)
     }
 
     pub fn stateless_with_scope(
-        panel_uuid: &'static str,
+        panel_uuid: impl AsRef<str>,
         scope: impl Into<String>,
     ) -> Result<Self, DbError> {
         TPayload::register_payload_type();
-        let handle = PanelHandle::<TPayload>::new(panel_uuid, scope)?;
+        let handle = PanelHandle::<TPayload>::new(panel_uuid.as_ref(), scope)?;
         Ok(Self {
             handle,
             mode: FlowMode::Stateless {
@@ -1892,13 +1895,13 @@ pub struct TestCustomData {
     pub count: u32,
 }
 
+//这是一个在rust 写好的shader函数dsl 最终会编译成gpu ast分解计算
 fn frag_template(intensity: f32) -> Expr {
-    let uv = rv("uv");
-    let t = cv("time") * 0.1;
-    // 水平方向渐变
-    let base = uv.x() * t.clone();
-    let base1 = uv.y() * t.clone();
-    wvec4(base.clone(), base.clone(), base1, 1.0)
+    let uv = rv("uv"); 
+    let t = cv("time");
+    let wave = (sin(uv.x()*8.0 + t.clone()*1.2) + sin(uv.y()*9.0 - t*1.1)) * 0.5;
+    let crest = smoothstep(0.55, 0.9, (wave + 1.0) * 0.5) * intensity;
+    wvec4(0.02 + 0.8*crest.clone(), 0.05 + 0.3*crest.clone(), 0.12 + crest.clone(), 1.0)
 }
 
 //新增了全局DB数据中心  这个数据中心
@@ -1906,129 +1909,185 @@ fn frag_template(intensity: f32) -> Expr {
 //也可以在别的系统里面 同步获取 &mut
 //让我们来创造这个数据
 
+
+//    Mui::<DataTest>::new("test_panel")?
+//         .default_state(UiState(0))
+//         .state(UiState(0), |state| {
+//             let state = state
+//                 .position(vec2(200.0, 200.0))
+//                 .size(vec2(500.0, 500.0))
+//                 .z_index(5)
+//                 .color(vec4(0.3, 0.3, 0.5, 0.55))
+//                 .container_style()
+//                 .layout(RelLayoutKind::grid([0.0, 0.0]))
+//                 .size_container(vec2(500.0, 500.0))
+//                 .slot_size(vec2(80.0, 50.0)) //网格的每个大小
+//                 .finish() //这里退出容器设置的上下文
+//                 .border(BorderStyle {
+//                     color: [1.0, 1.0, 1.0, 0.66],
+//                     width: 3.0,
+//                     radius: 0.0,
+//                 })
+//                 .events()
+//                 .on_init(|flow|{
+//                     flow.text(
+//                         "枯枝探新芽，
+//                               细雨吻旧窗。
+//                               时光轻驻足，
+//                               春意悄然藏。", 
+//                         Arc::from("tf/STXIHEI.ttf"),
+//                         60, 
+//                         [1.0,1.0,1.0,1.0], 
+//                         1, 
+//                         1
+//                     );
+//                 })
+//                 .on_event(UiEventKind::Click, |flow| {
+//                     flow.text(
+//                         "枯枝悄悄抽出新芽，细雨温柔地敲打着旧窗。时光仿佛在这一刻驻足，冬日的萧瑟悄然褪去，泥土的芬芳在空气中弥漫。我听见冰凌融化的轻响，看见屋檐下蜘蛛编织新的网。春意就这样无声无息地，在每道裂缝里生根发芽，把积蓄一季的力量，化作枝头第一抹鹅黄。", 
+//                         Arc::from("tf/STXIHEI.ttf"),
+//                         60, 
+//                         [1.0,1.0,1.0,1.0], 
+//                         1, 
+//                         1
+//                     );
+//                 })
+//                 .finish();
+//             state
+//         })
+//         .build()?;
+
+
+
+//PanelPayload  是他绑定的全局数据流
+//使用DB 可以让程序从同步中的任何hook阶段 让UI和实际执行操作一份数据
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 struct DataTest {
     count: u32,
 }
+//这个数据是一个绑定数据  我们可以给ui当作flow 比如在点击的时候改变count
 
-fn demo_panel() -> Result<(), DbError> {
-    //我们把他当成一个容器 只要写容器描述就可以了
-    Mui::<DataTest>::new("test_panel")?
-        .default_state(UiState(0))
-        .state(UiState(0), |state| {
-            let state = state
-                .position(vec2(200.0, 200.0))
-                .size(vec2(500.0, 500.0))
-                .z_index(5)
-                .color(vec4(0.3, 0.3, 0.5, 0.55))
-                .container_style()
-                .layout(RelLayoutKind::grid([0.0, 0.0]))
-                .size_container(vec2(500.0, 500.0))
-                .slot_size(vec2(80.0, 50.0)) //网格的每个大小
-                .finish() //这里退出容器设置的上下文
-                .border(BorderStyle {
-                    color: [1.0, 1.0, 1.0, 0.66],
-                    width: 3.0,
-                    radius: 0.0,
-                })
-                .events()
-                .on_init(|flow|{
-                    flow.text(
-                        "枯枝探新芽，
-                              细雨吻旧窗。
-                              时光轻驻足，
-                              春意悄然藏。", 
-                        Arc::from("tf/STXIHEI.ttf"),
-                        60, 
-                        [1.0,1.0,1.0,1.0], 
-                        1, 
-                        1
-                    );
-                })
-                .on_event(UiEventKind::Click, |flow| {
-                    flow.text(
-                        "枯枝悄悄抽出新芽，细雨温柔地敲打着旧窗。时光仿佛在这一刻驻足，冬日的萧瑟悄然褪去，泥土的芬芳在空气中弥漫。我听见冰凌融化的轻响，看见屋檐下蜘蛛编织新的网。春意就这样无声无息地，在每道裂缝里生根发芽，把积蓄一季的力量，化作枝头第一抹鹅黄。", 
-                        Arc::from("tf/STXIHEI.ttf"),
-                        60, 
-                        [1.0,1.0,1.0,1.0], 
-                        1, 
-                        1
-                    );
-                })
-                .finish();
-            state
-        })
-        .build()?;
+//这里创造了一个绑定DataTest数据流的UI  名字叫test_container
+//并且把他的样式写清楚了
+//支持透明度
+//我们来给面板渲染一点字体
+fn demo_panel()->Result<(),DbError> {
+    let _ = Mui::<DataTest>::new("test_container")?
+            //我们的UI设计 遵循状态设计  他可以在交互事件中自由的切换状态  比如
+            //下次会修复这个bug
+            //让我们给他附加 超多面板吧
+            //接着上回  我们的面板可以写入实时frag
+            //让我们给他加入小面板
+            //按grid排列
+            .default_state(UiState(0))
+            .state(UiState(0), |state|{
+                //我们要把这个panel当作一个容器 然后我们去写他的容器配置
+                //好吧  因为新的更改 排列似乎出问题了  我需要回头检查一下
+                let state=  state
+                    .z_index(1)
+                    .container_style()
+                        //小问题 没有设置容器大小 再来看看
+                        .slot_size(vec2(108.0, 52.0))
+                        .size_container(vec2(500.0, 500.0))
+                        .layout(RelLayoutKind::grid([0.0,0.0]))
+                        .finish() //这里要退出容器设置的上下文;
+                    .position(vec2(300.0, 200.0))
+                    .color(vec4(0.5, 0.7, 0.6, 0.3))
+                    .border(BorderStyle { color: [0.1,0.3,0.2,1.0], width: 8.0, radius: 0.0 })
+                    //我们在状态里面加入这个接口 加入frag实时计算buffer
+                    .fragment_shader(|e|{
+                        frag_template(1.0)
+                    })
+                    .size(vec2(500.0, 500.0))
+                    .events()   //进入event上下文构建
+                        .on_event(UiEventKind::Click, |flow|{
+                            let mut data_test = flow.payload(); //这里是取出DataTest的可变引用
+                            data_test.count += 1; //给他增加值;
+                            flow.set_state(UiState(1)); //如果点击 我们切换到状态1
+                        })
+                        .finish();
+                    state
+            })
+            .state(UiState(1), |state|{
+                //在点击后  就会转换到状态1 这里我们再加一个状态轮换
+                let state = state
+                        .size(vec2(400.0, 400.0))
+                        .events()
+                            .on_event(UiEventKind::Click, |flow|{
+                                flow.set_state(UiState(0)); //我们来看看效果
+                            })
+                            .finish();
+                state
+            })
+        .build();
 
-    // //这是子元素  我们让他自己选择主容器进入
-    // //这个不同于以往的传统UI设计 因为一些特殊原因(Gpu运算亲和)
-    // for idx in 0..36 {
-    //     let uuid = format!("demo_entry_{idx}");
-    //     let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
-    //         .default_state(UiState(0))
-    //         .state(
-    //             UiState(0),
-    //             move |mut state: StateStageBuilder<TestCustomData>| {
-    //                 let rel = state.rel();
-    //                 rel.container_with::<DataTest>("test_panel");
-    //                 //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
-    //                 let state = state
-    //                     .size(vec2(80.0, 50.0))
-    //                     .container_style()
-    //                     .layout(RelLayoutKind::Free)
-    //                     .origin(vec2(10.0, 10.0))
-    //                     .size_container(vec2(80.0, 50.0))
-    //                     .finish()
-    //                     .z_index(6)
-    //                     .color(vec4(0.6, 0.3, 0.5, 1.0))
-    //                     .border(BorderStyle {
-    //                         color: [1.0, 1.0, 1.0, 0.66],
-    //                         width: 3.0,
-    //                         radius: 0.0,
-    //                     });
+        //  让我们创造子面板
 
-    //                 state
-    //             },
-    //         )
-    //         .build()?;
-    // }
+            //加24个小面板
+        for idx in 0..24 {
+        let uuid = format!("demo_entry_{idx}");
+        let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
+            .default_state(UiState(0))
+            .state(
+                UiState(0),
+                move |mut state: StateStageBuilder<TestCustomData>| {
 
-    // for idx in 1..5 {
-    //     let parent = format!("demo_entry_{idx}");
-    //     let self_id = format!("demo_entry_{idx}_item");
-    //     let texture = format!("../texture/head ({}).png", idx % 10);
-    //     let panel = Mui::<TestCustomData>::new(Box::leak(self_id.into_boxed_str()))?
-    //         .default_state(UiState(0))
-    //         .state(
-    //             UiState(0),
-    //             move |mut state: StateStageBuilder<TestCustomData>| {
-    //                 let rel = state.rel();
-    //                 rel.container_with::<TestCustomData>(Box::leak(parent.into_boxed_str()));
-    //                 //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
-    //                 let state = state
-    //                     .size(vec2(50.0, 50.0))
-    //                     .z_index(7)
-    //                     .events()
-    //                     .on_event(UiEventKind::Click, |flow| {
-    //                         flow.request_fragment_shader(|e: &ShaderScope| {
-    //                             let time = cv("time");
-    //                             // 青色偏紫的霓虹感颜色
-    //                             wvec4(
-    //                                 sin(time),       // R
-    //                                 0.0,       // G
-    //                                 0.0, // B
-    //                                 1.0,           // A
-    //                             )
-    //                         });
-    //                     })
-    //                     .finish();
-    //                 state
-    //             },
-    //         )
-    //         .build()?;
-    // }
-    Ok(())
+                    //访问关系组件 rel  让他依附 一个panel 当作容器
+                    state.rel().container_with::<DataTest>("test_container");
+
+                    //通过子类 确定自己要进入的容器  这里指定DataTest 和test_container 就可以绑定了
+                    
+
+                    state
+                        .z_index(4 + idx)
+                        .position(vec2(0.0, 0.0))
+                        .color(vec4(0.1, 0.1, 0.1, 0.5))
+                        .size(vec2(108.0, 52.0))
+                        .border(BorderStyle {
+                            color: [0.15, 0.8, 0.45, 1.0],
+                            width: 1.0,
+                            radius: 9.0,
+                        })
+                        .events()
+                        .on_event(UiEventKind::Hover, |flow| {
+                            flow.position_anim()
+                                .from_current()
+                                .offset(vec2(0.0, -14.0))
+                                .duration(0.18)
+                                .easing(Easing::BackOut)
+                                .push(flow);
+                        })
+                        .on_event(UiEventKind::Out, |flow| {
+                            //所有的交互操作 全部在flow里面进行
+                            flow.position_anim()
+                                .from_current()
+                                .to_snapshot()
+                                .duration(0.22)
+                                .easing(Easing::BackIn)
+                                .push(flow);
+                        })
+                        .finish()
+                },
+            )
+            .build()?;
+   }
+   Ok(())
+
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 fn build_demo_panel_with_uuid(
     panel_uuid: &'static str,
