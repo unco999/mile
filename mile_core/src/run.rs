@@ -1,9 +1,8 @@
-use mile_api::prelude::{
-    Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
+﻿use mile_api::prelude::{
+    _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus
 };
 use mile_font::{
-    event::{BatchFontEntry, BatchRenderFont},
-    structs::MileFont,
+    event::{BatchFontEntry, BatchRenderFont}, minimal_runtime::MiniFontRuntime, prelude::FontStyle,
 };
 use mile_gpu_dsl::prelude::{
     gpu_ast_compute_pipeline::ComputePipelineConfig,
@@ -22,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use wgpu::SurfaceError;
+use wgpu::{SurfaceError, TextureFormat};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
@@ -41,7 +40,7 @@ use crate::GlobalState;
 pub struct App {
     pub wgpu_context: Option<WGPUContext>,
     pub mui_runtime: Option<Arc<RefCell<MuiRuntime>>>,
-    pub mile_font: Option<Arc<RefCell<MileFont>>>,
+    pub mile_font: Option<Arc<RefCell<MiniFontRuntime>>>,
     pub kennel: Option<Arc<RefCell<Kennel>>>,
     pub global_uniform: Option<Rc<CpuGlobalUniform>>,
     pub last_tick: Instant,
@@ -90,8 +89,7 @@ impl App {
             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
         }
 
-        let mut mile_font = mile_font.borrow_mut();
-        mile_font.evnet_polling(&ctx.device, &ctx.queue);
+
         // runtime.copy_interaction_swap_frame();
         runtime.tick_frame_update_data(&ctx.queue);
         self.frame_index = self.frame_index.wrapping_add(1);
@@ -123,8 +121,8 @@ impl App {
 
         if let Some(font) = &self.mile_font {
             let mut font = font.borrow_mut();
-            font.batch_enqueue_compute(&ctx.device, &ctx.queue);
-            font.copy_store_texture_to_render_texture(&ctx.device, &ctx.queue);
+            // font.batch_enqueue_compute(&ctx.device, &ctx.queue);
+            // font.copy_store_texture_to_render_texture(&ctx.device, &ctx.queue);
         }
 
         if let Some(kennel_cell) = &self.kennel {
@@ -153,6 +151,11 @@ impl App {
             runtime.event_poll(&ctx.device, &ctx.queue);
         }
 
+        if let Some(runtime_cell) = &self.mile_font{
+            let mut mile_font = runtime_cell.borrow_mut();
+             mile_font.poll_global_event(&ctx.device, &ctx.queue);
+        }
+
         if let Some(kennel_cell) = &self.kennel {
             let mut kennel = kennel_cell.borrow_mut();
             kennel.process_global_events(&ctx.queue, &ctx.device);
@@ -168,6 +171,8 @@ impl App {
 
         let runtime = runtime_cell.borrow();
         let mile_font = mile_font.borrow();
+        // Draw everything into the swapchain frame. Do not use the atlas/atlas view as a color attachment.
+        // MiniFontRuntime implements Renderable; include it here so it draws to the frame.
         ctx.render(&[&*runtime, &*mile_font]);
     }
 
@@ -178,11 +183,11 @@ impl App {
 
         if let Some(font) = &self.mile_font {
             let mut font = font.borrow_mut();
+            font.init_gpu(&ctx.device);
+            // Use the surface format, not a hard-coded one.
+            font.init_render_pipeline(&ctx.device, &ctx.queue, ctx.config.format);
+            // Load a default face so space-key demo has a font available.
             font.load_font_file();
-            font.init_buffer(&ctx.device);
-            font.create_template_render_texture_and_layout(&ctx.device, None);
-            font.create_render_pipeline(&ctx.device, ctx.config.format);
-            font.create_batch_enqueue_font_compute_cahce(&ctx.device);
         }
 
         if let (Some(runtime_cell), Some(kennel_cell)) = (&self.mui_runtime, &self.kennel) {
@@ -200,6 +205,14 @@ impl App {
             }
 
             runtime.ensure_render_pipeline(&ctx.device, &ctx.queue, ctx.config.format);
+
+            // Optionally link font runtime with UI panel buffers for position/offset/z-index
+            if let Some(font_cell) = &self.mile_font {
+                let mut font = font_cell.borrow_mut();
+                let panels = &runtime.buffers.instance;
+                let deltas = &runtime.buffers.panel_anim_delta;
+                font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
+            }
         }
     }
 }
@@ -254,7 +267,7 @@ impl ApplicationHandler<AppEvent> for App {
 
         self.wgpu_context = Some(ctx.clone());
         self.mui_runtime = Some(Arc::new(RefCell::new(runtime)));
-        self.mile_font = Some(Arc::new(RefCell::new(MileFont::new(global_uniform))));
+        self.mile_font = Some(Arc::new(RefCell::new(MiniFontRuntime::new())));
         self.kennel = Some(kennel);
 
         self.build_resources();
@@ -313,6 +326,9 @@ impl ApplicationHandler<AppEvent> for App {
                         let mut runtime = runtime_cell.borrow_mut();
                         runtime.resize(size, &ctx.queue, &ctx.device);
                     }
+                    if let Some(font_cell) = &self.mile_font {
+                        font_cell.borrow_mut().resize(size, &ctx.queue, &ctx.device);
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -333,16 +349,28 @@ impl ApplicationHandler<AppEvent> for App {
                 if matches!(event.state, ElementState::Pressed)
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Space))
                 {
+                    for i in 2..24 {
                     global_event_bus().publish(BatchFontEntry {
-                        str: "道",
-                        font_file_path: "../ttf/BIZUDPGothic-Regular.ttf",
+                        text: Arc::from("道法"),
+                        // Prefer repository path under tf/
+                        font_file_path: Arc::from("tf/BIZUDPGothic-Regular.ttf"),
                     });
-                    // global_event_bus().publish(BatchRenderFont {
-                    //     str: "道",
-                    //     font_file_path: "../ttf/BIZUDPGothic-Regular.ttf",
-                    // });
+                    global_event_bus().publish(BatchRenderFont {
+                        text: Arc::from("道法"),
+                        font_file_path: Arc::from("tf/BIZUDPGothic-Regular.ttf"),
+                        parent: PanelId(i),
+                        font_style: Arc::from(FontStyle{
+                            font_size: 22,
+                            font_file_path: "tf/BIZUDPGothic-Regular.ttf",
+                            font_color: [0.0,0.0,0.0,1.0],
+                            font_weight: 12,
+                            font_line_height: 23,
+                        }),
+                    });
+                    }
+            
                 }
-                if matches!(event.state, ElementState)
+                if matches!(event.state, ElementState::Pressed)
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
                 {
                     if let Some(runtime_cell) = &self.mui_runtime {

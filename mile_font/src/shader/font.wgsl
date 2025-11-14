@@ -132,6 +132,14 @@ var<storage, read> panels: array<Panel>;
 @group(0) @binding(6)
 var<storage, read> panel_deltas: array<PanelAnimDelta>;
 
+struct GpuUiDebugReadCallBack {
+    floats: array<f32, 32>,
+    uints: array<u32, 32>,
+};
+
+@group(0) @binding(7)
+var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
+
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
@@ -159,10 +167,11 @@ fn vs_main(
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let px = panel.position + inst.pos_px + position * inst.size_px;
-
+    let px = panel.position + vec2<f32>(inst.pos_px.x,0.0) + (position + vec2<f32>(0.5,0.0)) * inst.size_px;
+    debug_buffer.floats[inst_id] = inst.size_px;
+    
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
-    let ndc_y = 1.0 - px.y / screen_height * 2.0;
+    let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
     let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
@@ -204,11 +213,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 更锐利的边缘
     let edge_width = 0.04; // 更小的边缘宽度
-    let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
+    //let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
 
     // 或者使用阶梯函数获得完全锐利的边缘
-    // let alpha = select(0.0, 1.0, sdf_value > 0.5);
+    let alpha = select(0.0, 1.0, sdf_value > 0.5);
     
 
-    return vec4<f32>(1.0, 1.0, 1.0, alpha);
+    return vec4<f32>(0.0, 0.0, 0.0,alpha);
 }

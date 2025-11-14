@@ -212,7 +212,7 @@ impl MiniFontRuntime {
         // Bind layout:
         // 0: texture, 1: sampler, 2: glyph_descs (RO storage),
         // 3: global_uniform (RO storage), 4: instances (RO storage),
-        // 5: panels (RO storage), 6: panel_deltas (RO storage)
+        // 5: panels (RO storage), 6: panel_deltas (RO storage), 7: debug (RW storage)
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("mini.render.bgl"),
             entries: &[
@@ -277,6 +277,16 @@ impl MiniFontRuntime {
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -355,16 +365,29 @@ impl MiniFontRuntime {
                 wgpu::BindGroupEntry { binding: 4, resource: instance.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: panel_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 6, resource: panel_delta_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 7, resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding() },
             ],
         });
-
-        // Quad buffers
-        let quad: [UiVertex; 4] = [
-            UiVertex { pos: [-0.5, -0.5], uv: [0.0, 0.0] },  // 左下 → 左下
-            UiVertex { pos: [ 0.5, -0.5], uv: [1.0, 0.0] },  // 右下 → 右下  
-            UiVertex { pos: [ 0.5,  0.5], uv: [1.0, 1.0] },  // 右上 → 右上
-            UiVertex { pos: [-0.5,  0.5], uv: [0.0, 1.0] },  // 左上 → 左上
-        ];
+        
+            const quad: [UiVertex; 4] = [
+                UiVertex {
+                    pos: [0.0, 0.0],
+                    uv: [0.0, 0.0],
+                },
+                UiVertex {
+                    pos: [1.0, 0.0],
+                    uv: [1.0, 0.0],
+                },
+                UiVertex {
+                    pos: [1.0, 1.0],
+                    uv: [1.0, 1.0],
+                },
+                UiVertex {
+                    pos: [0.0, 1.0],
+                    uv: [0.0, 1.0],
+                },
+            ];
+       
         let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
         let vertex = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mini.render.quad.vb"),
@@ -482,6 +505,16 @@ impl MiniFontRuntime {
         if count == 0 { self.draw_instance_count = 0; return; }
         queue.write_buffer(&render.instance, 0, bytemuck::cast_slice(&all[..count]));
         self.draw_instance_count = count as u32;
+        // Fill debug buffer simple counters for readback printing:
+        // uints[0] = instance_count, uints[1] = texts, uints[2] = chars
+        if let Some(buf) = &self.gpu_debug.buffer {
+            let mut uints = [0u32; 3];
+            uints[0] = self.draw_instance_count;
+            uints[1] = self.out_gpu_texts.len() as u32;
+            uints[2] = self.out_gpu_chars.len() as u32;
+            // uints array starts at offset 128 (32 floats * 4 bytes)
+            queue.write_buffer(buf, 128, bytemuck::cast_slice(&uints));
+        }
     }
 
     /// Optionally adopt UI runtime buffers for panels and panel_deltas.
@@ -522,6 +555,7 @@ impl MiniFontRuntime {
                 wgpu::BindGroupEntry { binding: 4, resource: instance.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: panels, offset: 0, size: None }) },
                 wgpu::BindGroupEntry { binding: 6, resource: delta_res },
+                wgpu::BindGroupEntry { binding: 7, resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding() },
             ],
         });
         if let Some(render) = &mut self.render {
@@ -549,7 +583,26 @@ impl Renderable for MiniFontRuntime {
         }
     }
 
-    fn readback(&self, _device: &wgpu::Device, _queue: &wgpu::Queue) {}
+    fn readback(&self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // if(self.gpu_debug.check()) { return; }
+        // if let Some(buf) = &self.gpu_debug.buffer {
+        //     // Schedule an async readback and print via GpuDebugReadCallBack::print
+        //     wgpu::util::DownloadBuffer::read_buffer(
+        //         device,
+        //         queue,
+        //         &buf.slice(..),
+        //         move |e| {
+        //             if let Ok(bytes) = e {
+        //                 let data: &[mile_api::interface::GpuDebugReadCallBack] =
+        //                     bytemuck::cast_slice(&bytes);
+        //                 for d in data {
+        //                     mile_api::interface::GpuDebugReadCallBack::print("MiniFontRuntime.render", d);
+        //                 }
+        //             }
+        //         },
+        //     );
+        // }
+    }
 
     fn resize(&mut self, size: PhysicalSize<u32>, queue: &wgpu::Queue, _device: &wgpu::Device) {
         // Write screen_size into our local global_uniform so shader can do pixel->NDC conversion.

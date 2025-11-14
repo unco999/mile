@@ -1,7 +1,7 @@
 use bitflags::*;
 use bytemuck::{Pod, Zeroable, bytes_of, bytes_of_mut};
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     collections::HashMap,
     fmt::Debug,
     rc::Rc,
@@ -72,7 +72,7 @@ pub struct GpuDebug {
     import_name: &'static str,
     structs: GpuDebugReadCallBack,
     pub buffer: Option<wgpu::Buffer>,
-    last_print: Instant,      // 上一次打印时间
+    last_print: Cell<Instant>,      // 上一次打印时间
     print_interval: Duration, // 最小间隔
 }
 
@@ -111,7 +111,7 @@ impl GpuDebug {
         Self {
             import_name: name,
             buffer: None,
-            last_print: Instant::now(),
+            last_print: Cell::new(Instant::now()),
             print_interval: Duration::from_millis(1333),
             structs: GpuDebugReadCallBack::default(), // 每 200ms 打印一次
         }
@@ -147,8 +147,16 @@ impl GpuDebug {
         );
     }
 
+    pub fn check(&self)->bool{
+        if self.last_print.get().elapsed() < self.print_interval {
+            self.last_print.set(Instant::now()); // 更新上次打印时间
+            return false;
+        }
+        true
+    }
+
     pub fn debug(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        if self.last_print.elapsed() < self.print_interval {
+        if self.last_print.get().elapsed() < self.print_interval {
             return; // 太快就跳过
         }
 
@@ -168,7 +176,7 @@ impl GpuDebug {
             },
         );
 
-        self.last_print = Instant::now(); // 更新上次打印时间
+        self.last_print.set(Instant::now()); // 更新上次打印时间
     }
 }
 
