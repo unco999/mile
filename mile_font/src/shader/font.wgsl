@@ -1,6 +1,7 @@
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) vis: f32,
 };
 
 struct GlobalUniform {
@@ -162,19 +163,38 @@ fn vs_main(
     var out: VertexOutput;
     out.uv = tile_origin + uv * tile_scale;
 
-    // Pixel-accurate layout: panel.position + panel_deltas.delta_position + inst offset + quad scale
+    // Pixel-accurate layout with wrapping by panel.size:
+    // - Wrap X when exceeding panel.size.x
+    // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let px = panel.position + vec2<f32>(inst.pos_px.x,0.0) + (position + vec2<f32>(0.5,0.0)) * inst.size_px;
-    debug_buffer.floats[inst_id] = inst.size_px;
+    let container = panel.size;
+    // Estimate line height in pixels from font metrics
+    let units = max(f32(des.units_per_em), 1.0);
+    let line_height_em = f32(des.ascent - des.descent + des.line_gap);
+    let line_height_px = line_height_em / units * inst.size_px;
+    // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
+    let local_x = inst.pos_px.x;
+    let wrap_width = max(container.x, 1.0);
+    let base_line = floor(local_x / wrap_width);
+    let x_in_line = local_x - base_line * wrap_width;
+    let overflow = (x_in_line + inst.size_px) > wrap_width;
+    let line = base_line + select(0.0, 1.0, overflow);
+    let wrapped_x = select(x_in_line, 0.0, overflow);
+    let wrapped_y = inst.pos_px.y + line * line_height_px;
+    // Visibility in container Y
+    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
+    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y) + position * inst.size_px;
+    debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
     
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
     let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
     let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
+    out.vis = visible;
     return out;
 }
 
@@ -197,6 +217,9 @@ const GLYPH_SIZE: u32 = 64u;
 const ATLAS_SIZE: vec2<f32> = vec2<f32>(4096.0, 4096.0);
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if (in.vis < 0.5) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;
     let glyph_uv = in.uv + pixel_offset;
 
@@ -212,12 +235,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
 
     // 更锐利的边缘
-    let edge_width = 0.04; // 更小的边缘宽度
-    //let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
+    let edge_width = 0.12; // 更小的边缘宽度
+    let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
 
     // 或者使用阶梯函数获得完全锐利的边缘
-    let alpha = select(0.0, 1.0, sdf_value > 0.5);
+    //let alpha = select(0.0, 1.0, sdf_value > 0.5);
     
 
-    return vec4<f32>(0.0, 0.0, 0.0,alpha);
+    return vec4<f32>(1.0, 0.7, 0.5,alpha);
 }

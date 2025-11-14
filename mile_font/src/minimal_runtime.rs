@@ -9,11 +9,11 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder};
 use wgpu::{DepthBiasState, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, util::DeviceExt};
 
 use crate::{
-    event::{BatchFontEntry, BatchRenderFont},
+    event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
     prelude::{GpuChar, GpuText},
 };
 
-type RegisterEvent = ModEventStream<(BatchFontEntry, BatchRenderFont)>;
+type RegisterEvent = ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont)>;
 
 pub struct ComputeBufferCache {}
 
@@ -466,6 +466,9 @@ impl MiniFontRuntime {
         // Build instances by walking each GpuText; compute pen_x using glyph metrics scaled to pixels.
         let mut out: Vec<GpuInstance> = Vec::new();
         for (t_idx, t) in self.out_gpu_texts.iter().enumerate() {
+            if self.text_removed.get(t_idx).copied().unwrap_or(false) {
+                continue;
+            }
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let text_index_u32 = t_idx as u32;
@@ -814,6 +817,10 @@ pub struct MiniFontRuntime {
     // logical output buffers; in a full integration these would be uploaded to GPU buffers
     pub out_gpu_chars: Vec<GpuChar>,
     pub out_gpu_texts: Vec<GpuText>,
+    // track which texts belong to which panel to support O(k) removals
+    panel_text_indices: HashMap<u32, Vec<usize>>,
+    // logical deletion flags for out_gpu_texts (keeps indices stable)
+    text_removed: Vec<bool>,
 
     // dynamic text storage for frequent updates
     text_allocs: HashMap<(u32, Arc<str>), TextAlloc>, // key: (panel_id, font_path)
@@ -845,6 +852,8 @@ impl MiniFontRuntime {
             register: RegisterEvent::new(global_event_bus()),
             glyph_index: HashMap::new(),
             fonts: HashMap::new(),
+            panel_text_indices: HashMap::new(),
+            text_removed: Vec::new(),
             cpu_glyph_descs: Vec::new(),
             cpu_glyph_metrics: Vec::new(),
             out_gpu_chars: Vec::new(),
@@ -1330,16 +1339,41 @@ impl MiniFontRuntime {
     /// - For BatchFontEntry: group by font, dedup chars, register into glyph_index.
     /// - For BatchRenderFont: map chars to glyph indices, emit a contiguous GpuChar range and one GpuText.
     pub fn poll_global_event(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-    
-        let (batch_entry, batch_render) = self.register.poll();
-        if batch_entry.is_empty() && batch_render.is_empty() {
+        let (batch_entry, batch_render, batch_remove) = self.register.poll();
+        if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {
             return;
         }
-        println!(
-            "{} : {}",
-            batch_entry.len(),
-            batch_render.len()
-        );
+        println!("events => add_glyph:{} render_text:{} remove_text:{}",
+            batch_entry.len(), batch_render.len(), batch_remove.len());
+
+        // 0) Handle RemoveRenderFont first: clear per-panel texts/allocations (keep SDF/desc)
+        if !batch_remove.is_empty() {
+            for e in &batch_remove {
+                let pid = e.parent.0;
+                // 1) Mark texts owned by this panel as removed (O(k)), indices保持稳定
+                if let Some(list) = self.panel_text_indices.remove(&pid) {
+                    for idx in list {
+                        if idx < self.text_removed.len() {
+                            self.text_removed[idx] = true;
+                        }
+                    }
+                }
+                // 2) 释放该 panel 的动态分配（不影响 SDF 纹理）
+                let keys_to_remove: Vec<(u32, Arc<str>)> = self
+                    .text_allocs
+                    .keys()
+                    .filter(|(panel_id, _)| *panel_id == pid)
+                    .cloned()
+                    .collect();
+                for key in keys_to_remove {
+                    if let Some(alloc) = self.text_allocs.remove(&key) {
+                        self.free_range(alloc.start, alloc.cap);
+                    }
+                }
+            }
+            // 3) 实例缓冲重建
+            self.upload_instances_to_gpu(queue);
+        }
 
                 // 1) Handle BatchFontEntry
         {
@@ -1460,7 +1494,7 @@ impl MiniFontRuntime {
                 font_size: e.font_style.font_size as f32,
                 size: 256,
                 color: e.font_style.font_color,
-                position: [64.0, 64.0],
+                position: [0.0, 0.0],
             };
             // Debug print
             println!(
@@ -1475,7 +1509,10 @@ impl MiniFontRuntime {
                 &e.text,
                 e.parent.0
             );
+            let new_index = self.out_gpu_texts.len();
             self.out_gpu_texts.push(gpu_text);
+            self.text_removed.push(false);
+            self.panel_text_indices.entry(e.parent.0).or_default().push(new_index);
         }
         // After texts/chars updated, upload instance data for rendering
         self.upload_instances_to_gpu(queue);

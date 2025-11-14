@@ -106,7 +106,7 @@ pub struct CpuText{
 #[derive(Debug)]
 pub struct FontStyle {
     pub font_size: u32,
-    pub font_file_path: &'static str,
+    pub font_file_path: Arc<str>,
     pub font_color: [f32; 4],
     pub font_weight: u32,
     pub font_line_height: u32,

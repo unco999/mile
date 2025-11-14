@@ -349,26 +349,7 @@ impl ApplicationHandler<AppEvent> for App {
                 if matches!(event.state, ElementState::Pressed)
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Space))
                 {
-                    for i in 2..24 {
-                    global_event_bus().publish(BatchFontEntry {
-                        text: Arc::from("道法"),
-                        // Prefer repository path under tf/
-                        font_file_path: Arc::from("tf/BIZUDPGothic-Regular.ttf"),
-                    });
-                    global_event_bus().publish(BatchRenderFont {
-                        text: Arc::from("道法"),
-                        font_file_path: Arc::from("tf/BIZUDPGothic-Regular.ttf"),
-                        parent: PanelId(i),
-                        font_style: Arc::from(FontStyle{
-                            font_size: 22,
-                            font_file_path: "tf/BIZUDPGothic-Regular.ttf",
-                            font_color: [0.0,0.0,0.0,1.0],
-                            font_weight: 12,
-                            font_line_height: 23,
-                        }),
-                    });
-                    }
-            
+                        
                 }
                 if matches!(event.state, ElementState::Pressed)
                     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
