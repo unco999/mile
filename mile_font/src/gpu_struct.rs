@@ -1,6 +1,6 @@
 // Cargo.toml: bytemuck = "1", bitflags = "2", ahash = "0.8"
 
-use std::{collections::HashMap, fmt::Error, marker::PhantomData};
+use std::{collections::HashMap, fmt::Error, marker::PhantomData, sync::Arc};
 
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
@@ -33,6 +33,7 @@ bitflags! {
     }
 }
 
+use mile_api::prelude::_ty::PanelId;
 /**
  * 每个instance 负责一个字构造
  * 每个面板一个字 最主要的是动态大小的这个偏移索引
@@ -67,6 +68,7 @@ impl GpuOffsetRange {
 
 #[derive(Clone)]
 pub struct SdfInfo {
+    char_with_texture:u32,
     texture_x: u32,
     texture_y: u32,
 }
@@ -91,169 +93,46 @@ pub struct FontSDFIndexDynamicArea<'a> {
     pub valid_size: usize,
 }
 
-pub enum TextError {
-    GlyphNotFound { character: char },
-}
-impl<'a> FontSDFIndexDynamicArea<'a> {
-    // 创建新的 FontSDFIndexDynamicArea
-    pub fn new(hot_cache_capacity: usize) -> Self {
-        Self {
-            movable_type_printing: HashMap::new(),
-            area: vec![],
-            glyph_buffer: HashMap::with_capacity(hot_cache_capacity),
-            persistent_cache: HashMap::new(),
-            head_idx: 0,
-            tail_idx: 0,
-            hot_cache_capacity,
-            valid_size: 0,
-        }
-    }
 
-    /**
-     * 他发一个字符串序列过来  然后我们来找到字符对应在gpu sdf里面的位置
-     * 然后把这个变成一个新的range  range指定的位置是buffer
-     */
-    fn font_text_entry(&mut self, str: &'a str) -> Result<Vec<SdfInfo>, TextError> {
-        let mut font_sdf_info: Vec<SdfInfo> = Vec::new();
-        for c in str.chars() {
-            let item =
-                self.movable_type_printing
-                    .get(&c)
-                    .ok_or_else(|| TextError::GlyphNotFound {
-                        character: c.into(),
-                    })?;
-            font_sdf_info.push(item.clone());
-        }
-        Ok(font_sdf_info)
-    }
-
-    fn batch(&mut self, str: &'a str) -> Result<(), TextError> {
-        let sdf_info = self.font_text_entry(str)?;
-        for info in sdf_info {}
-
-        Ok(())
-    }
-
-    /**
-     * 插入字符在sdf里面的位置
-     */
-    pub fn font_record(&mut self, char: &char, x: u32, y: u32) {
-        self.movable_type_printing.insert(
-            *char,
-            SdfInfo {
-                texture_x: x,
-                texture_y: y,
-            },
-        );
-    }
-
-    // 更新缓冲区并处理热缓存区满时的数据迁移
-    pub fn update_glyph_buffer(&mut self, new_glyphs: &[GpuGlyphInfo<'a>]) {
-        for glyph in new_glyphs {
-            if self.valid_size >= self.hot_cache_capacity {
-                // 缓存区满时，将长期有效的记录移到持久缓存
-                self.move_to_persistent_cache();
-                self.clear_hot_cache(); // 清空热缓存区
-            }
-
-            // 插入新数据到热缓存区，避免克隆
-            self.glyph_buffer.insert(glyph.offset_range, *glyph); // 直接插入引用，不需要克隆
-            self.tail_idx = (self.tail_idx + 1) % self.hot_cache_capacity;
-            self.valid_size += 1;
-        }
-    }
-
-    // 将长期有效的字形信息移动到持久缓存区
-    fn move_to_persistent_cache(&mut self) {
-        let mut keys_to_move = Vec::new();
-
-        // 遍历 `glyph_buffer`，找到需要迁移到持久缓存区的数据
-        for (key, glyph) in &self.glyph_buffer {
-            if glyph.is_persistent {
-                // 将长期有效的数据插入持久缓存区
-                self.persistent_cache.insert(*key, *glyph);
-                keys_to_move.push(*key);
-            }
-        }
-
-        // 从热缓存区移除已迁移的数据
-        for key in keys_to_move {
-            self.glyph_buffer.remove(&key);
-        }
-
-        // 更新有效数据大小
-        self.valid_size = self.glyph_buffer.len();
-    }
-
-    // 清空热缓存区
-    fn clear_hot_cache(&mut self) {
-        self.glyph_buffer.clear(); // 清空热缓存区
-        self.head_idx = 0; // 重置头部索引
-        self.tail_idx = 0; // 重置尾部索引
-        self.valid_size = 0; // 清空有效数据大小
-    }
-
-    // 获取持久缓存的字形
-    pub fn get_persistent_cache(&self) -> Vec<GpuGlyphInfo<'a>> {
-        self.persistent_cache.values().cloned().collect::<Vec<_>>() // 将持久缓存区的内容转换为 `Vec`
-    }
+#[derive(Debug)]
+pub struct CpuText{
+    //原始数据
+    pub raw:Arc<str>,
+    pub slice:Vec<GpuChar>,
+    pub link_panel_quad:PanelId
 }
 
-// ---- GPU 端可直接写入的样式（全部数值化）----
+/**字体style */
+#[derive(Debug)]
+pub struct FontStyle {
+    pub font_size: u32,
+    pub font_file_path: &'static str,
+    pub font_color: [f32; 4],
+    pub font_weight: u32,
+    pub font_line_height: u32,
+}
+
+
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-pub struct FontStyleGpu {
-    // 16 bytes
-    pub color: [f32; 4], // RGBA
-    // 16 bytes
-    pub size_px: f32,        // 字号
-    pub line_height_px: f32, // 行高
-    pub weight: u32,         // 100..900
-    pub family_id: u32,      // 字体族 ID
-
-    // 16 bytes
-    pub file_id: u32,         // 字体文件 ID
-    pub style_kind: u32,      // FontStyleKind as u32
-    pub text_align: u32,      // TextAlign as u32
-    pub decoration_bits: u32, // TextDecoration bits
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable,Debug)]
+pub struct GpuChar{
+    pub char_index:u32,
+    pub gpu_text_index:u32,
+    pub panel_index:u32,
+    // relative order inside its owning text (0-based)
+    pub self_index:u32,
+    // per-glyph metrics (TTF units)
+    pub glyph_advance_width: u32,
+    pub glyph_left_side_bearing: i32,
+    pub glyph_ver_advance: u32,
+    pub glyph_ver_side_bearing: i32,
 }
-// 总计 48 字节（按 16 对齐，适合 std140/std430）
-
-// ---- 每个字形一条实例数据 ----
-
-// 72 字节，按 16 对齐（std430 ok）
-
-// ---- 文本块到字形区段的映射 ----
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Zeroable, Pod)]
-pub struct TextGpu {
-    pub glyph_count: u32,     // 字形数量
-    pub style_index: u32,     // 指向 FontStyleGpu 数组的索引
-    pub wrap_width: f32,      // 换行宽度（像素）
-    pub bounds_min: [f32; 2], // AABB min（用于裁剪/对齐）
-    pub bounds_max: [f32; 2], // AABB max
-}
-// 48 字节
-
-#[test]
-fn test() {
-    let mut dynamic_area = FontSDFIndexDynamicArea::new(128);
-    dynamic_area.update_glyph_buffer(&[
-        GpuGlyphInfo {
-            is_persistent: true,
-            offset_range: &GpuOffsetRange {
-                offset_start: 0,
-                end_start: 128,
-            },
-        },
-        GpuGlyphInfo {
-            is_persistent: true,
-            offset_range: &GpuOffsetRange {
-                offset_start: 128,
-                end_start: 256,
-            },
-        },
-    ]);
-    dynamic_area.move_to_persistent_cache();
-    println!("当前的字形索引情况 {:?}", dynamic_area.persistent_cache)
+pub struct GpuText{
+    pub sdf_char_index_start_offset:u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
+    pub sdf_char_index_end_offset:u32,  //这个实际上是 GpuChar这个gpu结构体的索引
+    pub font_size:f32,
+    pub size:u32,
+    pub color:[f32;4],
+    // text origin (pixels or logical units depending on pipeline)
+    pub position:[f32;2],
 }

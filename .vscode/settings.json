@@ -1,4 +1,10 @@
 {
+  "chatgpt.config": {
+    "preferred_auth_method":"apikey",
+    "model":"gpt-5.1-codex",
+    "model_reasoning_effort":"high",
+    "wire_api":"responses"
+  },
     "chatgpt.openOnStartup": true,
     "editor.inlineSuggest.enabled": true,
     "continue.enableInlineCompletions": true,

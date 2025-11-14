@@ -117,6 +117,7 @@ impl GpuDebug {
         }
     }
 
+
     pub fn create_buffer(&mut self, device: &wgpu::Device) {
         let out = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Shared State"),
@@ -126,6 +127,24 @@ impl GpuDebug {
             contents: bytemuck::bytes_of(&self.structs),
         });
         self.buffer = Some(out);
+    }
+
+    pub fn raw_debug(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let name = self.import_name;
+        DownloadBuffer::read_buffer(
+            device,
+            queue,
+            &self.buffer.as_ref().unwrap().slice(..),
+            move |e| {
+                if let Ok(downloadBuffer) = e {
+                    let bytes = downloadBuffer;
+                    let data: &[GpuDebugReadCallBack] = bytemuck::cast_slice(&bytes);
+                    for data in data {
+                        GpuDebugReadCallBack::print(name, data);
+                    }
+                }
+            },
+        );
     }
 
     pub fn debug(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
