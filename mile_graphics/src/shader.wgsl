@@ -84,21 +84,25 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // 深色基底（海洋）
     var color = vec3<f32>(0.01, 0.02, 0.035);
 
-    // 多重正弦海浪（时间驱动）
-    let w1 = sin(uv.x * 6.0 + t * 1.2);
-    let w2 = sin(uv.y * 8.0 - t * 1.0);
-    let w3 = sin((uv.x * 1.2 + uv.y * 1.1) * 5.0 + t * 0.8);
-    var wave = (w1 * 0.5 + w2 * 0.5 + w3 * 0.5) / 1.5;
+    // 多重正弦海浪（时间驱动，增加小波浪与增幅）
+    let w1 = sin(uv.x * 6.0 + t * 1.6);
+    let w2 = sin(uv.y * 9.0 - t * 1.3);
+    let w3 = sin((uv.x * 1.3 + uv.y * 1.1) * 7.0 + t * 1.0);
+    let w4 = sin((uv.x * 2.0 - uv.y * 1.7) * 13.0 + t * 1.8);
+    let w5 = sin((uv.x * 3.3 + uv.y * 2.1) * 21.0 - t * 2.4);
+    var wave = (w1 * 0.7 + w2 * 0.7 + w3 * 0.5 + w4 * 0.35 + w5 * 0.25) / 2.5;
+    // 轻微非线性，增强层次
+    wave += 0.15 * sin(wave * 6.28318 + t * 0.8);
 
     // 鼠标涟漪
     let d = length(uv - mouse_uv);
-    let ripple = sin(12.0 * d - t * 4.0) * exp(-d * 3.0);
-    wave += ripple * 0.6;
+    let ripple = sin(16.0 * d - t * 5.0) * exp(-d * 4.0);
+    wave += ripple * 0.8;
 
     // 波峰（泡沫/霓虹高光）
-    let crest = smoothstep(0.55, 0.9, (wave + 1.0) * 0.5);
-    let neon = hsv2rgb(vec3<f32>(fract(t * 0.05 + crest * 0.15), 0.9, 1.0));
-    color += neon * crest * 0.85;
+    let crest = smoothstep(0.50, 0.82, (wave * 1.3 + 1.0) * 0.5);
+    let neon = hsv2rgb(vec3<f32>(fract(t * 0.06 + crest * 0.18), 0.95, 1.0));
+    color += neon * crest * 1.05;
 
     // 鼠标高亮（霓虹）
     let mouse_glow = pow(max(0.0, 0.5 - d), 2.0);
@@ -107,7 +111,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
     // 微弱的波谷冷色
     let trough = smoothstep(0.0, 0.3, (wave + 1.0) * 0.5);
-    color += vec3<f32>(0.05, 0.08, 0.12) * (1.0 - trough) * 0.2;
+    color += vec3<f32>(0.05, 0.08, 0.12) * (1.0 - trough) * 0.15;
 
     // 暗角
     let vignette = smoothstep(1.4, 0.2, length(uv));
