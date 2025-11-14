@@ -236,10 +236,13 @@ impl ApplicationHandler<AppEvent> for App {
             .expect("failed to create window");
 
         let window = Arc::new(window);
-        let ctx = WGPUContext::new(window.clone());
-        let global_uniform = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
-        self.global_uniform = Some(global_uniform.clone());
+        let mut ctx = WGPUContext::new(window.clone());
 
+        let global_uniform = Rc::new(CpuGlobalUniform::new(&ctx.device, &window));
+        // Important: adopt the shared GlobalUniform into the background before storing ctx
+        ctx.adopt_global_uniform(&global_uniform.get_buffer());
+
+        self.global_uniform = Some(global_uniform.clone());
         let kennel = Arc::new(RefCell::new(Kennel::new(
             &ctx.device,
             &ctx.queue,
@@ -269,6 +272,7 @@ impl ApplicationHandler<AppEvent> for App {
         self.mui_runtime = Some(Arc::new(RefCell::new(runtime)));
         self.mile_font = Some(Arc::new(RefCell::new(MiniFontRuntime::new())));
         self.kennel = Some(kennel);
+        ctx.adopt_global_uniform(&global_uniform.get_buffer());
 
         self.build_resources();
     }

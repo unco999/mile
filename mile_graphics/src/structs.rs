@@ -118,12 +118,6 @@ pub struct Vertex {
     pub color: [f32; 3],
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct BackGroundUnitform {
-    pub time: f32,
-}
-
 #[derive(Clone)]
 
 struct AppState {
@@ -353,12 +347,6 @@ impl WGPUContext {
                 }),
                 ..Default::default()
             });
-            let time_sec = self.app_state.update_time();
-            self.queue.write_buffer(
-                &self.global_uniform_buffer,
-                0,
-                bytemuck::cast_slice(&[time_sec]),
-            );
 
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, &self.bindgroup, &[]); // <-- 绑定 uniform
@@ -391,7 +379,7 @@ impl WGPUContext {
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
         });
 
-        // Uniform layout
+        // Uniform layout (bind global uniform as storage read-only)
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Uniform Bind Group Layout"),
@@ -399,24 +387,20 @@ impl WGPUContext {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            std::num::NonZeroU64::new(
-                                std::mem::size_of::<BackGroundUnitform>() as u64
-                            )
-                            .unwrap(),
-                        ),
+                        min_binding_size: None,
                     },
                     count: None,
                 }],
             });
 
-        // Uniform buffer
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Background Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[BackGroundUnitform { time: 0.0 }]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        // Fallback storage buffer (zeroed); adopt external GlobalUniform later.
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Background GlobalUniform Fallback"),
+            size: 256,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -495,5 +479,28 @@ impl WGPUContext {
                 },
             ],
         }
+    }
+}
+
+impl WGPUContext {
+    /// Replace background bind group to use a shared GlobalUniform buffer.
+    pub fn adopt_global_uniform(&mut self, buffer: &wgpu::Buffer) {
+        // Recreate bind group with external buffer
+        let layout = self.render_pipeline.get_bind_group_layout(0);
+        self.bindgroup = self
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Uniform Bind Group (adopt)"),
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                }],
+            });
+        self.global_uniform_buffer = buffer.clone();
     }
 }

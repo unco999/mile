@@ -212,44 +212,6 @@ pub struct GlobalUniform {
     pub pad_extra: [f32; 2], // 16 bytes
 }
 
-pub struct CpuGlobalUniform {
-    inner: Rc<RefCell<GlobalUniform>>,
-    buffer: wgpu::Buffer,
-}
-
-impl CpuGlobalUniform {
-    pub fn get_struct(&self) -> Rc<RefCell<GlobalUniform>> {
-        return self.inner.clone();
-    }
-
-    pub fn get_buffer(&self) -> wgpu::Buffer {
-        return self.buffer.clone();
-    }
-
-    pub fn new(device: &wgpu::Device, window: &winit::window::Window) -> Self {
-        let size = window.inner_size(); // 返回 PhysicalSize<u32>
-        let width = size.width;
-        let height = size.height;
-
-        println!("目前的gpu w:{} h:{}", width, height);
-
-        let mut global_uniform = GlobalUniform::default();
-        global_uniform.screen_size = [width, height];
-
-        let global_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("GlobalUniformBuffer"),
-            contents: bytemuck::bytes_of(&global_uniform),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-        });
-        Self {
-            inner: Rc::new(RefCell::new(global_uniform)),
-            buffer: global_buffer,
-        }
-    }
-}
-
 /**
  * 这里是一个模块使用的 des的集合情况
  * 用于响应事件时 根据id或者其他索引来获取计算结果值所用的存储结构

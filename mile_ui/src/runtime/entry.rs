@@ -90,6 +90,7 @@ pub struct GlobalUniformState {
 
 impl GlobalUniformState {
     pub fn new(device: &Device) -> Self {
+        println!("完全新建了 state");
         let cpu = GlobalUniform::default();
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("ui::global-uniform"),
