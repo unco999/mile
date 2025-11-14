@@ -540,7 +540,6 @@ impl MuiRuntime {
     pub fn write_panel(&self, queue: &Queue, index: u32, panel: &Panel) {
         let offset = Self::panel_offset(index);
         queue.write_buffer(&self.buffers.instance, offset, bytes_of(panel));
-        self.compute.borrow_mut().mark_interaction_dirty();
     }
 
     pub fn write_panels(&self, queue: &Queue, start_index: u32, panels: &[Panel]) {
@@ -549,7 +548,6 @@ impl MuiRuntime {
         }
         let offset = Self::panel_offset(start_index);
         queue.write_buffer(&self.buffers.instance, offset, cast_slice(panels));
-        self.compute.borrow_mut().mark_interaction_dirty();
     }
 
     pub fn write_snapshot_panel(&self, queue: &Queue, index: u32, panel: &Panel) {
@@ -724,7 +722,7 @@ impl MuiRuntime {
                     if needs_update {
                         self.panel_cache.insert(key.clone(), descriptor.clone());
                         set_panel_active_state(key.panel_id, descriptor.display_state);
-                        self.panel_instances_dirty = true;
+                        // self.panel_instances_dirty = true;
                     }
 
                     if !pending.is_empty() {
@@ -737,7 +735,7 @@ impl MuiRuntime {
                 None => {
                     if self.panel_cache.remove(key).is_some() {
                         clear_panel_relations(key.panel_id);
-                        self.panel_instances_dirty = true;
+                        // self.panel_instances_dirty = true;
                     }
                 }
             }
@@ -1082,7 +1080,8 @@ impl MuiRuntime {
             .iter()
             .position(|panel| panel.id == panel_key.panel_id)
         else {
-            self.panel_instances_dirty = true;
+            // The panel hasn't been uploaded yet; keep the cached shader id and
+            // let the normal upload path pick it up without forcing a full rebuild.
             return;
         };
 
@@ -1106,7 +1105,7 @@ impl MuiRuntime {
 
         let buffer_offset = Self::panel_offset(index as u32) + field_offset;
         self.write_panel_bytes(queue, buffer_offset, bytes_of(&value));
-        self.compute.borrow_mut().mark_interaction_dirty();
+        // self.compute.borrow_mut().mark_interaction_dirty();
     }
 
     pub fn panel_instances(&self) -> &[Panel] {

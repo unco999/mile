@@ -1923,28 +1923,22 @@ fn demo_panel() -> Result<(), DbError> {
                     rel.container_with::<TestCustomData>(Box::leak(parent.into_boxed_str()));
                     //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
                     let state = state
-                     .events()
-                     .on_event(UiEventKind::Hover, |flow| {
-                            flow.position_anim()
-                                .from_current()
-                                .offset(vec2(0.0, -14.0))
-                                .duration(0.18)
-                                .easing(Easing::BackOut)
-                                .push(flow);
-                        })
-                        .on_event(UiEventKind::Out, |flow| {
-                            flow.position_anim()
-                                .from_current()
-                                .to_snapshot()
-                                .duration(0.22)
-                                .easing(Easing::BackIn)
-                                .push(flow);
-                        })
-                        .finish()
                         .size(vec2(50.0, 50.0))
                         .z_index(7)
-                        .texture("head (1).png")
-                        .size_with_image();
+                        .events()
+                        .on_event(UiEventKind::Click, |flow| {
+                            flow.request_fragment_shader(|e: &ShaderScope| {
+                                let time = cv("time");
+                                // 青色偏紫的霓虹感颜色
+                                wvec4(
+                                    sin(time),       // R
+                                    0.0,       // G
+                                    0.0, // B
+                                    1.0,           // A
+                                )
+                            });
+                        })
+                        .finish();
                     state
                 },
             )

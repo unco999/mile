@@ -548,14 +548,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         input.instance_size,
     );
     let kennel_color = evaluate_render_layer(input.fragment_shader_id, render_inputs);
-
+    
     var final_color = base_color;
     if any(kennel_color != vec4<f32>(0.0)) {
         final_color = kennel_color;
     }
-    if(global_uniform.frame < 3){
-        final_color.w = 0.0;
-        return final_color;
-    }
+
     return final_color;
 }
