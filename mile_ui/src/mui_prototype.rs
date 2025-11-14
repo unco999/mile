@@ -20,6 +20,10 @@ use mile_api::{
     global::{global_db, global_event_bus},
     prelude::_ty::PanelId,
 };
+use mile_font::{
+    event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
+    prelude::FontStyle,
+};
 use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
     core::{
@@ -226,6 +230,8 @@ pub struct UiState(pub u32);
 /// Interaction types supported by the prototype.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UiEventKind {
+    /// Panel 初始化时调用（构建完成后立即触发一次）
+    Init,
     Click,
     Drag,
     Hover,
@@ -642,6 +648,7 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
             let state_copy = state;
             let scope_copy = scope;
             match event {
+                UiEventKind::Init => { /* init is triggered programmatically once; no runtime registry */ }
                 UiEventKind::Click => registry.register_click(scope_copy, move |_panel_id| {
                     trigger_event_internal::<TPayload>(
                         &key_clone,
@@ -739,6 +746,49 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             transitions,
             override_state: None,
         }
+    }
+
+    /// Convenience: publish font events to build text for this panel.
+    /// - text: 文本
+    /// - font_path: 字体文件路径（建议 tf/...）
+    /// - font_size: 像素大小
+    /// - color: RGBA
+    /// - weight/line_height: 预留参数（直接传入 FontStyle）
+    pub fn text(
+        &self,
+        text: &str,
+        font_path: Arc<str>,
+        font_size: u32,
+        color: [f32; 4],
+        weight: u32,
+        line_height: u32,
+    ) {
+        let pid = PanelId(self.args.panel_key.panel_id);
+        // Always clear previous texts for this panel before queuing new one
+        global_event_bus().publish(RemoveRenderFont { parent: pid });
+        let style = FontStyle {
+            font_size,
+            font_file_path: font_path.clone(),
+            font_color: color,
+            font_weight: weight,
+            font_line_height: line_height,
+        };
+        global_event_bus().publish(BatchFontEntry {
+            text: Arc::from(text.to_string()),
+            font_file_path:font_path.clone(),
+        });
+        global_event_bus().publish(BatchRenderFont {
+            text: Arc::from(text.to_string()),
+            font_file_path: font_path.clone(),
+            parent: pid,
+            font_style: Arc::new(style),
+        });
+    }
+
+    /// 清空当前面板的文字渲染（不影响 SDF/字体缓存）
+    pub fn clear_texts(&self) {
+        let pid = PanelId(self.args.panel_key.panel_id);
+        global_event_bus().publish(mile_font::event::RemoveRenderFont { parent: pid });
     }
 
     pub fn payload(&mut self) -> &mut TPayload {
@@ -1596,6 +1646,13 @@ pub struct InteractionStageBuilder<TPayload: PanelPayload> {
 }
 
 impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
+    /// 注册面板初始化回调（构建完成后立即触发一次）
+    pub fn on_init<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::Init, handler)
+    }
     pub fn on_event<F>(mut self, event: UiEventKind, handler: F) -> Self
     where
         F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
@@ -1633,6 +1690,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             .chain(self.stage.transitions.keys())
         {
             interaction_mask |= match kind {
+                UiEventKind::Init => 0,
                 UiEventKind::Click => PanelInteraction::CLICKABLE.bits(),
                 UiEventKind::Drag => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
@@ -1657,6 +1715,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             .chain(self.stage.transitions.keys())
         {
             interaction_mask |= match kind {
+                UiEventKind::Init => 0,
                 UiEventKind::Click => PanelInteraction::CLICKABLE.bits(),
                 UiEventKind::Drag => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
@@ -1739,6 +1798,9 @@ fn build_stateful<TPayload: PanelPayload>(
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
 
+    // 初始化阶段触发一次 Init 事件（用于面板创建时的初始化逻辑，例如字体注册）
+    trigger_event_internal::<TPayload>(&panel_key, Some(default), UiEventKind::Init);
+
     Ok(PanelRuntimeHandle { key: panel_key })
 }
 
@@ -1792,6 +1854,9 @@ fn build_stateless<TPayload: PanelPayload>(
     if let Some(rel_def) = relations {
         register_panel_relations(panel_key.panel_id, state_id, rel_def);
     }
+
+    // 初始化阶段触发一次 Init 事件
+    trigger_event_internal::<TPayload>(&panel_key, Some(state_id), UiEventKind::Init);
 
     Ok(PanelRuntimeHandle { key: panel_key })
 }
@@ -1867,83 +1932,101 @@ fn demo_panel() -> Result<(), DbError> {
                     radius: 0.0,
                 })
                 .events()
-                .on_event(UiEventKind::Drag, |flow| {
-                    let data = flow.payload();
-                    data.count += 1;
-                    println!("data current count {}", data.count);
+                .on_init(|flow|{
+                    flow.text(
+                        "枯枝探新芽，
+                              细雨吻旧窗。
+                              时光轻驻足，
+                              春意悄然藏。", 
+                        Arc::from("tf/STXIHEI.ttf"),
+                        60, 
+                        [1.0,1.0,1.0,1.0], 
+                        1, 
+                        1
+                    );
+                })
+                .on_event(UiEventKind::Click, |flow| {
+                    flow.text(
+                        "枯枝悄悄抽出新芽，细雨温柔地敲打着旧窗。时光仿佛在这一刻驻足，冬日的萧瑟悄然褪去，泥土的芬芳在空气中弥漫。我听见冰凌融化的轻响，看见屋檐下蜘蛛编织新的网。春意就这样无声无息地，在每道裂缝里生根发芽，把积蓄一季的力量，化作枝头第一抹鹅黄。", 
+                        Arc::from("tf/STXIHEI.ttf"),
+                        60, 
+                        [1.0,1.0,1.0,1.0], 
+                        1, 
+                        1
+                    );
                 })
                 .finish();
             state
         })
         .build()?;
 
-    //这是子元素  我们让他自己选择主容器进入
-    //这个不同于以往的传统UI设计 因为一些特殊原因(Gpu运算亲和)
-    for idx in 0..36 {
-        let uuid = format!("demo_entry_{idx}");
-        let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
-            .default_state(UiState(0))
-            .state(
-                UiState(0),
-                move |mut state: StateStageBuilder<TestCustomData>| {
-                    let rel = state.rel();
-                    rel.container_with::<DataTest>("test_panel");
-                    //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
-                    let state = state
-                        .size(vec2(80.0, 50.0))
-                        .container_style()
-                        .layout(RelLayoutKind::Free)
-                        .origin(vec2(10.0, 10.0))
-                        .size_container(vec2(80.0, 50.0))
-                        .finish()
-                        .z_index(6)
-                        .color(vec4(0.6, 0.3, 0.5, 1.0))
-                        .border(BorderStyle {
-                            color: [1.0, 1.0, 1.0, 0.66],
-                            width: 3.0,
-                            radius: 0.0,
-                        });
+    // //这是子元素  我们让他自己选择主容器进入
+    // //这个不同于以往的传统UI设计 因为一些特殊原因(Gpu运算亲和)
+    // for idx in 0..36 {
+    //     let uuid = format!("demo_entry_{idx}");
+    //     let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
+    //         .default_state(UiState(0))
+    //         .state(
+    //             UiState(0),
+    //             move |mut state: StateStageBuilder<TestCustomData>| {
+    //                 let rel = state.rel();
+    //                 rel.container_with::<DataTest>("test_panel");
+    //                 //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
+    //                 let state = state
+    //                     .size(vec2(80.0, 50.0))
+    //                     .container_style()
+    //                     .layout(RelLayoutKind::Free)
+    //                     .origin(vec2(10.0, 10.0))
+    //                     .size_container(vec2(80.0, 50.0))
+    //                     .finish()
+    //                     .z_index(6)
+    //                     .color(vec4(0.6, 0.3, 0.5, 1.0))
+    //                     .border(BorderStyle {
+    //                         color: [1.0, 1.0, 1.0, 0.66],
+    //                         width: 3.0,
+    //                         radius: 0.0,
+    //                     });
 
-                    state
-                },
-            )
-            .build()?;
-    }
+    //                 state
+    //             },
+    //         )
+    //         .build()?;
+    // }
 
-    for idx in 1..5 {
-        let parent = format!("demo_entry_{idx}");
-        let self_id = format!("demo_entry_{idx}_item");
-        let texture = format!("../texture/head ({}).png", idx % 10);
-        let panel = Mui::<TestCustomData>::new(Box::leak(self_id.into_boxed_str()))?
-            .default_state(UiState(0))
-            .state(
-                UiState(0),
-                move |mut state: StateStageBuilder<TestCustomData>| {
-                    let rel = state.rel();
-                    rel.container_with::<TestCustomData>(Box::leak(parent.into_boxed_str()));
-                    //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
-                    let state = state
-                        .size(vec2(50.0, 50.0))
-                        .z_index(7)
-                        .events()
-                        .on_event(UiEventKind::Click, |flow| {
-                            flow.request_fragment_shader(|e: &ShaderScope| {
-                                let time = cv("time");
-                                // 青色偏紫的霓虹感颜色
-                                wvec4(
-                                    sin(time),       // R
-                                    0.0,       // G
-                                    0.0, // B
-                                    1.0,           // A
-                                )
-                            });
-                        })
-                        .finish();
-                    state
-                },
-            )
-            .build()?;
-    }
+    // for idx in 1..5 {
+    //     let parent = format!("demo_entry_{idx}");
+    //     let self_id = format!("demo_entry_{idx}_item");
+    //     let texture = format!("../texture/head ({}).png", idx % 10);
+    //     let panel = Mui::<TestCustomData>::new(Box::leak(self_id.into_boxed_str()))?
+    //         .default_state(UiState(0))
+    //         .state(
+    //             UiState(0),
+    //             move |mut state: StateStageBuilder<TestCustomData>| {
+    //                 let rel = state.rel();
+    //                 rel.container_with::<TestCustomData>(Box::leak(parent.into_boxed_str()));
+    //                 //这里其实抽象了  只要是DataTest这个绑定类型 并且标签为test_panel 我们就进入他的容器
+    //                 let state = state
+    //                     .size(vec2(50.0, 50.0))
+    //                     .z_index(7)
+    //                     .events()
+    //                     .on_event(UiEventKind::Click, |flow| {
+    //                         flow.request_fragment_shader(|e: &ShaderScope| {
+    //                             let time = cv("time");
+    //                             // 青色偏紫的霓虹感颜色
+    //                             wvec4(
+    //                                 sin(time),       // R
+    //                                 0.0,       // G
+    //                                 0.0, // B
+    //                                 1.0,           // A
+    //                             )
+    //                         });
+    //                     })
+    //                     .finish();
+    //                 state
+    //             },
+    //         )
+    //         .build()?;
+    // }
     Ok(())
 }
 
