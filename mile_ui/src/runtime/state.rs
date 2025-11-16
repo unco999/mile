@@ -1,6 +1,7 @@
 //! CPU side runtime state and frame scheduling helpers.
 
 use std::{
+    any::TypeId,
     collections::HashMap,
     sync::{Arc, Mutex},
 };
@@ -28,7 +29,7 @@ pub struct WgslResult {
 
 /// Callbacks registered for UI interaction scopes.
 pub type ClickCallback = Box<dyn FnMut(u32) + Send>;
-pub type DragCallback = Box<dyn FnMut(u32) + Send>;
+pub type DragCallback = Box<dyn FnMut(Vec2) + Send>;
 pub type HoverCallback = Box<dyn FnMut(u32) + Send>;
 pub type EntryCallBack = Box<dyn FnMut(u32) + Send>;
 pub type OutCallBack = Box<dyn FnMut(u32) + Send>;
@@ -50,6 +51,15 @@ pub struct PanelEventRegistry {
     out_callbacks: HashMap<UiInteractionScope, Vec<OutCallBack>>,
     frag_callbacks: HashMap<UiInteractionScope, Vec<EntryFragBack>>,
     vertex_callbacks: HashMap<UiInteractionScope, Vec<EntryVertexBack>>,
+    data_callbacks: HashMap<UiInteractionScope, Vec<DataChangeReg>>,
+}
+
+type DataChangeTrigger = Box<dyn FnMut(&DataChangeEnvelope) + Send>;
+
+struct DataChangeReg {
+    ty: TypeId,
+    source_uuid: Option<String>,
+    trigger: DataChangeTrigger,
 }
 
 impl PanelEventRegistry {
@@ -60,12 +70,12 @@ impl PanelEventRegistry {
         map.entry(scope).or_default()
     }
 
-    fn emit_callbacks<T>(callbacks: Option<&mut Vec<T>>, panel_id: u32)
+    fn emit_callbacks<T,V:Clone>(callbacks: Option<&mut Vec<T>>, val: V)
     where
-        T: FnMut(u32),
+        T: FnMut(V),
     {
         if let Some(callbacks) = callbacks {
-            callbacks.iter_mut().for_each(|cb| cb(panel_id));
+            callbacks.iter_mut().for_each(|cb| cb(val.clone()));
         }
     }
 
@@ -77,6 +87,7 @@ impl PanelEventRegistry {
         self.out_callbacks.remove(scope);
         self.frag_callbacks.remove(scope);
         self.vertex_callbacks.remove(scope);
+        self.data_callbacks.remove(scope);
     }
 
     pub fn register_click<F>(&mut self, scope: UiInteractionScope, callback: F)
@@ -88,7 +99,7 @@ impl PanelEventRegistry {
 
     pub fn register_drag<F>(&mut self, scope: UiInteractionScope, callback: F)
     where
-        F: FnMut(u32) + Send + 'static,
+        F: FnMut(Vec2) + Send + 'static,
     {
         Self::registry_for(&mut self.drag_callbacks, scope).push(Box::new(callback));
     }
@@ -128,14 +139,34 @@ impl PanelEventRegistry {
         Self::registry_for(&mut self.vertex_callbacks, scope).push(Box::new(callback));
     }
 
+    /// Register a data change listener for a given scope/state.
+    pub fn register_data_change<F>(
+        &mut self,
+        scope: UiInteractionScope,
+        payload_type: TypeId,
+        source_uuid: Option<String>,
+        trigger: F,
+    ) where
+        F: FnMut(&DataChangeEnvelope) + Send + 'static,
+    {
+        self.data_callbacks
+            .entry(scope)
+            .or_default()
+            .push(DataChangeReg {
+                ty: payload_type,
+                source_uuid,
+                trigger: Box::new(trigger),
+            });
+    }
+
     pub fn emit(&mut self, event: &CpuPanelEvent) {
         match event {
             CpuPanelEvent::Click((_frame, scope)) => {
                 Self::emit_callbacks(self.click_callbacks.get_mut(scope), scope.panel_id);
                 Self::emit_callbacks(self.entry_callbacks.get_mut(scope), scope.panel_id);
             }
-            CpuPanelEvent::Drag((_frame, scope)) => {
-                Self::emit_callbacks(self.drag_callbacks.get_mut(scope), scope.panel_id);
+            CpuPanelEvent::Drag((vec2, scope)) => {
+                Self::emit_callbacks(self.drag_callbacks.get_mut(scope), vec2.clone());
             }
             CpuPanelEvent::Hover((_frame, scope)) => {
                 Self::emit_callbacks(self.hover_callbacks.get_mut(scope), scope.panel_id);
@@ -149,12 +180,30 @@ impl PanelEventRegistry {
             CpuPanelEvent::Vertex((_frame, scope)) => {
                 Self::emit_callbacks(self.vertex_callbacks.get_mut(scope), scope.panel_id);
             }
+            CpuPanelEvent::DataChange(envelope) => {
+                // Trigger all matching registrations (type + optional uuid filter)
+                for regs in self.data_callbacks.values_mut() {
+                    for reg in regs.iter_mut() {
+                        if reg.ty == envelope.payload_type {
+                            if let Some(src) = &reg.source_uuid {
+                                if src != &envelope.source_uuid {
+                                    continue;
+                                }
+                            }
+                            (reg.trigger)(envelope);
+                        }
+                    }
+                }
+            }
             CpuPanelEvent::StateTransition(state) => {
                 let scope = UiInteractionScope {
                     panel_id: state.panel_id,
                     state: state.new_state.0,
                 };
                 Self::emit_callbacks(self.entry_callbacks.get_mut(&scope), scope.panel_id);
+                // 不再移除其他状态的回调集合。事件派发时使用 UiInteractionScope 精确匹配
+                // (panel_id, state) 作为键；GPU 产生事件时会把当帧的触发状态写入 scope。
+                // 因此历史状态的回调不会被触发，但会被保留以便后续切回该状态时无需重新注册。
             }
             _ => {}
         }
@@ -192,27 +241,30 @@ impl UIEventHub {
 }
 
 #[derive(Debug, Clone)]
-pub struct StateConfigDes {
-    pub is_open_frag: bool,
-    pub is_open_vertex: bool,
-    pub open_api: Vec<StateOpenCall>,
-    pub texture_id: Option<String>,
-    pub pos: Option<Vec2>,
-    pub size: Option<Vec2>,
-}
+    pub struct StateConfigDes {
+        pub is_open_frag: bool,
+        pub is_open_vertex: bool,
+        pub open_api: Vec<StateOpenCall>,
+        pub texture_id: Option<String>,
+        pub pos: Option<Vec2>,
+        pub size: Option<Vec2>,
+        // 目标状态颜色（如定义）。状态切换时用于对外可观测的目标值携带；实际应用由 entry 中的过渡逻辑处理。
+        pub color: Option<[f32; 4]>,
+    }
 
-impl Default for StateConfigDes {
-    fn default() -> Self {
-        Self {
-            is_open_frag: false,
-            is_open_vertex: false,
-            open_api: Vec::new(),
-            texture_id: None,
-            pos: None,
-            size: None,
+    impl Default for StateConfigDes {
+        fn default() -> Self {
+            Self {
+                is_open_frag: false,
+                is_open_vertex: false,
+                open_api: Vec::new(),
+                texture_id: None,
+                pos: None,
+                size: None,
+                color: None,
+            }
         }
     }
-}
 
 #[derive(Debug, Clone)]
 pub enum StateOpenCall {
@@ -253,7 +305,7 @@ pub enum CpuPanelEvent {
     Hover((FRAME, UiInteractionScope)),
     Click((FRAME, UiInteractionScope)),
     StateTransition(StateTransition),
-    Drag((FRAME, UiInteractionScope)),
+    Drag((Vec2, UiInteractionScope)),
     NetWorkTransition(NetWorkTransition),
     TotalUpdate(FRAME),
     SwapInteractionFrame(FRAME),
@@ -261,6 +313,24 @@ pub enum CpuPanelEvent {
     SpecielAnim((u32, TransformAnimFieldInfo)),
     Frag((FRAME, UiInteractionScope)),
     Vertex((FRAME, UiInteractionScope)),
+    /// CPU panel rewrite signal: entry applies offsets instead of direct panel mutation.
+    PanelStyleRewrite(PanelStyleRewrite),
+    DataChange(DataChangeEnvelope),
+}
+
+#[derive(Clone,Debug)]
+pub struct DataChangeEnvelope {
+    pub source_uuid: String,
+    pub payload_type: TypeId,
+    pub payload: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PanelStyleRewrite {
+    pub panel_id: u32,
+    pub field_id: u32, // bitflags from PanelField
+    pub op: u32,       // 0=set, 1=add
+    pub values: [f32; 4],
 }
 
 /// Per-frame data passed into compute/render stages.

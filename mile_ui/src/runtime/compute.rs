@@ -7,6 +7,7 @@
 use std::{cell::RefCell, sync::Arc};
 
 use bytemuck::{bytes_of, cast_slice};
+use glam::Vec2;
 use wgpu::{util::DownloadBuffer, wgc::device::queue};
 
 use crate::runtime::{
@@ -151,6 +152,8 @@ pub struct InteractionComputeStage {
     pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
+    layout1: wgpu::BindGroupLayout,
+    bind_group1: wgpu::BindGroup,
     interaction_buffer: wgpu::Buffer,
     trace: RefCell<GpuDebug>,
     trace_buffer: wgpu::Buffer,
@@ -229,12 +232,50 @@ impl InteractionComputeStage {
                     },
                     count: None,
                 },
+                // Clamp descriptor (count)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Clamp rules
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        // clamp_rules in WGSL is declared as `var<storage, read>`
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
+        });
+
+        // Second bind group layout: snapshots buffer at group(1), binding(3)
+        let layout1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ui::interaction-bind-layout-1"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ui::interaction-pipeline-layout"),
-            bind_group_layouts: &[&layout],
+            bind_group_layouts: &[&layout, &layout1],
             push_constant_ranges: &[],
         });
 
@@ -254,11 +295,21 @@ impl InteractionComputeStage {
 
         let bind_group =
             Self::create_bind_group(device, &layout, buffers, global_uniform, &trace_buffer);
+        let bind_group1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::interaction-bind-group-1"),
+            layout: &layout1,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buffers.snapshot.as_entire_binding(),
+            }],
+        });
 
         Self {
             pipeline,
             layout,
             bind_group,
+            layout1,
+            bind_group1,
             interaction_buffer: buffers.interaction_frames.clone(),
             trace: RefCell::new(trace),
             trace_buffer,
@@ -299,6 +350,14 @@ impl InteractionComputeStage {
                     binding: 4,
                     resource: buffers.panel_anim_delta.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: buffers.clamp_desc.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: buffers.clamp_rules.as_entire_binding(),
+                },
             ],
         })
     }
@@ -328,6 +387,14 @@ impl InteractionComputeStage {
             global_uniform,
             &self.trace_buffer,
         );
+        self.bind_group1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ui::interaction-bind-group-1"),
+            layout: &self.layout1,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buffers.snapshot.as_entire_binding(),
+            }],
+        });
         self.interaction_buffer = buffers.interaction_frames.clone();
     }
 
@@ -358,6 +425,7 @@ impl InteractionComputeStage {
 
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(1, &self.bind_group1, &[]);
 
         let workgroup_size = self.workgroup_size.max(1);
         let workgroups = (ctx.panel_count + workgroup_size - 1) / workgroup_size;
@@ -416,9 +484,8 @@ impl InteractionComputeStage {
                 }
 
                 if new_frame.drag_id != u32::MAX {
-                    println!("拖拽事件 {:?}", new_frame.drag_id);
                     hub.push(CpuPanelEvent::Drag((
-                        new_frame.frame,
+                        Vec2::from_array(new_frame.drag_delta),
                         UiInteractionScope {
                             panel_id: new_frame.drag_id,
                             state: new_frame.trigger_panel_state,

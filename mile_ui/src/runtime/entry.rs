@@ -18,6 +18,7 @@ use std::{
 use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
+    state::PanelStyleRewrite,
     relations::{
         RelationWorkItem, clear_panel_relations, flush_pending_relations, inject_relation_work,
         layout_flags, set_panel_active_state,
@@ -33,10 +34,10 @@ use crate::{
     mui_prototype::{
         PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateOverrides,
         ShaderStage, UiState, install_runtime_event_bridge, registered_panel_keys,
-        take_pending_shader,
+        take_pending_shader, PanelStateChanged, UiPanelData,
     },
     runtime::_ty::{
-        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, TransformAnimFieldInfo,
+        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, PanelAnimDelta, TransformAnimFieldInfo
     },
     structs::{AnimOp, EasingMask, MouseState, PanelField},
     util::texture_atlas_store::{self, GpuUiTextureInfo, TextureAtlasStore, UiTextureInfo},
@@ -520,6 +521,65 @@ impl MuiRuntime {
         Self::PANEL_STRIDE
     }
 
+    fn write_clamp_rules(&mut self, queue: &Queue) {
+        use crate::mui_rel::RelPanelField;
+        use crate::runtime::_ty::{GpuClampDescriptor, GpuClampRule};
+        // Build a flat list of clamp rules from the current panel cache
+        let mut rules: Vec<GpuClampRule> = Vec::new();
+        for desc in self.panel_cache.values() {
+            let panel_id = desc.key.panel_id;
+            for (state, cpu) in &desc.states {
+                let state_id = state.0;
+                for rule in &cpu.overrides.clamp_offsets {
+                    let field_id = match &rule.field {
+                        RelPanelField::Position => 0u32,
+                        RelPanelField::PositionX => 1u32,
+                        RelPanelField::PositionY => 2u32,
+                        RelPanelField::OnlyPositionX => 1u32,
+                        RelPanelField::OnlyPositionY => 2u32,
+                        RelPanelField::Size => 3u32,
+                        RelPanelField::SizeX => 4u32,
+                        RelPanelField::SizeY => 5u32,
+                        RelPanelField::Custom(_) => 0xffffffffu32, // ignored on GPU for now
+                    };
+                    let mut flags = rule.flags;
+                    // Add axis-only flags implicitly for the new field variants
+                    match rule.field {
+                        RelPanelField::OnlyPositionX => { flags |= 1 << 1; }
+                        RelPanelField::OnlyPositionY => { flags |= 1 << 2; }
+                        _ => {}
+                    }
+                    rules.push(GpuClampRule {
+                        panel_id,
+                        state: state_id,
+                        field: field_id,
+                        dims: rule.dims as u32,
+                        flags,
+                        _pad_u32: 0,
+                        min_v: rule.min,
+                        max_v: rule.max,
+                        step_v: rule.step,
+                        _pad_tail: [0.0; 4],
+                    });
+                }
+            }
+        }
+        // Write descriptor (count)
+        let desc = GpuClampDescriptor {
+            count: rules.len() as u32,
+            _pad0:[0;3],
+            _pad1:[0;4],
+        };
+        queue.write_buffer(&self.buffers.clamp_desc, 0, bytemuck::bytes_of(&desc));
+        // Write rules (if any)
+        if !rules.is_empty() {
+            let bytes = bytemuck::cast_slice::<GpuClampRule, u8>(&rules);
+            queue.write_buffer(&self.buffers.clamp_rules, 0, bytes);
+        }
+        // Ensure interaction compute re-reads buffers
+        self.compute.borrow_mut().mark_interaction_dirty();
+    }
+
     #[inline]
     fn panel_offset(index: u32) -> wgpu::BufferAddress {
         (index as wgpu::BufferAddress) * Self::PANEL_STRIDE
@@ -562,6 +622,13 @@ impl MuiRuntime {
         }
         let offset = Self::panel_offset(start_index);
         queue.write_buffer(&self.buffers.snapshot, offset, cast_slice(panels));
+    }
+
+    fn write_panel_origin(&self, queue: &Queue, panel_id: u32, origin: [f32; 2]) {
+        let stride = std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress;
+        let base = (panel_id as wgpu::BufferAddress) * stride;
+        let field_off = offset_of!(PanelAnimDelta, container_origin) as wgpu::BufferAddress;
+        queue.write_buffer(&self.buffers.panel_anim_delta, base + field_off, bytes_of(&origin));
     }
 
     pub fn write_snapshot_bytes(
@@ -741,6 +808,8 @@ impl MuiRuntime {
                 }
             }
         }
+        // Panel cache may change clamp rules; refresh GPU table.
+        self.write_clamp_rules(queue);
         Ok(())
     }
 
@@ -792,6 +861,12 @@ impl MuiRuntime {
         if !self.panel_instances.is_empty() {
             self.write_panels(queue, 0, &self.panel_instances);
             self.write_snapshot_panels(queue, 0, &self.panel_snapshots);
+            // Initialize container_origin with the state-defined snapshot position.
+            for panel in &self.panel_snapshots {
+                self.write_panel_origin(queue, panel.id, panel.position);
+            }
+            // Also (re)upload clamp rules derived from panel states.
+            self.write_clamp_rules(queue);
         }
 
         self.panel_instances_dirty = false;
@@ -806,6 +881,10 @@ impl MuiRuntime {
         let registry = self.register_panel_events();
         let mut guard = registry.lock().unwrap();
         for event in events {
+            if let CpuPanelEvent::PanelStyleRewrite(sig) = &event {
+                self.apply_panel_style_rewrite(queue, sig);
+                continue;
+            }
             if let CpuPanelEvent::StateTransition(transition) = &event {
                 println!("transition {:?}", transition);
                 self.apply_state_transition(transition.clone(), queue);
@@ -814,6 +893,196 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
+    }
+
+    fn apply_panel_style_rewrite(&mut self, queue: &Queue, sig: &PanelStyleRewrite) {
+        let panel_id = sig.panel_id;
+        // Locate instance index
+        let Some((index, panel)) = self
+            .panel_instances
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, p)| p.id == panel_id)
+        else {
+            return;
+        };
+        let add = sig.op == 1;
+        let bits = sig.field_id;
+        let v = sig.values;
+        // Helper to write instance buffer
+        let write_field = |entry: &mut Self, f_off: wgpu::BufferAddress, data: &[u8]| {
+            let offset = Self::panel_offset(index as u32) + f_off;
+            queue.write_buffer(&entry.buffers.instance, offset, data);
+        };
+        // Helper to write snapshot buffer
+        let write_snapshot = |entry: &mut Self, f_off: wgpu::BufferAddress, data: &[u8]| {
+            let offset = Self::panel_offset(index as u32) + f_off;
+            queue.write_buffer(&entry.buffers.snapshot, offset, data);
+        };
+        // Offsets
+        let off_pos = offset_of!(Panel, position) as wgpu::BufferAddress;
+        let off_size = offset_of!(Panel, size) as wgpu::BufferAddress;
+        let off_uv_off = offset_of!(Panel, uv_offset) as wgpu::BufferAddress;
+        let off_uv_scale = offset_of!(Panel, uv_scale) as wgpu::BufferAddress;
+        let off_z = offset_of!(Panel, z_index) as wgpu::BufferAddress;
+        let off_pass = offset_of!(Panel, pass_through) as wgpu::BufferAddress;
+        let off_interact = offset_of!(Panel, interaction) as wgpu::BufferAddress;
+        let off_event_mask = offset_of!(Panel, event_mask) as wgpu::BufferAddress;
+        let off_state_mask = offset_of!(Panel, state_mask) as wgpu::BufferAddress;
+        let off_transparent = offset_of!(Panel, transparent) as wgpu::BufferAddress;
+        let off_tex = offset_of!(Panel, texture_id) as wgpu::BufferAddress;
+        // Mapping based on PanelField bitflags
+        use crate::structs::PanelField;
+        let mut inst = panel;
+        // Position
+        if bits & PanelField::POSITION_X.bits() != 0 {
+            if add {
+                let new_x = inst.position[0] + v[0];
+                inst.position[0] = new_x;
+                write_field(self, off_pos, bytes_of(&inst.position));
+            } else {
+                let mut pos = inst.position;
+                pos[0] = v[0];
+                write_field(self, off_pos, bytes_of(&pos));
+                write_snapshot(self, off_pos, bytes_of(&pos));
+            }
+        }
+        if bits & PanelField::POSITION_Y.bits() != 0 {
+            if add {
+                let new_y = inst.position[1] + v[1];
+                inst.position[1] = new_y;
+                write_field(self, off_pos, bytes_of(&inst.position));
+            } else {
+                let mut pos = inst.position;
+                pos[1] = v[1];
+                write_field(self, off_pos, bytes_of(&pos));
+                write_snapshot(self, off_pos, bytes_of(&pos));
+            }
+        }
+        // Size
+        if bits & PanelField::SIZE_X.bits() != 0 {
+            if add {
+                let mut sz = inst.size;
+                sz[0] += v[0];
+                write_field(self, off_size, bytes_of(&sz));
+            } else {
+                let mut sz = inst.size;
+                sz[0] = v[0];
+                write_field(self, off_size, bytes_of(&sz));
+                write_snapshot(self, off_size, bytes_of(&sz));
+            }
+        }
+        if bits & PanelField::SIZE_Y.bits() != 0 {
+            if add {
+                let mut sz = inst.size;
+                sz[1] += v[1];
+                write_field(self, off_size, bytes_of(&sz));
+            } else {
+                let mut sz = inst.size;
+                sz[1] = v[1];
+                write_field(self, off_size, bytes_of(&sz));
+                write_snapshot(self, off_size, bytes_of(&sz));
+            }
+        }
+        // UV offset/scale (if used)
+        if bits & PanelField::UV_OFFSET_X.bits() != 0 || bits & PanelField::UV_OFFSET_Y.bits() != 0
+        {
+            let mut uv = inst.uv_offset;
+            if bits & PanelField::UV_OFFSET_X.bits() != 0 {
+                uv[0] = if add { uv[0] + v[0] } else { v[0] };
+            }
+            if bits & PanelField::UV_OFFSET_Y.bits() != 0 {
+                uv[1] = if add { uv[1] + v[1] } else { v[1] };
+            }
+            write_field(self, off_uv_off, bytes_of(&uv));
+            if !add {
+                write_snapshot(self, off_uv_off, bytes_of(&uv));
+            }
+        }
+        if bits & PanelField::UV_SCALE_X.bits() != 0 || bits & PanelField::UV_SCALE_Y.bits() != 0 {
+            let mut uv = inst.uv_scale;
+            if bits & PanelField::UV_SCALE_X.bits() != 0 {
+                uv[0] = if add { uv[0] + v[0] } else { v[0] };
+            }
+            if bits & PanelField::UV_SCALE_Y.bits() != 0 {
+                uv[1] = if add { uv[1] + v[1] } else { v[1] };
+            }
+            write_field(self, off_uv_scale, bytes_of(&uv));
+            if !add {
+                write_snapshot(self, off_uv_scale, bytes_of(&uv));
+            }
+        }
+        // Transparent
+        if bits & PanelField::TRANSPARENT.bits() != 0 {
+            let value = if add { inst.transparent + v[0] } else { v[0] };
+            write_field(self, off_transparent, bytes_of(&value));
+            if !add {
+                write_snapshot(self, off_transparent, bytes_of(&value));
+            }
+        }
+        // Integers
+        if bits & PanelField::AttchCollection.bits() != 0 {
+            let value = if add {
+                (inst.collection_state as i32 + v[0] as i32).max(0) as u32
+            } else {
+                v[0] as u32
+            };
+            let off = offset_of!(Panel, collection_state) as wgpu::BufferAddress;
+            write_field(self, off, bytes_of(&value));
+            if !add {
+                write_snapshot(self, off, bytes_of(&value));
+            }
+        }
+        if bits & PanelField::PREPOSITION_X.bits() != 0 || bits & PanelField::PREPOSITION_Y.bits() != 0 {
+            // map to z_index/pass_through as example; adjust as needed
+            if bits & PanelField::PREPOSITION_X.bits() != 0 {
+                let value = if add {
+                    (inst.z_index as i32 + v[0] as i32).max(0) as u32
+                } else {
+                    v[0] as u32
+                };
+                write_field(self, off_z, bytes_of(&value));
+                if !add {
+                    write_snapshot(self, off_z, bytes_of(&value));
+                }
+            }
+            if bits & PanelField::PREPOSITION_Y.bits() != 0 {
+                let value = if add {
+                    (inst.pass_through as i32 + v[1] as i32).max(0) as u32
+                } else {
+                    v[1] as u32
+                };
+                write_field(self, off_pass, bytes_of(&value));
+                if !add {
+                    write_snapshot(self, off_pass, bytes_of(&value));
+                }
+            }
+        }
+        if bits & PanelField::COLOR_R.bits() != 0
+            || bits & PanelField::COLOR_G.bits() != 0
+            || bits & PanelField::COLOR_B.bits() != 0
+            || bits & PanelField::COLOR_A.bits() != 0
+        {
+            let mut color = inst.color;
+            if bits & PanelField::COLOR_R.bits() != 0 {
+                color[0] = if add { color[0] + v[0] } else { v[0] };
+            }
+            if bits & PanelField::COLOR_G.bits() != 0 {
+                color[1] = if add { color[1] + v[1] } else { v[1] };
+            }
+            if bits & PanelField::COLOR_B.bits() != 0 {
+                color[2] = if add { color[2] + v[2] } else { v[2] };
+            }
+            if bits & PanelField::COLOR_A.bits() != 0 {
+                color[3] = if add { color[3] + v[3] } else { v[3] };
+            }
+            let off = offset_of!(Panel, color) as wgpu::BufferAddress;
+            write_field(self, off, bytes_of(&color));
+            if !add {
+                write_snapshot(self, off, bytes_of(&color));
+            }
+        }
     }
 
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
@@ -860,6 +1129,16 @@ impl MuiRuntime {
         let target_panel =
             self.descriptor_to_panel_with_base(&target_descriptor, Some(&previous_panel));
 
+        // Apply interaction mask from state config (enable/disable drag/hover/click).
+        // 重要：如果新状态没有声明任何交互，则应当清空交互掩码（避免保留上一个状态的 DRAG/CLICK 等行为）。
+        // 我们将掩码默认置 0，并在检测到 Interaction 调用时覆盖为对应位。
+        let mut new_interaction_bits: u32 = crate::structs::PanelInteraction::DEFUALT.bits();
+        for call in transition.state_config_des.open_api.iter() {
+            if let crate::runtime::state::StateOpenCall::Interaction(mask) = call.clone() {
+                new_interaction_bits = mask.bits();
+            }
+        }
+
         if let Some(duration) = self.enqueue_style_transition(queue, &previous_panel, &target_panel)
         {
             self.transitioning_panels.insert(panel_id, duration);
@@ -870,8 +1149,27 @@ impl MuiRuntime {
         self.update_panel_state_field(instance_index as u32, transition.new_state.0, queue);
         if let Some(instance) = self.panel_instances.get_mut(instance_index) {
             instance.state = transition.new_state.0;
+            // 无论是否声明 Interaction，都重写一次掩码。
+            let off = offset_of!(Panel, interaction) as wgpu::BufferAddress;
+            let panel_off = Self::panel_offset(instance_index as u32);
+            queue.write_buffer(&self.buffers.instance, panel_off + off, bytemuck::bytes_of(&new_interaction_bits));
+            instance.interaction = new_interaction_bits;
+            // 切换状态后清一次拖拽残留的位移（保险），避免 GPU 残留 delta 导致视觉漂移。
+            self.clear_panel_drag_delta(queue, panel_id);
         }
         self.schedule_relation_flush();
+        // Clamp rules depend on active state; refresh them after transitions.
+        self.write_clamp_rules(queue);
+    }
+
+    /// 清空指定面板的拖拽增量（GPU 面板增量缓冲区中的 delta_position）。
+    fn clear_panel_drag_delta(&self, queue: &Queue, panel_id: u32) {
+        use bytemuck::bytes_of;
+        let stride = std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress;
+        let off = offset_of!(PanelAnimDelta, delta_position) as wgpu::BufferAddress;
+        let base = (panel_id as wgpu::BufferAddress) * stride + off;
+        let zero = [0.0f32, 0.0f32];
+        queue.write_buffer(&self.buffers.panel_anim_delta, base, bytes_of(&zero));
     }
 
     fn enqueue_style_transition(
@@ -1032,6 +1330,7 @@ impl MuiRuntime {
             self.apply_shader_result(&event, queue);
         }
     }
+
 
     fn apply_shader_result(&mut self, event: &KennelResultIdxEvent, queue: &Queue) {
         let Some((panel_key, state, pending_stage)) = take_pending_shader(event.idx) else {

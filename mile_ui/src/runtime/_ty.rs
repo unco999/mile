@@ -556,7 +556,7 @@ pub struct GpuInteractionFrame {
     pub mouse_state: u32,
     pub _pad2: [u32; 3],
     pub drag_delta: [f32; 2],
-    pub _pad3: [f32; 2],
+    pub pre_event_mouse_pos: [f32; 2],
     pub pinch_delta: f32,
     pub pass_through_depth: u32,
     pub event_point: [f32; 2],
@@ -576,7 +576,7 @@ impl GpuInteractionFrame {
             mouse_state: 0,
             _pad2: [0; 3],
             drag_delta: [0.0, 0.0],
-            _pad3: [0.0, 0.0],
+            pre_event_mouse_pos: [0.0, 0.0],
             pinch_delta: 0.0,
             pass_through_depth: 0,
             event_point: [0.0, 0.0],
@@ -610,6 +610,29 @@ impl GpuInteractionFrameCache {
 pub struct GpuUiDebugReadCallBack {
     pub floats: [f32; 32],
     pub uints: [u32; 32],
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
+pub struct GpuClampDescriptor {
+    pub count: u32,
+    pub _pad0: [u32; 3],
+    pub _pad1: [u32; 4],
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
+pub struct GpuClampRule {
+    pub panel_id: u32, // matches Panel.id
+    pub state: u32,    // active UiState id at authoring
+    pub field: u32,    // 0:Position,1:PositionX,2:PositionY,3:Size,4:SizeX,5:SizeY, else ignored
+    pub dims: u32,     // 1 or 2; when 1 uses X component only
+    pub flags: u32,    // bit0: relative budget, bit1: axis_x_only, bit2: axis_y_only
+    pub _pad_u32: u32,
+    pub min_v: [f32; 2],
+    pub max_v: [f32; 2],
+    pub step_v: [f32; 2],
+    pub _pad_tail: [f32; 4], // pad to 64 bytes (multiple of 16)
 }
 
 #[repr(C, align(16))]
