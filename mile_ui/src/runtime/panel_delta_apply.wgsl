@@ -75,6 +75,45 @@ var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 @group(0) @binding(3)
 var<storage, read_write> panel_snapshots: array<Panel>;
 
+// One-shot spawn flags: index by panel id (1-based). Non-zero means
+// initialize position from current mouse and clear the flag.
+@group(0) @binding(4)
+var<storage, read_write> spawn_flags: array<u32>;
+
+// Global uniform for mouse position
+struct GlobalUniform {
+    click_layout_z: atomic<u32>,
+    click_layout_id: atomic<u32>,
+    hover_layout_id: atomic<u32>,
+    hover_layout_z: atomic<u32>,
+
+    drag_layout_id: atomic<u32>,
+    drag_layout_z: atomic<u32>,
+    pad_atomic1: atomic<u32>,
+    pad_atomic2: atomic<u32>,
+
+    dt: f32,
+    pad1: f32,
+    pad2: f32,
+    pad3: f32,
+
+    mouse_pos: vec2<f32>,
+    mouse_state: u32,
+    frame: u32,
+
+    screen_size: vec2<u32>,
+    press_duration: f32,
+    time: f32,
+
+    event_point: vec2<f32>,
+    extra1: vec2<f32>,
+    extra2: vec2<f32>,
+    pad_extra: vec2<f32>,
+};
+
+@group(0) @binding(5)
+var<storage, read_write> global_uniform: GlobalUniform;
+
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let idx = global_id.x;
@@ -88,6 +127,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     if (panel_id >= arrayLength(&panel_deltas)) {
         return;
+    }
+
+    //spawn_flags [5:1]  5 
+    //
+    // One-shot initialize from mouse position if requested.
+    debug_buffer.uints[5] = spawn_flags[5];
+
+    if (panel_id < arrayLength(&spawn_flags)) {
+        debug_buffer.uints[0] = 99999;
+        if (spawn_flags[idx] == 1) {
+            
+            panels[idx - 1].position = global_uniform.mouse_pos;
+            spawn_flags[idx] = 0u;
+        }
     }
 
     let delta = panel_deltas[panel_id].delta_position;

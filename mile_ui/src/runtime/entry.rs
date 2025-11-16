@@ -779,7 +779,19 @@ impl MuiRuntime {
                     let mut descriptor =
                         self.build_cpu_descriptor::<TPayload>(key.clone(), record.clone());
                     if let Some(existing) = self.panel_cache.get(key) {
+                        // Preserve display_state chosen by runtime
                         descriptor.display_state = existing.display_state;
+                        // Preserve one-shot flags that runtime has already consumed (e.g., trigger_mouse_pos)
+                        for (sid, new_state) in descriptor.states.iter_mut() {
+                            if let Some(prev_state) = existing.states.get(sid) {
+                                // If previously cleared, keep it cleared to avoid re-triggering
+                                if !prev_state.overrides.trigger_mouse_pos {
+                                    // even if DB says true, do not re-trigger
+                                    let mut ov = &mut new_state.overrides;
+                                    ov.trigger_mouse_pos = false;
+                                }
+                            }
+                        }
                     }
                     let needs_update = match self.panel_cache.get(key) {
                         Some(existing) => existing != &descriptor,
@@ -1109,6 +1121,22 @@ impl MuiRuntime {
     ///   then rewrite the tail region to the GPU buffers and update batch ranges.
     fn upsert_panel_immediate_from_descriptor(&mut self, desc: &PanelCpuDescriptor, queue: &Queue) {
         // Build target panel from descriptor, using previous instance as base if present.
+        // One-shot: if overrides request init from mouse, set GPU spawn flag and clear the flag in CPU cache.
+        if let Some(desc_mut) = self.panel_cache.get_mut(&desc.key) {
+            let state_id = desc_mut.display_state;
+            if let Some(state_cpu) = desc_mut.states.get_mut(&state_id) {
+                if state_cpu.overrides.trigger_mouse_pos {
+                    let pid = desc_mut.key.panel_id;
+                    let flag: u32 = 1;
+                    let offset = (pid as wgpu::BufferAddress) * std::mem::size_of::<u32>() as wgpu::BufferAddress;
+                    queue.write_buffer(&self.buffers.spawn_flags, offset, bytemuck::bytes_of(&flag));
+                    // Clear the one-shot flag so future refreshes won't keep overwriting position.
+                    state_cpu.overrides.trigger_mouse_pos = false;
+                    // Mark delta stage dirty so it runs this frame.
+                    self.compute.borrow_mut().panel_delta.set_dirty();
+                }
+            }
+        }
         let fallback = self
             .panel_instances
             .iter()

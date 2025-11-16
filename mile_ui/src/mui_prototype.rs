@@ -327,6 +327,9 @@ pub struct PanelStateOverrides {
     pub transitions: HashMap<UiEventKind, UiState>,
     #[serde(default)]
     pub visible: Option<bool>,
+    /// If true, runtime will initialize position from current mouse pos once and then clear this flag.
+    #[serde(default)]
+    pub trigger_mouse_pos: bool,
     /// Clamp/offset rules applied to specific fields in this state.
     /// - For dims == 1: only X component is used (min[0], max[0], step[0]).
     /// - For dims == 2: X/Y components are applied independently.
@@ -1880,6 +1883,14 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self.rel_position_in(RelSpace::Local, pos)
     }
 
+    /// Initialize position from current mouse position once at spawn.
+    /// This sets a flag on the overrides; runtime will translate it to a concrete position
+    /// using the CPU copy of GlobalUniform.mouse_pos during the first GPU write, then clear the flag.
+    pub fn with_trigger_mouse_pos(mut self) -> Self {
+        self.definition.overrides.trigger_mouse_pos = true;
+        self
+    }
+
     pub fn rel_position_in(mut self, space: RelSpace, pos: Vec2) -> Self {
         let value = [pos.x, pos.y];
         self.definition.overrides.position = Some(value);
@@ -2878,7 +2889,8 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                                 let state = state
                                     .color(vec4(0.0, 1.0, 1.0, 1.0))
                                     .size(vec2(300.0, 300.0))
-                                    .position(position);
+                                    .with_trigger_mouse_pos()
+                                    ;
                                 state
                             })
                             .build();
