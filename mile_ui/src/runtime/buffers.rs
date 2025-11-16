@@ -55,6 +55,8 @@ pub struct BufferArena {
     pub indirect_draws: wgpu::Buffer,
     pub interaction_frames: wgpu::Buffer,
     pub debug_buffer: wgpu::Buffer,
+    pub clamp_rules: wgpu::Buffer,
+    pub clamp_desc: wgpu::Buffer,
     pub capacities: BufferArenaConfig,
     pub animation_fields_capacity: u32,
 }
@@ -176,6 +178,21 @@ impl BufferArena {
                 | wgpu::BufferUsages::COPY_SRC,
         });
 
+        // Clamp rules buffer and descriptor (count)
+        let clamp_desc = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("ui::clamp-descriptor"),
+            contents: bytes_of(&crate::runtime::_ty::GpuClampDescriptor::default()),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        let clamp_rules = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui::clamp-rules"),
+            size: (cfg.max_relations as u64
+                * std::mem::size_of::<crate::runtime::_ty::GpuClampRule>() as u64)
+                .max(1),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             instance,
             snapshot,
@@ -191,6 +208,8 @@ impl BufferArena {
             indirect_draws,
             interaction_frames,
             debug_buffer,
+            clamp_rules,
+            clamp_desc,
             capacities: cfg.clone(),
             animation_fields_capacity: cfg.max_animation_fields,
         }
@@ -223,6 +242,8 @@ impl BufferArena {
             indirect_draws: self.indirect_draws.slice(..),
             interaction_frames: self.interaction_frames.slice(..),
             debug_buffer: self.debug_buffer.slice(..),
+            clamp_rules: self.clamp_rules.slice(..),
+            clamp_desc: self.clamp_desc.slice(..),
         }
     }
 }
@@ -241,4 +262,6 @@ pub struct BufferViewSet<'a> {
     pub indirect_draws: wgpu::BufferSlice<'a>,
     pub interaction_frames: wgpu::BufferSlice<'a>,
     pub debug_buffer: wgpu::BufferSlice<'a>,
+    pub clamp_rules: wgpu::BufferSlice<'a>,
+    pub clamp_desc: wgpu::BufferSlice<'a>,
 }

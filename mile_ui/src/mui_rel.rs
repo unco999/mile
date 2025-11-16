@@ -2,17 +2,23 @@ use std::{
     any::{TypeId, type_name},
     collections::{HashMap, HashSet},
 };
+use serde::{Serialize, Deserialize};
 
 /// Field identifiers that can be targeted by relation rules.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RelPanelField {
     Position,
     PositionX,
     PositionY,
+    /// Lock movement to X axis (Y should remain unchanged during interaction).
+    OnlyPositionX,
+    /// Lock movement to Y axis (X should remain unchanged during interaction).
+    OnlyPositionY,
     Size,
     SizeX,
     SizeY,
-    Custom(&'static str),
+    /// User-defined field name (owned so we can serialize/deserialize safely).
+    Custom(String),
 }
 
 /// Frequently used field constants to match the relation DSL style.
@@ -23,14 +29,22 @@ pub mod panel_field {
     pub const position: RelPanelField = RelPanelField::Position;
     pub const position_x: RelPanelField = RelPanelField::PositionX;
     pub const position_y: RelPanelField = RelPanelField::PositionY;
+    pub const only_position_x: RelPanelField = RelPanelField::OnlyPositionX;
+    pub const only_position_y: RelPanelField = RelPanelField::OnlyPositionY;
     pub const size: RelPanelField = RelPanelField::Size;
     pub const size_x: RelPanelField = RelPanelField::SizeX;
     pub const size_y: RelPanelField = RelPanelField::SizeY;
 
-    pub const fn custom(name: &'static str) -> RelPanelField {
-        RelPanelField::Custom(name)
+    /// Create a custom field key by name.
+    pub fn custom(name: impl Into<String>) -> RelPanelField {
+        RelPanelField::Custom(name.into())
     }
 }
+
+/// Public alias used by higher-level UI builders.
+/// Keeps call sites concise (e.g., `Field::PositionX`) while still mapping
+/// to the internal `RelPanelField` enum.
+pub type Field = RelPanelField;
 
 /// Unique key describing a concrete panel view (payload type + UUID + optional scope/state).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

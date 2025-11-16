@@ -1,19 +1,18 @@
 use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec, Easing},
     mui_rel::{
-        RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis, RelSpace,
-        RelViewKey, panel_field,
+        Field, RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis, RelSpace, RelViewKey, panel_field
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         QuadBatchKind, panel_position, register_payload_refresh,
         relations::register_panel_relations,
         state::{
-            CpuPanelEvent, PanelEventRegistry, StateConfigDes, StateOpenCall, StateTransition,
-            UIEventHub, UiInteractionScope,
+            CpuPanelEvent, DataChangeEnvelope, PanelEventRegistry, PanelStyleRewrite,
+            StateConfigDes, StateOpenCall, StateTransition, UIEventHub, UiInteractionScope,
         },
     },
-    structs::PanelInteraction,
+    structs::{PanelField, PanelInteraction},
 };
 use glam::{Vec2, Vec4, vec2, vec4};
 use mile_api::{
@@ -53,6 +52,28 @@ static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::n
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
 static PENDING_SHADERS: OnceLock<Mutex<HashMap<u32, PendingShaderRequest>>> = OnceLock::new();
 static NEXT_SHADER_IDX: AtomicU32 = AtomicU32::new(1);
+
+// Typed observers (erased): subscribe to payload type by TypeId, handler receives &dyn Any payload
+type ErasedTypeCb = Arc<dyn Fn(&PanelKey, &dyn Any) + Send + Sync + 'static>;
+static TYPE_OBSERVERS: OnceLock<Mutex<HashMap<TypeId, Vec<ErasedTypeCb>>>> = OnceLock::new();
+
+fn type_observers() -> &'static Mutex<HashMap<TypeId, Vec<ErasedTypeCb>>> {
+    TYPE_OBSERVERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_type_observer_erased(ty: TypeId, handler: ErasedTypeCb) {
+    let mut map = type_observers().lock().unwrap();
+    map.entry(ty).or_default().push(handler);
+}
+
+fn notify_type_observers_erased(ty: TypeId, source: &PanelKey, payload: &dyn Any) {
+    let map = type_observers().lock().unwrap();
+    if let Some(list) = map.get(&ty) {
+        for cb in list.iter() {
+            cb(source, payload);
+        }
+    }
+}
 
 fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
@@ -239,6 +260,15 @@ pub enum UiEventKind {
     Out,
 }
 
+/// Generic event payload used by `on_event_with`.
+#[derive(Clone, Debug)]
+pub enum UiEventData {
+    None,
+    Vec2(glam::Vec2),
+    U32(u32),
+    Bool(bool),
+}
+
 /// Visual/Layout overrides persisted for each state.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PanelStateOverrides {
@@ -280,6 +310,12 @@ pub struct PanelStateOverrides {
     pub transitions: HashMap<UiEventKind, UiState>,
     #[serde(default)]
     pub visible: Option<bool>,
+    /// Clamp/offset rules applied to specific fields in this state.
+    /// - For dims == 1: only X component is used (min[0], max[0], step[0]).
+    /// - For dims == 2: X/Y components are applied independently.
+    /// - Step <= 0 disables snapping. Otherwise snap to min + round((v-min)/step)*step.
+    #[serde(default)]
+    pub clamp_offsets: Vec<ClampOffset>,
 }
 
 /// Resolved visual/layout snapshot applied to a panel.
@@ -341,6 +377,26 @@ impl Default for BorderStyle {
     }
 }
 
+/// Describes a clamp/offset rule for a specific field.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ClampOffset {
+    /// Target field to clamp (e.g., Field::PositionX or Field::Position).
+    pub field: Field,
+    /// Minimum allowed value; Y is used only when `dims == 2`.
+    pub min: [f32; 2],
+    /// Maximum allowed value; Y is used only when `dims == 2`.
+    pub max: [f32; 2],
+    /// Step size (quantization); Y is used only when `dims == 2`.
+    pub step: [f32; 2],
+    /// 1 for scalar fields (use X only), 2 for vec2 fields (use X/Y).
+    pub dims: u8,
+    /// Flags:
+    /// - bit0: relative budget (use `max` as +/- budget around origin, ignore `min`)
+    /// - bit1: axis_x_only (freeze Y at current panel.position.y)
+    /// - bit2: axis_y_only (freeze X at current panel.position.x)
+    pub flags: u32,
+}
+
 /// Users provide their own payload type by implementing this trait (auto-implemented for compatible types).
 pub trait PanelPayload:
     Serialize + DeserializeOwned + Clone + Default + PartialEq + Send + Sync + 'static
@@ -396,6 +452,16 @@ pub struct PanelStateChanged<TPayload: PanelPayload> {
     pub new: PanelRecord<TPayload>,
 }
 
+/// Erased DB change event that carries runtime type info and a JSON snapshot of the payload.
+/// - `payload_type` is the Rust type name (e.g., "mile_ui::mui_prototype::UiPanelData")
+/// - `payload_json` is serialized from `new.data` for dynamic consumers
+#[derive(Clone, Debug)]
+pub struct PanelStateChangedErased {
+    pub key: PanelKey,
+    pub payload_type: &'static str,
+    pub payload_json: String,
+}
+
 /// DB binding so we can persist `PanelRecord`.
 pub struct PanelBinding<TPayload: PanelPayload>(PhantomData<TPayload>);
 
@@ -413,6 +479,29 @@ impl<TPayload: PanelPayload> TableBinding for PanelBinding<TPayload> {
             old: old.cloned(),
             new: new.clone(),
         });
+        // Also publish an erased variant so dynamic listeners (unknown T at compile time)
+        // can react based on `payload_type` and `payload_json`.
+        let payload_json = match serde_json::to_string(&new.data) {
+            Ok(s) => s,
+            Err(_) => "null".to_string(),
+        };
+        global_event_bus().publish(PanelStateChangedErased {
+            key: key.clone(),
+            payload_type: type_name::<TPayload>(),
+            payload_json,
+        });
+        // Notify typed observers with erased payload dispatch.
+        let ty = TypeId::of::<TPayload>();
+        let payload_any: &dyn Any = &new.data;
+        notify_type_observers_erased(ty, key, payload_any);
+        // Bridge into UI event hub so panels can receive on_data_change during event processing.
+        if let Some(hub) = runtime_event_hub() {
+            hub.push(CpuPanelEvent::DataChange(DataChangeEnvelope {
+                source_uuid: key.panel_uuid.clone(),
+                payload_type: ty,
+                payload: Arc::new(new.data.clone()),
+            }));
+        }
 
         let listeners = listeners_map::<TPayload>();
         if let Some(entries) = listeners.lock().unwrap().get(key).cloned() {
@@ -617,6 +706,8 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
     key: &PanelKey,
     callbacks: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFn<TPayload>>>>,
     transitions: &HashMap<UiState, HashMap<UiEventKind, UiState>>,
+    data_callbacks: &HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>>,
+    callbacks_with: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>>,
 ) {
     let mut states: HashSet<UiState> = HashSet::new();
     states.extend(callbacks.keys().copied());
@@ -636,12 +727,11 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
         if let Some(map) = callbacks.get(&state) {
             events.extend(map.keys().copied());
         }
-        if let Some(map) = transitions.get(&state) {
+        if let Some(map) = callbacks_with.get(&state) {
             events.extend(map.keys().copied());
         }
-
-        if events.is_empty() {
-            continue;
+        if let Some(map) = transitions.get(&state) {
+            events.extend(map.keys().copied());
         }
 
         for event in events {
@@ -650,34 +740,50 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
             let scope_copy = scope;
             match event {
                 UiEventKind::Init => { /* init is triggered programmatically once; no runtime registry */ }
-                UiEventKind::Click => registry.register_click(scope_copy, move |_panel_id| {
-                    trigger_event_internal::<TPayload>(
+                UiEventKind::Click => registry.register_click(scope_copy, move |_ignored| {
+                    trigger_event_internal_with::<TPayload>(
                         &key_clone,
                         Some(state_copy),
                         UiEventKind::Click,
+                        UiEventData::None,
                     );
                 }),
-                UiEventKind::Drag => registry.register_drag(scope_copy, move |_panel_id| {
-                    trigger_event_internal::<TPayload>(
+                UiEventKind::Drag => registry.register_drag(scope_copy, move |vec2| {
+                    trigger_event_internal_with::<TPayload>(
                         &key_clone,
                         Some(state_copy),
                         UiEventKind::Drag,
+                        UiEventData::Vec2(vec2),
                     );
                 }),
-                UiEventKind::Hover => registry.register_hover(scope_copy, move |_panel_id| {
-                    trigger_event_internal::<TPayload>(
+                UiEventKind::Hover => registry.register_hover(scope_copy, move |_ignored| {
+                    trigger_event_internal_with::<TPayload>(
                         &key_clone,
                         Some(state_copy),
                         UiEventKind::Hover,
+                        UiEventData::None,
                     );
                 }),
-                UiEventKind::Out => registry.register_out(scope_copy, move |_panel_id| {
-                    trigger_event_internal::<TPayload>(
+                UiEventKind::Out => registry.register_out(scope_copy, move |_ignored| {
+                    trigger_event_internal_with::<TPayload>(
                         &key_clone,
                         Some(state_copy),
                         UiEventKind::Out,
+                        UiEventData::None,
                     );
                 }),
+            }
+        }
+        // Register data change listeners for this scope/state
+        if let Some(list) = data_callbacks.get(&state) {
+            for entry in list {
+                let key_clone = key.clone();
+                let state_copy = state;
+                let ty = entry.ty;
+                let src = entry.source_uuid.clone();
+                registry.register_data_change(scope, ty, src, move |env| {
+                    trigger_data_change_for::<TPayload>(&key_clone, state_copy, env);
+                });
             }
         }
     }
@@ -687,23 +793,84 @@ fn install_runtime_callbacks<TPayload: PanelPayload>(
     key: &PanelKey,
     callbacks: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFn<TPayload>>>>,
     transitions: &HashMap<UiState, HashMap<UiEventKind, UiState>>,
+    data_callbacks: &HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>>,
+    callbacks_with: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>>,
 ) {
     if let Some(registry_arc) = runtime_event_registry() {
         let mut registry = registry_arc.lock().unwrap();
-        apply_runtime_callbacks::<TPayload>(&mut registry, key, callbacks, transitions);
+        apply_runtime_callbacks::<TPayload>(
+            &mut registry,
+            key,
+            callbacks,
+            transitions,
+            data_callbacks,
+            callbacks_with,
+        );
     } else {
         let key_clone = key.clone();
-        let callbacks_clone = callbacks.clone();
-        let transitions_clone = transitions.clone();
         let mut pending = pending_registrations().lock().unwrap();
         pending.push(Box::new(move |registry: &mut PanelEventRegistry| {
-            apply_runtime_callbacks::<TPayload>(
-                registry,
-                &key_clone,
-                &callbacks_clone,
-                &transitions_clone,
-            );
+            // Resolve runtime-owned maps at registration time to avoid lifetime issues.
+            if let Ok(guard) = runtime_map::<TPayload>().lock() {
+                if let Some(rt) = guard.get(&key_clone) {
+                    apply_runtime_callbacks::<TPayload>(
+                        registry,
+                        &key_clone,
+                        &rt.callbacks,
+                        &rt.transitions,
+                        &rt.data_callbacks,
+                        &rt.callbacks_with,
+                    );
+                }
+            }
         }));
+    }
+}
+
+fn trigger_data_change_for<TPayload: PanelPayload>(
+    key: &PanelKey,
+    state: UiState,
+    env: &crate::runtime::state::DataChangeEnvelope,
+){
+    // Lookup runtime
+    let arc = runtime_map::<TPayload>();
+    let mut registry = arc.lock().unwrap();
+    let Some(runtime) = registry.get_mut(key) else {
+        return;
+    };
+    // Prepare snapshot arguments
+    let mut snapshot = match runtime.handle.read() {
+        Ok(record) => record,
+        Err(_) => PanelRecord::<TPayload>::default(),
+    };
+    if let Some(pos) = panel_position(key.panel_id) {
+        snapshot.snapshot.position = pos;
+    }
+    // Build args
+    let args = PanelEventArgs {
+        panel_key: key.clone(),
+        state,
+        event: UiEventKind::Init, // synthetic
+        record_snapshot: snapshot,
+    };
+    // Execute handlers for this state
+    if let Some(list) = runtime.data_callbacks.get_mut(&state) {
+        let handle = &runtime.handle;
+        let transitions = &runtime.transitions;
+        let current_state_ref = &mut runtime.current_state;
+        let _ = handle.mutate(|record| {
+            let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+            for entry in list {
+                if entry.ty == env.payload_type {
+                    if let Some(ref src) = entry.source_uuid {
+                        if src != &env.source_uuid {
+                            continue;
+                        }
+                    }
+                    (entry.handler)(env.payload.as_ref(), &mut flow);
+                }
+            }
+        });
     }
 }
 
@@ -713,9 +880,21 @@ struct PanelRuntime<TPayload: PanelPayload> {
     current_state: UiState,
     transitions: HashMap<UiState, HashMap<UiEventKind, UiState>>,
     callbacks: HashMap<UiState, HashMap<UiEventKind, Arc<EventFn<TPayload>>>>,
+    callbacks_with: HashMap<UiState, HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>>,
     observer_guards: Vec<PanelListenerGuard<TPayload>>,
+    data_callbacks: HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>>,
 }
 type EventFn<TPayload> = dyn for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static;
+type EventFnWith<TPayload> =
+    dyn for<'a> Fn(&mut EventFlow<'a, TPayload>, UiEventData) + Send + Sync + 'static;
+type DataChangeErasedFn<TPayload> =
+    dyn for<'a> Fn(&dyn Any, &mut EventFlow<'a, TPayload>) + Send + Sync + 'static;
+
+struct DataChangeCbEntry<TPayload: PanelPayload> {
+    ty: TypeId,
+    source_uuid: Option<String>,
+    handler: Arc<DataChangeErasedFn<TPayload>>,
+}
 
 #[derive(Clone, Debug)]
 pub struct PanelEventArgs<TPayload: PanelPayload> {
@@ -804,10 +983,48 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         self.record.pending_animations.push(animation);
     }
 
+    /// Queue a CPU panel rewrite signal: set specific panel fields to given values.
+    /// `field_bits` use `PanelField` bitflags (see `crate::structs::PanelField`).
+    pub fn style_set(&self, field_bits: u32, values: [f32; 4]) {
+        if let Some(hub) = runtime_event_hub() {
+            hub.push(CpuPanelEvent::PanelStyleRewrite(PanelStyleRewrite {
+                panel_id: self.args.panel_key.panel_id,
+                field_id: field_bits,
+                op: 0,
+                values,
+            }));
+        }
+    }
+
+    /// Queue a CPU panel rewrite signal: add offsets to specific panel fields.
+    pub fn style_add(&self, field_bits: u32, values: [f32; 4]) {
+        if let Some(hub) = runtime_event_hub() {
+            hub.push(CpuPanelEvent::PanelStyleRewrite(PanelStyleRewrite {
+                panel_id: self.args.panel_key.panel_id,
+                field_id: field_bits,
+                op: 1,
+                values,
+            }));
+        }
+    }
+
     pub fn position_anim(&mut self) -> PositionAnimFlow<TPayload> {
         let base = Vec2::from_array(self.args.record_snapshot.snapshot.position);
         PositionAnimFlow::<TPayload> {
             builder: AnimBuilder::new(AnimProperty::Position).from_current(),
+            base,
+            target: None,
+            offset_target: false,
+            _marker: PhantomData,
+            mark_from_snapshot: false,
+            mark_to_snapshot: false,
+        }
+    }
+
+    pub fn color_anim(&mut self) -> ColorAnimFlow<TPayload> {
+        let base = Vec4::from_array(self.args.record_snapshot.snapshot.color);
+        ColorAnimFlow::<TPayload> {
+            builder: AnimBuilder::new(AnimProperty::Color).from_current(),
             base,
             target: None,
             offset_target: false,
@@ -859,6 +1076,12 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         );
     }
 
+    /// Mutate current panel's payload and persist via DB commit (observers will be notified).
+    /// This should be used inside event callbacks; the outer mutate will commit and emit.
+    pub fn update_self_payload(&mut self, mutator: impl FnOnce(&mut TPayload)) {
+        mutator(&mut self.record.data);
+    }
+
     pub fn transition(&mut self, event: UiEventKind) -> Option<UiState> {
         let current = *self.current_state;
         if let Some(next) = self
@@ -876,6 +1099,22 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
 
     fn take_override(&mut self) -> Option<UiState> {
         self.override_state.take()
+    }
+}
+
+/// Lightweight flow used inside type-based observers. It allows mutating the
+/// receiving panel's payload and enqueueing animations, similar to EventFlow.
+pub struct ObserveFlow<'a, TPayload: PanelPayload> {
+    record: &'a mut PanelRecord<TPayload>,
+}
+
+impl<'a, TPayload: PanelPayload> ObserveFlow<'a, TPayload> {
+    pub fn payload(&mut self) -> &mut TPayload {
+        &mut self.record.data
+    }
+
+    pub fn push_animation(&mut self, animation: AnimationSpec) {
+        self.record.pending_animations.push(animation);
     }
 }
 
@@ -979,6 +1218,100 @@ impl<TPayload: PanelPayload> PositionAnimFlow<TPayload> {
     }
 }
 
+pub struct ColorAnimFlow<TPayload: PanelPayload> {
+    builder: AnimBuilder,
+    base: Vec4,
+    target: Option<Vec4>,
+    offset_target: bool,
+    mark_from_snapshot: bool,
+    mark_to_snapshot: bool,
+    _marker: PhantomData<TPayload>,
+}
+
+impl<TPayload: PanelPayload> ColorAnimFlow<TPayload> {
+    pub fn offset(mut self, delta: Vec4) -> Self {
+        self.target = Some(delta);
+        self.offset_target = true;
+        self
+    }
+
+    pub fn to_offset(self, delta: Vec4) -> Self {
+        self.offset(delta)
+    }
+
+    pub fn to_snapshot(mut self) -> Self {
+        self.target = Some(self.base);
+        self.offset_target = false;
+        self.mark_to_snapshot = true;
+        self
+    }
+
+    pub fn to(mut self, target: Vec4) -> Self {
+        self.target = Some(target);
+        self.offset_target = false;
+        self
+    }
+
+    pub fn from_snapshot(mut self) -> Self {
+        self.builder = self.builder.from(self.base);
+        self.mark_from_snapshot = true;
+        self
+    }
+
+    pub fn from_current(mut self) -> Self {
+        self.builder = self.builder.from_current();
+        self.mark_from_snapshot = false;
+        self
+    }
+
+    pub fn duration(mut self, seconds: f32) -> Self {
+        self.builder = self.builder.duration(seconds);
+        self
+    }
+
+    pub fn delay(mut self, seconds: f32) -> Self {
+        self.builder = self.builder.delay(seconds);
+        self
+    }
+
+    pub fn easing(mut self, easing: Easing) -> Self {
+        self.builder = self.builder.easing(easing);
+        self
+    }
+
+    pub fn loop_count(mut self, count: u32) -> Self {
+        self.builder = self.builder.loop_count(count);
+        self
+    }
+
+    pub fn infinite(mut self) -> Self {
+        self.builder = self.builder.infinite();
+        self
+    }
+
+    pub fn ping_pong(mut self, enabled: bool) -> Self {
+        self.builder = self.builder.ping_pong(enabled);
+        self
+    }
+
+    pub fn push(mut self, flow: &mut EventFlow<'_, TPayload>) {
+        let mut builder = if self.offset_target {
+            let delta = self.target.unwrap_or(Vec4::ZERO);
+            self.builder.to_offset(delta)
+        } else {
+            let target = self.target.unwrap_or(self.base);
+            self.builder.to(target)
+        };
+        if self.mark_from_snapshot {
+            builder = builder.mark_from_snapshot();
+        }
+        if self.mark_to_snapshot {
+            builder = builder.mark_to_snapshot();
+        }
+        flow.push_animation(builder.build());
+    }
+}
+
 fn overrides_for_state<'a, TPayload: PanelPayload>(
     record: &'a PanelRecord<TPayload>,
     state: UiState,
@@ -1005,6 +1338,9 @@ fn state_config_from_overrides(overrides: Option<&PanelStateOverrides>) -> State
         }
         if let Some(size) = override_ref.size {
             config.size = Some(Vec2::new(size[0], size[1]));
+        }
+        if let Some(color) = override_ref.color {
+            config.color = Some(color);
         }
         if let Some(mask_bits) = override_ref.interaction {
             if let Some(mask) = PanelInteraction::from_bits(mask_bits) {
@@ -1138,6 +1474,64 @@ fn trigger_event_internal<TPayload: PanelPayload>(
     }
 }
 
+fn trigger_event_internal_with<TPayload: PanelPayload>(
+    key: &PanelKey,
+    forced_state: Option<UiState>,
+    event: UiEventKind,
+    data: UiEventData,
+) {
+    let arc = runtime_map::<TPayload>();
+    let mut registry = arc.lock().unwrap();
+    let Some(runtime) = registry.get_mut(key) else {
+        eprintln!(
+            "attempted to trigger event {:?} on unknown panel {:?}",
+            event, key
+        );
+        return;
+    };
+
+    let state = if let Some(state_override) = forced_state {
+        runtime.current_state = state_override;
+        state_override
+    } else {
+        runtime.current_state
+    };
+
+    let mut snapshot = match runtime.handle.read() {
+        Ok(record) => record,
+        Err(err) => {
+            eprintln!("failed to read panel record: {err:?}");
+            PanelRecord::<TPayload>::default()
+        }
+    };
+    if let Some(pos) = panel_position(key.panel_id) {
+        snapshot.snapshot.position = pos;
+    }
+
+    let args = PanelEventArgs {
+        panel_key: key.clone(),
+        state,
+        event,
+        record_snapshot: snapshot,
+    };
+
+    if let Some(map) = runtime.callbacks_with.get(&state) {
+        if let Some(handler) = map.get(&event) {
+            let handle = &runtime.handle;
+            let transitions = &runtime.transitions;
+            let current_state_ref = &mut runtime.current_state;
+            let _ = handle.mutate(|record| {
+                let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+                handler(&mut flow, data);
+            });
+            return;
+        }
+    }
+    // Fallback
+    drop(registry);
+    trigger_event_internal::<TPayload>(key, Some(state), event);
+}
+
 pub fn trigger_event<TPayload: PanelPayload>(key: &PanelKey, event: UiEventKind) {
     trigger_event_internal::<TPayload>(key, None, event);
 }
@@ -1175,6 +1569,9 @@ struct PanelStateDefinition<TPayload: PanelPayload> {
     frag_shader: Option<FragClosure>,
     vertex_shader: Option<VertexClosure>,
     callbacks: HashMap<UiEventKind, Arc<EventFn<TPayload>>>,
+    callbacks_with: HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>,
+    // Data change callbacks registered via events().on_data_change
+    data_callbacks: Vec<DataChangeCbEntry<TPayload>>,
     animations: Vec<AnimationSpec>,
     relations: Option<RelGraphDefinition>,
 }
@@ -1186,6 +1583,8 @@ impl<TPayload: PanelPayload> Default for PanelStateDefinition<TPayload> {
             frag_shader: None,
             vertex_shader: None,
             callbacks: HashMap::new(),
+            callbacks_with: HashMap::new(),
+            data_callbacks: Vec::new(),
             animations: Vec::new(),
             relations: None,
         }
@@ -1350,6 +1749,29 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     {
         self.handle.register_listener(Arc::new(listener))
     }
+
+    /// Observe DB changes for any panels with payload type `TObserved`.
+    /// The handler receives the observed payload (new value) and a flow to mutate THIS panel.
+    pub fn observe_type<TObserved, Handler>(mut self, handler: Handler) -> Self
+    where
+        TObserved: PanelPayload,
+        Handler: Fn(&TObserved, &mut ObserveFlow<TPayload>) + Send + Sync + 'static,
+    {
+        let self_handle = self.handle.clone();
+        let ty = TypeId::of::<TObserved>();
+        // Erased wrapper: downcast payload to TObserved then invoke user handler
+        let cb: ErasedTypeCb = Arc::new(move |source, any_payload| {
+            if let Some(payload) = any_payload.downcast_ref::<TObserved>() {
+                // Mutate THIS panel to provide a flow, then run handler
+                let _ = self_handle.mutate(|record| {
+                    let mut flow = ObserveFlow { record };
+                    handler(payload, &mut flow);
+                });
+            }
+        });
+        register_type_observer_erased(ty, cb);
+        self
+    }
 }
 
 /// Builder dedicated to a single state.
@@ -1424,6 +1846,109 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
 
     pub fn visible(mut self, visible: bool) -> Self {
         self.definition.overrides.visible = Some(visible);
+        self
+    }
+
+    /// Clamp and optional step-quantize a scalar field.
+    /// - Absolute mode (most fields): `range = [min, max, step]` with `step <= 0` meaning no snapping.
+    ///   Snap anchor is `min`: `min + round((v - min)/step)*step`.
+    /// - Relative budget mode (for `Field::OnlyPositionX/OnlyPositionY`): interpret as
+    ///   `range = [0, max_offset, step]` measured from the panel's snapshot/origin captured at drag start.
+    ///   Axis is locked accordingly (X-only or Y-only).
+    pub fn clamp_offset(mut self, field: Field, range: [f32; 3]) -> Self {
+        let mut rule = ClampOffset {
+            field:field.clone(),
+            min: [range[0], 0.0],
+            max: [range[1], 0.0],
+            step: [range[2], 0.0],
+            dims: 1,
+            flags: 0,
+        };
+        // Special-cased semantics: OnlyPositionX/OnlyPositionY -> relative budget around origin.
+        match field {
+            Field::OnlyPositionX => {
+                let max_off = (range[1] - range[0]).max(0.0);
+                rule.min = [0.0, 0.0];
+                rule.max = [max_off, 0.0];
+                rule.flags = 0x1 | 0x2; // relative budget + axis_x_only
+            }
+            Field::OnlyPositionY => {
+                let max_off = (range[1] - range[0]).max(0.0);
+                rule.min = [0.0, 0.0];
+                rule.max = [max_off, 0.0];
+                rule.flags = 0x1 | 0x4; // relative budget + axis_y_only
+            }
+            _ => {}
+        }
+        self.definition.overrides.clamp_offsets.push(rule);
+        self
+    }
+
+    /// Clamp and optional step-quantize a vec2 field (per-axis).
+    /// - `step <= 0` per-component means no snapping on that axis.
+    /// - Snap anchor is `min` per axis.
+    pub fn clamp_offset_v2(
+        mut self,
+        field: Field,
+        min_v: [f32; 2],
+        max_v: [f32; 2],
+        step_v: [f32; 2],
+    ) -> Self {
+        let rule = ClampOffset {
+            field,
+            min: min_v,
+            max: max_v,
+            step: step_v,
+            dims: 2,
+            flags: 0,
+        };
+        self.definition.overrides.clamp_offsets.push(rule);
+        self
+    }
+
+    /// Budget clamp (relative to origin) for scalar axis. `max_offset = [max_x, step]`
+    pub fn clamp_offset_budget(mut self, field: Field, max_offset_and_step: [f32; 2]) -> Self {
+        // flags: relative budget; axis locks derive from field variant
+        let mut flags = 1u32; // relative budget
+        match field {
+            Field::OnlyPositionX => { flags |= 1 << 1; } // axis_x_only
+            Field::OnlyPositionY => { flags |= 1 << 2; } // axis_y_only
+            _ => {}
+        }
+        let rule = ClampOffset {
+            field,
+            min: [0.0, 0.0],
+            max: [max_offset_and_step[0], 0.0],
+            step: [max_offset_and_step[1], 0.0],
+            dims: 1,
+            flags,
+        };
+        self.definition.overrides.clamp_offsets.push(rule);
+        self
+    }
+
+    /// Budget clamp (relative to origin) for vec2 axis. `max_offset = [max_x, max_y]`
+    pub fn clamp_offset_budget_v2(
+        mut self,
+        field: Field,
+        max_offset: [f32; 2],
+        step: [f32; 2],
+    ) -> Self {
+        let mut flags = 1u32; // relative budget
+        match field {
+            Field::OnlyPositionX => { flags |= 1 << 1; }
+            Field::OnlyPositionY => { flags |= 1 << 2; }
+            _ => {}
+        }
+        let rule = ClampOffset {
+            field,
+            min: [0.0, 0.0],
+            max: max_offset,
+            step,
+            dims: 2,
+            flags,
+        };
+        self.definition.overrides.clamp_offsets.push(rule);
         self
     }
 
@@ -1640,6 +2165,8 @@ fn apply_style_patch(overrides: &mut PanelStateOverrides, patch: &PanelStylePatc
 struct InteractionStage<TPayload: PanelPayload> {
     transitions: HashMap<UiEventKind, UiState>,
     callbacks: HashMap<UiEventKind, Arc<EventFn<TPayload>>>,
+    callbacks_with: HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>,
+    data_callbacks: Vec<DataChangeCbEntry<TPayload>>,
 }
 
 pub struct InteractionStageBuilder<TPayload: PanelPayload> {
@@ -1663,6 +2190,37 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
         let event_fn: Arc<EventFn<TPayload>> = Arc::new(handler);
         self.stage.callbacks.insert(event, event_fn);
         self.last_event = Some(event);
+        self
+    }
+    /// Variant of `on_event` that also receives an event payload.
+    pub fn on_event_with<F>(mut self, event: UiEventKind, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, UiEventData) + Send + Sync + 'static,
+    {
+        let event_fn: Arc<EventFnWith<TPayload>> = Arc::new(handler);
+        self.stage.callbacks_with.insert(event, event_fn);
+        self.last_event = Some(event);
+        self
+    }
+    /// Register a data-change listener for any panels with payload type `TObserved`.
+    /// If `source_uuid` is Some(uuid), only changes from that panel trigger the callback.
+    pub fn on_data_change<TObserved, F>(mut self, source_uuid: Option<&str>, handler: F) -> Self
+    where
+        TObserved: PanelPayload,
+        F: for<'a> Fn(&TObserved, &mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
+    {
+        let ty = TypeId::of::<TObserved>();
+        let src = source_uuid.map(|s| s.to_string());
+        let wrapped: Arc<DataChangeErasedFn<TPayload>> = Arc::new(move |any, flow| {
+            if let Some(payload) = any.downcast_ref::<TObserved>() {
+                handler(payload, flow);
+            }
+        });
+        self.stage.data_callbacks.push(DataChangeCbEntry {
+            ty,
+            source_uuid: src,
+            handler: wrapped,
+        });
         self
     }
 
@@ -1690,6 +2248,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             .stage
             .callbacks
             .keys()
+            .chain(self.stage.callbacks_with.keys())
             .chain(self.stage.transitions.keys())
         {
             interaction_mask |= match kind {
@@ -1715,6 +2274,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             .stage
             .callbacks
             .keys()
+            .chain(self.stage.callbacks_with.keys())
             .chain(self.stage.transitions.keys())
         {
             interaction_mask |= match kind {
@@ -1732,8 +2292,15 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
 
         let transitions = std::mem::take(&mut self.stage.transitions);
         let callbacks = std::mem::take(&mut self.stage.callbacks);
+        let callbacks_with = std::mem::take(&mut self.stage.callbacks_with);
+        let data_callbacks = std::mem::take(&mut self.stage.data_callbacks);
         overrides.transitions.extend(transitions);
         self.parent.definition.callbacks.extend(callbacks);
+        self.parent.definition.callbacks_with.extend(callbacks_with);
+        self.parent
+            .definition
+            .data_callbacks
+            .extend(data_callbacks);
         self.parent
     }
 }
@@ -1764,13 +2331,17 @@ fn build_stateful<TPayload: PanelPayload>(
 
     let mut transitions = HashMap::new();
     let mut callbacks = HashMap::new();
+    let mut callbacks_with = HashMap::new();
 
+    let mut data_map: HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>> = HashMap::new();
     for (state_id, definition) in states {
         let PanelStateDefinition {
             overrides,
             frag_shader,
             vertex_shader,
             callbacks: state_callbacks,
+            callbacks_with: state_callbacks_with,
+            data_callbacks,
             animations: _animations,
             relations,
         } = definition;
@@ -1784,19 +2355,30 @@ fn build_stateful<TPayload: PanelPayload>(
 
         transitions.insert(state_id, overrides.transitions.clone());
         callbacks.insert(state_id, state_callbacks);
+        callbacks_with.insert(state_id, state_callbacks_with);
+        // Store data change callbacks into runtime map after runtime is created
+        data_map.insert(state_id, data_callbacks);
 
         if let Some(rel_def) = relations {
             register_panel_relations(panel_key.panel_id, state_id, rel_def);
         }
     }
 
-    install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
+    install_runtime_callbacks::<TPayload>(
+        &panel_key,
+        &callbacks,
+        &transitions,
+        &data_map,
+        &callbacks_with,
+    );
     let mut runtime = PanelRuntime {
         handle,
         current_state: default,
         transitions,
         callbacks,
+        callbacks_with,
         observer_guards: Vec::new(),
+        data_callbacks: data_map,
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
@@ -1829,6 +2411,8 @@ fn build_stateless<TPayload: PanelPayload>(
         vertex_shader,
         frag_shader,
         callbacks,
+        callbacks_with,
+        data_callbacks,
         animations: _animations,
         relations,
     } = definition;
@@ -1842,14 +2426,26 @@ fn build_stateless<TPayload: PanelPayload>(
 
     let transitions = HashMap::from([(state_id, overrides.transitions.clone())]);
     let callbacks = HashMap::from([(state_id, callbacks)]);
+    let callbacks_with = HashMap::from([(state_id, callbacks_with)]);
+    let data_map: HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>> =
+        HashMap::from([(state_id, data_callbacks)]);
 
-    install_runtime_callbacks::<TPayload>(&panel_key, &callbacks, &transitions);
+    install_runtime_callbacks::<TPayload>(
+        &panel_key,
+        &callbacks,
+        &transitions,
+        &data_map,
+        &callbacks_with,
+    );
+    // Note: for stateless we also pass callbacks_with
     let mut runtime = PanelRuntime {
         handle,
         current_state: state_id,
         transitions,
         callbacks,
+        callbacks_with,
         observer_guards: Vec::new(),
+        data_callbacks: data_map,
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
@@ -1888,6 +2484,8 @@ impl PanelStyleListener<UiPanelData> for CountResetListener {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct UiPanelData {
     pub count: u32,
+    /// Optional scalar used by demos to represent brightness/amount in [0,1].
+    pub brightness: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -2170,8 +2768,168 @@ fn build_demo_panel_with_uuid(
 /// Demonstration that mirrors the existing builder usage.
 pub fn build_demo_panel() -> Result<(), DbError> {
     // build_demo_panel_with_uuid("inventory_panel")
-    demo_panel();
+    build_slider_color_demo()?;
     Ok(())
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+struct TestUi{
+    pub test_count:f32,
+    pub lock_state:bool
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+struct SliderLock{
+    pub lock:bool
+}
+
+/// Build a small demo: one draggable slider (with X-axis clamp) and a color panel
+/// whose color responds to events (hover: lighten; out: restore). The slider's drag
+/// also nudges the color panel using an offset color animation to show cross-panel
+/// event response using existing data flow.
+pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
+    let mut handles: Vec<PanelRuntimeHandle> = Vec::new();
+
+    // Target color panel
+    let color_panel = Mui::<TestUi>::new("demo_color_target")?
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            let state = state
+                .z_index(2)
+                .position(vec2(320.0, 180.0))
+                .size(vec2(240.0, 140.0))
+                .color(vec4(0.12, 0.28, 0.60, 1.0))
+                // Respond to brightness changes via observers (data-driven)
+                .events()
+                    .on_data_change::<UiPanelData,_>(None,|target,flow|{
+                        println!("当前color面版监听的事件 {:?}",target);
+                        if(flow.payload_ref().lock_state){ return; }
+                        flow.style_set(PanelField::TRANSPARENT.bits(), [target.brightness,0.0,0.0,0.0]);
+                    })
+                    .on_event(UiEventKind::Hover, |flow| {
+                    // Optional: local hover feedback independent of brightness
+                              flow.position_anim()
+                              .from_current()
+                              .to_offset(vec2(0.0, -6.0))
+                              .duration(0.10)
+                              .easing(Easing::QuadraticOut)
+                              .push(flow);
+                      })
+                    .on_event(UiEventKind::Out, |flow| {
+                        flow.position_anim()
+                            .from_current()
+                            .to_snapshot()
+                            .duration(0.10)
+                            .easing(Easing::QuadraticIn)
+                            .push(flow);
+                    })
+                .finish();
+            state
+        })
+            .build()?
+        ;
+    handles.push(color_panel.clone());
+
+    // Slider "thumb" – draggable only on X, clamped into [120, 580] with 5px steps
+    let x_min = 120.0_f32;
+    let x_max = 580.0_f32;
+    let slider_thumb = Mui::<UiPanelData>::new("demo_slider_thumb")?
+        .default_state(UiState(0))
+        .state(UiState(0), move |state: StateStageBuilder<UiPanelData>| {
+            let state = state
+                .z_index(3)
+                .position(vec2(x_min, 420.0))
+                .size(vec2(36.0, 36.0))
+                .color(vec4(0.85, 0.55, 0.22, 1.0))
+                // X-only with relative budget [0..(x_max-x_min)], step 5px; origin from snapshot
+                .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
+                .events()
+                .on_data_change::<SliderLock,_>(None, |target,flow|{
+                    if(target.lock){
+                        flow.set_state(UiState(1));
+                    }
+                })
+                .on_event_with(UiEventKind::Drag, move |flow,drag_detla| {
+                    // 将滑块位置映射为 [0,1] 的进度，并写入“颜色面板”的 payload.brightness，
+                    // 触发本面板的 DB 提交（只允许改自己）。
+                    let pos = Vec2::from_array(flow.args().record_snapshot.snapshot.position);
+                    let len = (x_max - x_min - 36.0).max(1.0);
+                    let t = ((pos.x - x_min) / len).clamp(0.0, 1.0);
+
+                    match drag_detla {
+                        UiEventData::Vec2(vec2) => {
+                            flow.update_self_payload(|data| {
+                                 data.brightness += vec2.x / x_max;
+                            });
+                        },
+                        _=>{}
+                    }
+
+           
+                })
+                .finish();
+            state
+        })
+        .state(UiState(1), move |state|{
+            let state = state
+                 .color(vec4(1.0, 0.0, 0.22, 1.0))
+                 .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
+                 .events()
+                 .on_data_change::<SliderLock,_>(None, |target,flow|{
+                    if(target.lock == false){
+                         println!("回到state 0");
+                         flow.set_state(UiState(0));
+                    }
+                    flow.update_self_payload(|payload|{
+                        payload.brightness = 0.0;
+                    });
+                  })
+                 .finish()
+                ;
+            state
+        })
+        .build()?;
+    handles.push(slider_thumb);
+
+    // Slider track: a background bar aligned with the slider thumb's origin and height,
+    // width equals the clamp budget (x_max - x_min).
+    let slider_track = Mui::<UiPanelData>::new("demo_slider_track")?
+        .default_state(UiState(0))
+        .state(UiState(0), move |state| {
+            let state = state
+                .z_index(2)
+                .position(vec2(x_min, 420.0))
+                .size(vec2((x_max - x_min), 36.0))
+                .color(vec4(0.2, 0.2, 0.2, 0.65))
+                .events()
+                .finish();
+            state
+        })
+        .build()?;
+    handles.push(slider_track);
+
+    // Update button: clicking it will bump the color target's brightness and trigger its observers.
+    let update_button = Mui::<SliderLock>::new("demo_update_button")?
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            let state = state
+                .z_index(4)
+                .position(vec2(x_min + (x_max - x_min) + 20.0, 420.0))
+                .size(vec2(80.0, 36.0))
+                .color(vec4(0.25, 0.6, 0.3, 0.9))
+                .events()
+                .on_event(UiEventKind::Click, |flow| {
+                    // 只允许改自己的 payload，提交 DB 触发观察者
+                    flow.update_self_payload(|data| {
+                        data.lock = !data.lock;
+                    });
+                })
+                .finish();
+            state
+        })
+        .build()?;
+    handles.push(update_button);
+
+    Ok(handles)
 }
 
 /// Pretty print helper to inspect panel record contents.

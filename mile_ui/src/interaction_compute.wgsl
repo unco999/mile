@@ -110,7 +110,7 @@ struct GpuInteractionFrame {
     _pad2_1: u32,
     _pad2_2: u32,
     drag_delta: vec2<f32>,
-    _pad3: vec2<f32>,
+    pre_event_mouse_pos: vec2<f32>,
     pinch_delta: f32,
     pass_through_depth: u32,
     event_point: vec2<f32>,
@@ -139,6 +139,24 @@ const DRAG_LOCK_INVALID: u32 = 0xffffffffu;
 @group(0) @binding(2) var<storage, read_write> frame_cache: array<GpuInteractionFrame, 2>;
 @group(0) @binding(3) var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 @group(0) @binding(4) var<storage, read_write> panel_anim_delta: array<PanelAnimDelta>;
+// Clamp rule bindings: descriptor (count) + rules array
+struct ClampDescriptor { count: u32, _pad: vec3<u32>, };
+struct GpuClampRule {
+    panel_id: u32,
+    state: u32,
+    field: u32,
+    dims: u32,
+    flags: u32,     // bit0: relative budget, bit1: axis_x_only, bit2: axis_y_only
+    _pad_u32: u32,
+    min_v: vec2<f32>,
+    max_v: vec2<f32>,
+    step_v: vec2<f32>,
+    _pad: vec4<f32>,
+};
+@group(0) @binding(5) var<storage, read_write> clamp_desc: ClampDescriptor;
+@group(0) @binding(6) var<storage, read> clamp_rules: array<GpuClampRule>;
+// Snapshots buffer (state-defined panels), shared convention: group(1), binding(3)
+@group(1) @binding(3) var<storage, read_write> panel_snapshots: array<Panel>;
 
 fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
     let min = panel.position;
@@ -355,8 +373,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let can_request_drag = was_dragging || prev_drag_id == INVALID_ID;
         if (can_request_drag && claim_drag(panel.z_index, panel.id, panel.pass_through)) {
             if (try_lock_drag(panel.id)) {
+                
                 frame_cache[1].drag_id = panel.id;
                 frame_cache[1].trigger_panel_state = panel.state;
+
+                //记录响应差距
+
                 if (!was_dragging) {
                     let event_point = mouse - panel.position;
                     frame_cache[1].event_point = event_point;
@@ -373,9 +395,95 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let active_drag_id = frame_cache[1].drag_id;
         if (active_drag_id == panel.id && panel.id < arrayLength(&panel_anim_delta)) {
             let anchor = panel_anim_delta[panel.id].start_position;
-            let _target = mouse - anchor;
+            var _target = mouse - anchor;
+            // Determine origin from state-defined snapshot if available; fallback to current position.
+            var origin = panel.position;
+            if (panel.id > 0u) {
+                let snap_index = panel.id - 1u;
+                if (snap_index < arrayLength(&panel_snapshots)) {
+                    origin = panel_snapshots[snap_index].position;
+                }
+            }
+            // Apply clamp rules for this panel/state (Position/PositionX/PositionY)
+            let count = clamp_desc.count;
+            if (count > 0u) {
+                for (var i: u32 = 0u; i < count; i = i + 1u) {
+                    let rule = clamp_rules[i];
+                    if (rule.panel_id != panel.id || rule.state != panel.state) {
+                        continue;
+                    }
+                    // Axis locks (flags): bit1 X-only => freeze Y at origin; bit2 Y-only => freeze X at origin
+                    if ((rule.flags & 0x2u) != 0u) { _target.y = origin.y; }
+                    if ((rule.flags & 0x4u) != 0u) { _target.x = origin.x; }
+                    // 0:Position, 1:PositionX, 2:PositionY
+                    if ((rule.flags & 0x1u) != 0u) {
+                        // Relative budget clamp from origin -> origin + max_v (one-sided)
+                        if (rule.field == 0u) {
+                            let sx = select(0.0, rule.step_v.x, rule.step_v.x > 0.0);
+                            let sy = select(0.0, rule.step_v.y, rule.step_v.y > 0.0);
+                            _target.x = clamp(_target.x, origin.x, origin.x + rule.max_v.x);
+                            _target.y = clamp(_target.y, origin.y, origin.y + rule.max_v.y);
+                            if (sx > 0.0) {
+                                let steps = round((_target.x - origin.x) / sx);
+                                _target.x = origin.x + steps * sx;
+                            }
+                            if (sy > 0.0) {
+                                let steps = round((_target.y - origin.y) / sy);
+                                _target.y = origin.y + steps * sy;
+                            }
+                        } else if (rule.field == 1u) {
+                            let s = select(0.0, rule.step_v.x, rule.step_v.x > 0.0);
+                            _target.x = clamp(_target.x, origin.x, origin.x + rule.max_v.x);
+                            if (s > 0.0) {
+                                let steps = round((_target.x - origin.x) / s);
+                                _target.x = origin.x + steps * s;
+                            }
+                        } else if (rule.field == 2u) {
+                            let s = select(0.0, rule.step_v.y, rule.step_v.y > 0.0);
+                            _target.y = clamp(_target.y, origin.y, origin.y + rule.max_v.y);
+                            if (s > 0.0) {
+                                let steps = round((_target.y - origin.y) / s);
+                                _target.y = origin.y + steps * s;
+                            }
+                        }
+                    } else {
+                        // Absolute clamp
+                        if (rule.field == 0u) {
+                            let sx = select(0.0, rule.step_v.x, rule.step_v.x > 0.0);
+                            let sy = select(0.0, rule.step_v.y, rule.step_v.y > 0.0);
+                            _target.x = clamp(_target.x, rule.min_v.x, rule.max_v.x);
+                            _target.y = clamp(_target.y, rule.min_v.y, rule.max_v.y);
+                            if (sx > 0.0) {
+                                let steps = round((_target.x - rule.min_v.x) / sx);
+                                _target.x = rule.min_v.x + steps * sx;
+                            }
+                            if (sy > 0.0) {
+                                let steps = round((_target.y - rule.min_v.y) / sy);
+                                _target.y = rule.min_v.y + steps * sy;
+                            }
+                        } else if (rule.field == 1u) {
+                            let s = select(0.0, rule.step_v.x, rule.step_v.x > 0.0);
+                            _target.x = clamp(_target.x, rule.min_v.x, rule.max_v.x);
+                            if (s > 0.0) {
+                                let steps = round((_target.x - rule.min_v.x) / s);
+                                _target.x = rule.min_v.x + steps * s;
+                            }
+                        } else if (rule.field == 2u) {
+                            let s = select(0.0, rule.step_v.y, rule.step_v.y > 0.0);
+                            _target.y = clamp(_target.y, rule.min_v.y, rule.max_v.y);
+                            if (s > 0.0) {
+                                let steps = round((_target.y - rule.min_v.y) / s);
+                                _target.y = rule.min_v.y + steps * s;
+                            }
+                        }
+                    }
+                }
+            }
             let delta = _target - panel.position;
             panel_anim_delta[panel.id].delta_position = delta;
+                
+            frame_cache[1].drag_delta = delta;
+
             if (mouse_released) {
                 frame_cache[1].drag_id = INVALID_ID;
                 release_drag_lock(panel.id);

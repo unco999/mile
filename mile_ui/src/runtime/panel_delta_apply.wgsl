@@ -95,4 +95,62 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         panels[idx].position += delta;
         panel_deltas[panel_id].delta_position = vec2<f32>(0.0);
     }
+    // Apply size delta
+    let dsize = panel_deltas[panel_id].delta_size;
+    if (dsize.x != 0.0 || dsize.y != 0.0) {
+        panels[idx].size += dsize;
+        panel_deltas[panel_id].delta_size = vec2<f32>(0.0);
+    }
+    // UV offsets
+    let duv_off = panel_deltas[panel_id].delta_uv_offset;
+    if (duv_off.x != 0.0 || duv_off.y != 0.0) {
+        panels[idx].uv_offset += duv_off;
+        panel_deltas[panel_id].delta_uv_offset = vec2<f32>(0.0);
+    }
+    let duv_scale = panel_deltas[panel_id].delta_uv_scale;
+    if (duv_scale.x != 0.0 || duv_scale.y != 0.0) {
+        panels[idx].uv_scale += duv_scale;
+        panel_deltas[panel_id].delta_uv_scale = vec2<f32>(0.0);
+    }
+    // Transparent
+    let dtrans = panel_deltas[panel_id].delta_transparent;
+    if (dtrans != 0.0) {
+        panels[idx].transparent += dtrans;
+        panel_deltas[panel_id].delta_transparent = 0.0;
+    }
+    // Integer-like fields: z_index, pass_through
+    let dz = panel_deltas[panel_id].delta_z_index;
+    if (dz != 0) {
+        let z = i32(panels[idx].z_index) + dz;
+        panels[idx].z_index = u32(max(z, 0));
+        panel_deltas[panel_id].delta_z_index = 0;
+    }
+    let dpass = panel_deltas[panel_id].delta_pass_through;
+    if (dpass != 0) {
+        let p = i32(panels[idx].pass_through) + dpass;
+        panels[idx].pass_through = u32(max(p, 0));
+        panel_deltas[panel_id].delta_pass_through = 0;
+    }
+    // Interaction/event/state mask: OR then clear
+    let di = panel_deltas[panel_id].delta_interaction;
+    if (di != 0u) {
+        panels[idx].interaction = panels[idx].interaction | di;
+        panel_deltas[panel_id].delta_interaction = 0u;
+    }
+    let dem = panel_deltas[panel_id].delta_event_mask;
+    if (dem != 0u) {
+        panels[idx].event_mask = panels[idx].event_mask | dem;
+        panel_deltas[panel_id].delta_event_mask = 0u;
+    }
+    let dsm = panel_deltas[panel_id].delta_state_mask;
+    if (dsm != 0u) {
+        panels[idx].state_mask = panels[idx].state_mask | dsm;
+        panel_deltas[panel_id].delta_state_mask = 0u;
+    }
+    // Texture id overwrite if non-zero delta
+    let dtex = panel_deltas[panel_id].delta_texture_id;
+    if (dtex != 0) {
+        panels[idx].texture_id = u32(max(dtex, 0));
+        panel_deltas[panel_id].delta_texture_id = 0;
+    }
 }
