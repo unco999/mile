@@ -84,10 +84,9 @@ impl App {
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
         runtime.flush_relation_work_if_needed(&ctx.queue);
-        if !runtime.panel_cache.is_empty() {
-            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
-            runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-        }
+        // 始终刷新已注册的 payload；upload 会根据 dirty 标志决定是否重建实例
+        runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+        runtime.upload_panel_instances(&ctx.device, &ctx.queue);
 
 
         // runtime.copy_interaction_swap_frame();
@@ -99,7 +98,6 @@ impl App {
         let Some(ctx) = &self.wgpu_context else {
             return;
         };
-
         let mut mui_runtime = self.mui_runtime.as_ref().unwrap().borrow_mut();
         mui_runtime.mouse_press_tick_first(&ctx.queue);
         mui_runtime.copy_interaction_swap_frame(&ctx.device, &ctx.queue);

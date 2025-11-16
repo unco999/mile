@@ -46,7 +46,7 @@ use std::{
 
 static EVENT_REGISTRY: OnceLock<Arc<Mutex<PanelEventRegistry>>> = OnceLock::new();
 static EVENT_HUB: OnceLock<Arc<UIEventHub>> = OnceLock::new();
-static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>>> =
+static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>>> =
     OnceLock::new();
 static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::new();
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
@@ -75,12 +75,29 @@ fn notify_type_observers_erased(ty: TypeId, source: &PanelKey, payload: &dyn Any
     }
 }
 
-fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send>>> {
+fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 fn pending_state_events() -> &'static Mutex<Vec<StateTransition>> {
     PENDING_STATE_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Install any pending event registrations into the runtime registry.
+/// This should be called at a safe point (e.g. at the start of event polling)
+/// to avoid re-entrant locking during user callbacks.
+pub fn drain_pending_event_registrations() {
+    if let Some(registry_arc) = runtime_event_registry() {
+        let mut pending = pending_registrations().lock().unwrap();
+        if pending.is_empty() {
+            return;
+        }
+        if let Ok(mut registry) = registry_arc.lock() {
+            for task in pending.drain(..) {
+                task(&mut registry);
+            }
+        }
+    }
 }
 
 fn panel_key_registry() -> &'static Mutex<HashMap<TypeId, HashSet<PanelKey>>> {
@@ -310,6 +327,9 @@ pub struct PanelStateOverrides {
     pub transitions: HashMap<UiEventKind, UiState>,
     #[serde(default)]
     pub visible: Option<bool>,
+    /// If true, runtime will initialize position from current mouse pos once and then clear this flag.
+    #[serde(default)]
+    pub trigger_mouse_pos: bool,
     /// Clamp/offset rules applied to specific fields in this state.
     /// - For dims == 1: only X component is used (min[0], max[0], step[0]).
     /// - For dims == 2: X/Y components are applied independently.
@@ -354,6 +374,17 @@ impl Default for PanelSnapshot {
             visible: true,
         }
     }
+}
+
+/// Marks that initial position should be taken from current mouse position at spawn.
+/// This is a CPU-side convenience; runtime will translate it into a concrete position on first upsert
+/// and then clear the flag so future refreshes won't override user changes.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InitialPosition {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "mouse")]
+    Mouse,
 }
 
 const fn panel_snapshot_visible_default() -> bool {
@@ -442,6 +473,42 @@ impl<TPayload: PanelPayload> Default for PanelRecord<TPayload> {
             data: TPayload::default(),
         }
     }
+}
+
+/// Apply initial visual snapshot from a state's overrides so CPU-side snapshot
+/// matches what GPU will resolve on first upload.
+fn apply_initial_snapshot_from_overrides<TPayload: PanelPayload>(
+    record: &mut PanelRecord<TPayload>,
+    overrides: &PanelStateOverrides,
+) {
+    if let Some(texture) = &overrides.texture {
+        record.snapshot.texture = Some(texture.clone());
+    }
+    if let Some(fit) = overrides.fit_to_texture {
+        record.snapshot.fit_to_texture = fit;
+    }
+    if let Some(pos) = overrides.position {
+        record.snapshot.position = pos;
+    }
+    if let Some(col) = overrides.color {
+        record.snapshot.color = col;
+    }
+    if let Some(border) = overrides.border.clone() {
+        record.snapshot.border = Some(border);
+    }
+    if let Some(z) = overrides.z_index {
+        record.snapshot.z_index = z;
+    }
+    if let Some(frag) = overrides.fragment_shader_id {
+        record.snapshot.fragment_shader_id = Some(frag);
+    }
+    if let Some(vs) = overrides.vertex_shader_id {
+        record.snapshot.vertex_shader_id = Some(vs);
+    }
+    if let Some(vis) = overrides.visible {
+        record.snapshot.visible = vis;
+    }
+    // quad_vertex 已在构建流程中单独设置
 }
 
 /// Event emitted whenever a panel record is updated.
@@ -789,42 +856,30 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
     }
 }
 
-fn install_runtime_callbacks<TPayload: PanelPayload>(
+fn install_runtime_callbacks<TPayload: PanelPayload + 'static>(
     key: &PanelKey,
     callbacks: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFn<TPayload>>>>,
     transitions: &HashMap<UiState, HashMap<UiEventKind, UiState>>,
     data_callbacks: &HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>>,
     callbacks_with: &HashMap<UiState, HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>>,
 ) {
-    if let Some(registry_arc) = runtime_event_registry() {
-        let mut registry = registry_arc.lock().unwrap();
+    // 统一入队，避免在回调持锁时重入；在 event_poll 或 runtime 初始化桥接时统一安装。
+    let key_clone = key.clone();
+    let callbacks_cloned = callbacks.clone();
+    let transitions_cloned = transitions.clone();
+    let data_map_cloned = data_callbacks.clone();
+    let callbacks_with_cloned = callbacks_with.clone();
+    let mut pending = pending_registrations().lock().unwrap();
+    pending.push(Box::new(move |registry: &mut PanelEventRegistry| {
         apply_runtime_callbacks::<TPayload>(
-            &mut registry,
-            key,
-            callbacks,
-            transitions,
-            data_callbacks,
-            callbacks_with,
+            registry,
+            &key_clone,
+            &callbacks_cloned,
+            &transitions_cloned,
+            &data_map_cloned,
+            &callbacks_with_cloned,
         );
-    } else {
-        let key_clone = key.clone();
-        let mut pending = pending_registrations().lock().unwrap();
-        pending.push(Box::new(move |registry: &mut PanelEventRegistry| {
-            // Resolve runtime-owned maps at registration time to avoid lifetime issues.
-            if let Ok(guard) = runtime_map::<TPayload>().lock() {
-                if let Some(rt) = guard.get(&key_clone) {
-                    apply_runtime_callbacks::<TPayload>(
-                        registry,
-                        &key_clone,
-                        &rt.callbacks,
-                        &rt.transitions,
-                        &rt.data_callbacks,
-                        &rt.callbacks_with,
-                    );
-                }
-            }
-        }));
-    }
+    }));
 }
 
 fn trigger_data_change_for<TPayload: PanelPayload>(
@@ -890,6 +945,7 @@ type EventFnWith<TPayload> =
 type DataChangeErasedFn<TPayload> =
     dyn for<'a> Fn(&dyn Any, &mut EventFlow<'a, TPayload>) + Send + Sync + 'static;
 
+#[derive(Clone)]
 struct DataChangeCbEntry<TPayload: PanelPayload> {
     ty: TypeId,
     source_uuid: Option<String>,
@@ -1827,6 +1883,14 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self.rel_position_in(RelSpace::Local, pos)
     }
 
+    /// Initialize position from current mouse position once at spawn.
+    /// This sets a flag on the overrides; runtime will translate it to a concrete position
+    /// using the CPU copy of GlobalUniform.mouse_pos during the first GPU write, then clear the flag.
+    pub fn with_trigger_mouse_pos(mut self) -> Self {
+        self.definition.overrides.trigger_mouse_pos = true;
+        self
+    }
+
     pub fn rel_position_in(mut self, space: RelSpace, pos: Vec2) -> Self {
         let value = [pos.x, pos.y];
         self.definition.overrides.position = Some(value);
@@ -2327,6 +2391,9 @@ fn build_stateful<TPayload: PanelPayload>(
                 .states
                 .insert(*state_id, definition.overrides.clone());
         }
+        // 初始化 snapshot，使之与默认状态的 overrides 对齐，方便与 GPU snapshot 对接
+        let ov = record.states.get(&default).cloned().unwrap();
+        apply_initial_snapshot_from_overrides(record,&ov);
     })?;
 
     let mut transitions = HashMap::new();
@@ -2404,6 +2471,9 @@ fn build_stateless<TPayload: PanelPayload>(
         record.states.clear();
         record.snapshot.quad_vertex = quad_vertex;
         record.states.insert(state_id, definition.overrides.clone());
+        let ov = record.states.get(&state_id).cloned().unwrap();
+        apply_initial_snapshot_from_overrides(record,&ov);
+        
     })?;
 
     let PanelStateDefinition {
@@ -2447,6 +2517,7 @@ fn build_stateless<TPayload: PanelPayload>(
         observer_guards: Vec::new(),
         data_callbacks: data_map,
     };
+    
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
 
@@ -2782,6 +2853,10 @@ struct SliderLock{
     pub lock:bool
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+struct UIDefault;
+
+
 /// Build a small demo: one draggable slider (with X-axis clamp) and a color panel
 /// whose color responds to events (hover: lighten; out: restore). The slider's drag
 /// also nudges the color panel using an offset color animation to show cross-panel
@@ -2805,22 +2880,20 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                         if(flow.payload_ref().lock_state){ return; }
                         flow.style_set(PanelField::TRANSPARENT.bits(), [target.brightness,0.0,0.0,0.0]);
                     })
-                    .on_event(UiEventKind::Hover, |flow| {
-                    // Optional: local hover feedback independent of brightness
-                              flow.position_anim()
-                              .from_current()
-                              .to_offset(vec2(0.0, -6.0))
-                              .duration(0.10)
-                              .easing(Easing::QuadraticOut)
-                              .push(flow);
-                      })
-                    .on_event(UiEventKind::Out, |flow| {
-                        flow.position_anim()
-                            .from_current()
-                            .to_snapshot()
-                            .duration(0.10)
-                            .easing(Easing::QuadraticIn)
-                            .push(flow);
+                    .on_event(UiEventKind::Click, |flow|{
+                        let position = Vec2::from_array(flow.record.snapshot.position);
+                        println!("当前position {:?}",position);
+                        let _ = Mui::<UIDefault>::new("nb").unwrap()
+                            .default_state(UiState(0))
+                            .state(UiState(0), |state|{
+                                let state = state
+                                    .color(vec4(0.0, 1.0, 1.0, 1.0))
+                                    .size(vec2(300.0, 300.0))
+                                    .with_trigger_mouse_pos()
+                                    ;
+                                state
+                            })
+                            .build();
                     })
                 .finish();
             state

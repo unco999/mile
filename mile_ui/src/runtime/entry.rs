@@ -32,9 +32,7 @@ use super::{
 use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
     mui_prototype::{
-        PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateOverrides,
-        ShaderStage, UiState, install_runtime_event_bridge, registered_panel_keys,
-        take_pending_shader, PanelStateChanged, UiPanelData,
+        self, PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateChanged, PanelStateOverrides, ShaderStage, UiPanelData, UiState, install_runtime_event_bridge, registered_panel_keys, take_pending_shader
     },
     runtime::_ty::{
         AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, PanelAnimDelta, TransformAnimFieldInfo
@@ -781,16 +779,30 @@ impl MuiRuntime {
                     let mut descriptor =
                         self.build_cpu_descriptor::<TPayload>(key.clone(), record.clone());
                     if let Some(existing) = self.panel_cache.get(key) {
+                        // Preserve display_state chosen by runtime
                         descriptor.display_state = existing.display_state;
+                        // Preserve one-shot flags that runtime has already consumed (e.g., trigger_mouse_pos)
+                        for (sid, new_state) in descriptor.states.iter_mut() {
+                            if let Some(prev_state) = existing.states.get(sid) {
+                                // If previously cleared, keep it cleared to avoid re-triggering
+                                if !prev_state.overrides.trigger_mouse_pos {
+                                    // even if DB says true, do not re-trigger
+                                    let mut ov = &mut new_state.overrides;
+                                    ov.trigger_mouse_pos = false;
+                                }
+                            }
+                        }
                     }
                     let needs_update = match self.panel_cache.get(key) {
                         Some(existing) => existing != &descriptor,
                         None => true,
                     };
                     if needs_update {
+                        // 写入 CPU 缓存
                         self.panel_cache.insert(key.clone(), descriptor.clone());
                         set_panel_active_state(key.panel_id, descriptor.display_state);
-                        // self.panel_instances_dirty = true;
+                        // 立即将该面板写入 GPU（单面板增量写），避免整批重建
+                        self.upsert_panel_immediate_from_descriptor(&descriptor, queue);
                     }
 
                     if !pending.is_empty() {
@@ -803,7 +815,8 @@ impl MuiRuntime {
                 None => {
                     if self.panel_cache.remove(key).is_some() {
                         clear_panel_relations(key.panel_id);
-                        // self.panel_instances_dirty = true;
+                        // 立刻清空该面板的 GPU 数据
+                        // self.apply_destroy_panel(queue, key.panel_id);
                     }
                 }
             }
@@ -852,18 +865,32 @@ impl MuiRuntime {
             self.render.set_indirect_count(kind, 0);
         }
 
-        self.panel_snapshots = panels.clone();
-        self.panel_instances = panels;
+        // Instances keep batch-contiguous order for rendering
+        self.panel_instances = panels.clone();
         for panel in &self.panel_instances {
             snapshot_registry::set_panel_position(panel.id, panel.position);
         }
 
+        // Snapshots are stored id(1-based) aligned: snapshot[id-1] == panel(id)
         if !self.panel_instances.is_empty() {
+            // Build id-aligned snapshot array
+            let max_id = self.panel_instances.iter().map(|p| p.id).max().unwrap_or(0);
+            let mut id_snapshots = vec![Panel::default(); max_id as usize];
+            for p in &self.panel_instances {
+                let idx = p.id.saturating_sub(1) as usize;
+                if idx < id_snapshots.len() {
+                    id_snapshots[idx] = *p;
+                }
+            }
+            self.panel_snapshots = id_snapshots;
+            // Write instances and snapshots
             self.write_panels(queue, 0, &self.panel_instances);
             self.write_snapshot_panels(queue, 0, &self.panel_snapshots);
             // Initialize container_origin with the state-defined snapshot position.
             for panel in &self.panel_snapshots {
-                self.write_panel_origin(queue, panel.id, panel.position);
+                if panel.id != 0 {
+                    self.write_panel_origin(queue, panel.id, panel.position);
+                }
             }
             // Also (re)upload clamp rules derived from panel states.
             self.write_clamp_rules(queue);
@@ -873,6 +900,8 @@ impl MuiRuntime {
     }
 
     pub fn event_poll(&mut self, _device: &Device, queue: &Queue) {
+        // 在进入事件派发前，先在安全时机安装挂起的事件注册，避免回调内重入导致死锁。
+        mui_prototype::drain_pending_event_registrations();
         let events = self.event_hub().poll();
         if events.is_empty() {
             self.process_shader_results(queue);
@@ -915,9 +944,10 @@ impl MuiRuntime {
             let offset = Self::panel_offset(index as u32) + f_off;
             queue.write_buffer(&entry.buffers.instance, offset, data);
         };
-        // Helper to write snapshot buffer
+        // Helper to write snapshot buffer 对齐到 (id-1) 槽位
+        let snap_idx = panel_id.saturating_sub(1);
         let write_snapshot = |entry: &mut Self, f_off: wgpu::BufferAddress, data: &[u8]| {
-            let offset = Self::panel_offset(index as u32) + f_off;
+            let offset = Self::panel_offset(snap_idx) + f_off;
             queue.write_buffer(&entry.buffers.snapshot, offset, data);
         };
         // Offsets
@@ -1085,6 +1115,125 @@ impl MuiRuntime {
         }
     }
 
+    /// Insert or update a single panel directly into the GPU buffers based on the CPU descriptor.
+    /// - Update path: overwrite the existing instance/snapshot at its index.
+    /// - Insert path: insert into the appropriate batch segment to maintain per-batch contiguity,
+    ///   then rewrite the tail region to the GPU buffers and update batch ranges.
+    fn upsert_panel_immediate_from_descriptor(&mut self, desc: &PanelCpuDescriptor, queue: &Queue) {
+        // Build target panel from descriptor, using previous instance as base if present.
+        // One-shot: if overrides request init from mouse, set GPU spawn flag and clear the flag in CPU cache.
+        if let Some(desc_mut) = self.panel_cache.get_mut(&desc.key) {
+            let state_id = desc_mut.display_state;
+            if let Some(state_cpu) = desc_mut.states.get_mut(&state_id) {
+                if state_cpu.overrides.trigger_mouse_pos {
+                    let pid = desc_mut.key.panel_id;
+                    let flag: u32 = 1;
+                    let offset = (pid as wgpu::BufferAddress) * std::mem::size_of::<u32>() as wgpu::BufferAddress;
+                    queue.write_buffer(&self.buffers.spawn_flags, offset, bytemuck::bytes_of(&flag));
+                    // Clear the one-shot flag so future refreshes won't keep overwriting position.
+                    state_cpu.overrides.trigger_mouse_pos = false;
+                    // Mark delta stage dirty so it runs this frame.
+                    self.compute.borrow_mut().panel_delta.set_dirty();
+                }
+            }
+        }
+        let fallback = self
+            .panel_instances
+            .iter()
+            .find(|p| p.id == desc.key.panel_id)
+            .copied();
+        let panel = self.descriptor_to_panel_with_base(desc, fallback.as_ref());
+        // Update if exists
+        if let Some((idx, _)) = self
+            .panel_instances
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.id == panel.id)
+        {
+            self.panel_instances[idx] = panel;
+            self.write_panel(queue, idx as u32, &self.panel_instances[idx]);
+            // Snapshot buffer按 id(1-based) 对齐：写入 (id-1) 槽位
+            let snap_idx = (panel.id.saturating_sub(1)) as usize;
+            if self.panel_snapshots.len() <= snap_idx {
+                self.panel_snapshots.resize(snap_idx + 1, Panel::default());
+            }
+            self.panel_snapshots[snap_idx] = self.panel_instances[idx];
+            self.write_snapshot_panel(queue, snap_idx as u32, &self.panel_snapshots[snap_idx]);
+            // Initialize drag origin from snapshot position
+            self.write_panel_origin(queue, panel.id, panel.position);
+            snapshot_registry::set_panel_position(panel.id, panel.position);
+            return;
+        }
+        // Insert new: keep grouping by batch kind order (Normal -> MultiVertex -> UltraVertex)
+        let kind = desc.quad_vertex;
+        // Compute current batch ranges by scanning descriptors in cache (coarse; acceptable here).
+        let mut normal_end = 0usize;
+        let mut multi_end = 0usize;
+        let mut ultra_end = 0usize;
+        // Reconstruct ordering as in upload_panel_instances: Normal, Multi, Ultra packed.
+        // Count existing instances per kind.
+        let mut normal_ids = Vec::new();
+        let mut multi_ids = Vec::new();
+        let mut ultra_ids = Vec::new();
+        for p in &self.panel_instances {
+            // Find descriptor for this id
+            if let Some(desc_found) = self
+                .panel_cache
+                .values()
+                .find(|d| d.key.panel_id == p.id)
+            {
+                match desc_found.quad_vertex {
+                    QuadBatchKind::Normal => normal_ids.push(p.id),
+                    QuadBatchKind::MultiVertex => multi_ids.push(p.id),
+                    QuadBatchKind::UltraVertex => ultra_ids.push(p.id),
+                }
+            }
+        }
+        normal_end = normal_ids.len();
+        multi_end = normal_end + multi_ids.len();
+        ultra_end = multi_end + ultra_ids.len();
+        // Decide insert index per kind to keep contiguity
+        let insert_idx = match kind {
+            QuadBatchKind::Normal => normal_end,
+            QuadBatchKind::MultiVertex => multi_end,
+            QuadBatchKind::UltraVertex => ultra_end,
+        };
+        // Insert into CPU vectors
+        self.panel_instances.insert(insert_idx, panel);
+        // Snapshot维持 id(1-based) 对齐：写入 (id-1) 槽位
+        let snap_idx = (panel.id.saturating_sub(1)) as usize;
+        if self.panel_snapshots.len() <= snap_idx {
+            self.panel_snapshots.resize(snap_idx + 1, Panel::default());
+        }
+        self.panel_snapshots[snap_idx] = panel;
+        // Rewrite tail region [insert_idx..] for instances only
+        let tail = &self.panel_instances[insert_idx..];
+        self.write_panels(queue, insert_idx as u32, tail);
+        // Snapshot: 只写当前槽位
+        self.write_snapshot_panel(queue, snap_idx as u32, &self.panel_snapshots[snap_idx]);
+        // Update panel origin
+        self.write_panel_origin(queue, panel.id, panel.position);
+        snapshot_registry::set_panel_position(panel.id, panel.position);
+        // Update render batch ranges for affected kinds
+        // Recompute new ranges
+        let total = self.panel_instances.len() as u32;
+        // Recount per kind (as above)
+        let n_count = normal_ids.len() + if matches!(kind, QuadBatchKind::Normal) { 1 } else { 0 };
+        let m_count = multi_ids.len() + if matches!(kind, QuadBatchKind::MultiVertex) { 1 } else { 0 };
+        let u_count = ultra_ids.len() + if matches!(kind, QuadBatchKind::UltraVertex) { 1 } else { 0 };
+        // Normal: 0..n_count
+        self.set_render_batch_range(QuadBatchKind::Normal, 0..n_count as u32);
+        // Multi: n_count..n_count+m_count
+        self.set_render_batch_range(
+            QuadBatchKind::MultiVertex,
+            n_count as u32..(n_count + m_count) as u32,
+        );
+        // Ultra: n_count+m_count..total
+        self.set_render_batch_range(
+            QuadBatchKind::UltraVertex,
+            (n_count + m_count) as u32..total,
+        );
+    }
     fn apply_state_transition(&mut self, transition: StateTransition, queue: &Queue) {
         let panel_id = transition.panel_id;
         let panel_key = self

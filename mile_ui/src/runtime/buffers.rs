@@ -44,6 +44,7 @@ pub struct BufferArena {
     pub instance: wgpu::Buffer,
     pub snapshot: wgpu::Buffer,
     pub panel_anim_delta: wgpu::Buffer,
+    pub spawn_flags: wgpu::Buffer,
     pub animation_fields: wgpu::Buffer,
     pub animation_values: wgpu::Buffer,
     pub animation_descriptor: wgpu::Buffer,
@@ -83,6 +84,12 @@ impl BufferArena {
         });
 
         let panel_anim_delta = PanelAnimDelta::global_init(&device);
+        let spawn_flags = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ui::spawn-flags"),
+            size: (cfg.max_panels as u64 * std::mem::size_of::<u32>() as u64).max(4),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
         let panel_index_stride = (cfg.max_panels as usize).max(1);
         let panel_index_init = vec![u32::MAX; panel_index_stride];
 
@@ -197,6 +204,7 @@ impl BufferArena {
             instance,
             snapshot,
             panel_anim_delta,
+            spawn_flags,
             animation_fields,
             animation_values,
             animation_descriptor,

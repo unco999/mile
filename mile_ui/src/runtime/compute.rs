@@ -44,7 +44,7 @@ impl ComputePipelines {
         Self {
             interaction: InteractionComputeStage::new(device, buffers, global_uniform, event_hub),
             relations: RelationComputeStage::new(device, buffers),
-            panel_delta: PanelDeltaStage::new(device, buffers),
+            panel_delta: PanelDeltaStage::new(device, buffers,global_uniform),
             animation: AnimationComputeStage::new(device, buffers, global_uniform),
         }
     }
@@ -127,7 +127,7 @@ impl ComputePipelines {
         self.interaction
             .rebuild_bind_group(device, buffers, global_uniform);
         self.interaction.set_dirty();
-        self.panel_delta.rebuild_bind_group(device, buffers);
+        self.panel_delta.rebuild_bind_group(device, buffers,&global_uniform);
     }
 
     pub fn rebuild_animation_bind_group(
@@ -139,7 +139,7 @@ impl ComputePipelines {
         self.animation
             .rebuild_bind_groups(device, buffers, global_uniform);
         self.animation.set_dirty();
-        self.panel_delta.rebuild_bind_group(device, buffers);
+        self.panel_delta.rebuild_bind_group(device, buffers, global_uniform);
     }
 
     pub fn update_animation_count(&mut self, count: u32) {
@@ -1102,7 +1102,7 @@ pub struct PanelDeltaStage {
 impl PanelDeltaStage {
     const WORKGROUP_SIZE: u32 = 64;
 
-    pub fn new(device: &wgpu::Device, buffers: &BufferArena) -> Self {
+    pub fn new(device: &wgpu::Device, buffers: &BufferArena, global_uniform: &wgpu::Buffer) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ui::panel-delta-layout"),
             entries: &[
@@ -1138,6 +1138,26 @@ impl PanelDeltaStage {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -1191,6 +1211,14 @@ impl PanelDeltaStage {
                     binding: 3,
                     resource: buffers.snapshot.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: buffers.spawn_flags.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: global_uniform.as_entire_binding(),
+                },
             ],
         });
 
@@ -1206,7 +1234,7 @@ impl PanelDeltaStage {
         self.trace.debug(device, queue);
     }
 
-    pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, buffers: &BufferArena) {
+    pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, buffers: &BufferArena, global_uniform: &wgpu::Buffer) {
         let layout = self.pipeline.get_bind_group_layout(0);
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::panel-delta-bind-group"),
@@ -1227,6 +1255,14 @@ impl PanelDeltaStage {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: buffers.snapshot.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: buffers.spawn_flags.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: global_uniform.as_entire_binding(),
                 },
             ],
         });
