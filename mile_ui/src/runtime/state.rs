@@ -299,24 +299,26 @@ pub struct NetWorkTransition {
     pub panel_id: u32,
 }
 
-#[derive(Debug, Clone)]
-pub enum CpuPanelEvent {
-    OUT((FRAME, UiInteractionScope)),
-    Hover((FRAME, UiInteractionScope)),
-    Click((FRAME, UiInteractionScope)),
-    StateTransition(StateTransition),
-    Drag((Vec2, UiInteractionScope)),
-    NetWorkTransition(NetWorkTransition),
-    TotalUpdate(FRAME),
-    SwapInteractionFrame(FRAME),
-    WgslResult(WgslResult),
-    SpecielAnim((u32, TransformAnimFieldInfo)),
-    Frag((FRAME, UiInteractionScope)),
-    Vertex((FRAME, UiInteractionScope)),
-    /// CPU panel rewrite signal: entry applies offsets instead of direct panel mutation.
-    PanelStyleRewrite(PanelStyleRewrite),
-    DataChange(DataChangeEnvelope),
-}
+    #[derive(Debug, Clone)]
+    pub enum CpuPanelEvent {
+        OUT((FRAME, UiInteractionScope)),
+        Hover((FRAME, UiInteractionScope)),
+        Click((FRAME, UiInteractionScope)),
+        StateTransition(StateTransition),
+        Drag((Vec2, UiInteractionScope)),
+        NetWorkTransition(NetWorkTransition),
+        TotalUpdate(FRAME),
+        SwapInteractionFrame(FRAME),
+        WgslResult(WgslResult),
+        SpecielAnim((u32, TransformAnimFieldInfo)),
+        Frag((FRAME, UiInteractionScope)),
+        Vertex((FRAME, UiInteractionScope)),
+        /// CPU panel rewrite signal: entry applies offsets instead of direct panel mutation.
+        PanelStyleRewrite(PanelStyleRewrite),
+        DataChange(DataChangeEnvelope),
+        /// Destroy panel by id (remove from cache and instances on next upload).
+        DestroyPanel(u32),
+    }
 
 #[derive(Clone,Debug)]
 pub struct DataChangeEnvelope {

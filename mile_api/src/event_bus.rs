@@ -20,6 +20,8 @@ impl<T: Any + Send + Sync + 'static> Event for T {}
 
 type DynEvent = Arc<dyn Any + Send + Sync + 'static>;
 
+
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverflowStrategy {
     Block,

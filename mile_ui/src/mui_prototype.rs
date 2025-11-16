@@ -5,12 +5,10 @@ use crate::{
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
-        QuadBatchKind, panel_position, register_payload_refresh,
-        relations::register_panel_relations,
-        state::{
+        QuadBatchKind, entry::PanelCustomScopeEvent, panel_position, register_payload_refresh, relations::register_panel_relations, state::{
             CpuPanelEvent, DataChangeEnvelope, PanelEventRegistry, PanelStyleRewrite,
             StateConfigDes, StateOpenCall, StateTransition, UIEventHub, UiInteractionScope,
-        },
+        }
     },
     structs::{PanelField, PanelInteraction},
 };
@@ -52,6 +50,30 @@ static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::n
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
 static PENDING_SHADERS: OnceLock<Mutex<HashMap<u32, PendingShaderRequest>>> = OnceLock::new();
 static NEXT_SHADER_IDX: AtomicU32 = AtomicU32::new(1);
+
+// Latch for last custom-scope bits to support builder-time event gating.
+static LAST_CUSTOM_SCOPE_BITS: OnceLock<Mutex<Option<u32>>> = OnceLock::new();
+fn last_custom_scope_bits() -> Option<u32> {
+    LAST_CUSTOM_SCOPE_BITS
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|g| *g)
+}
+fn set_last_custom_scope_bits(bits: u32) {
+    if let Ok(mut g) = LAST_CUSTOM_SCOPE_BITS.get_or_init(|| Mutex::new(None)).lock() {
+        *g = Some(bits);
+    }
+}
+
+/// Helper to publish a custom-scope event and update the local latch so `.with_event` can see it
+/// immediately within the same call stack (avoids waiting for runtime poll).
+pub fn publish_panel_custom_scope(panel_field_bits: u32) {
+    set_last_custom_scope_bits(panel_field_bits);
+    global_event_bus().publish(crate::runtime::entry::PanelCustomScopeEvent {
+        panel_field: panel_field_bits,
+    });
+}
 
 // Typed observers (erased): subscribe to payload type by TypeId, handler receives &dyn Any payload
 type ErasedTypeCb = Arc<dyn Fn(&PanelKey, &dyn Any) + Send + Sync + 'static>;
@@ -1102,6 +1124,32 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     }
 }
 
+/// Spawn guard evaluated immediately after build; if not passed, panel will be scheduled for destruction.
+#[derive(Clone, Debug)]
+pub enum SpawnGuard {
+    /// Always allow spawn
+    Always,
+    /// Require that the last published PanelCustomScopeEvent contains any of the provided bits.
+    CustomScopeAnyOf(u32),
+}
+impl SpawnGuard {
+    pub fn passed(&self) -> bool {
+        match *self {
+            SpawnGuard::Always => true,
+            SpawnGuard::CustomScopeAnyOf(mask) => {
+                if mask == 0 {
+                    return true;
+                }
+                if let Some(bits) = last_custom_scope_bits() {
+                    (bits & mask) != 0
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 /// Lightweight flow used inside type-based observers. It allows mutating the
 /// receiving panel's payload and enqueueing animations, similar to EventFlow.
 pub struct ObserveFlow<'a, TPayload: PanelPayload> {
@@ -1539,7 +1587,7 @@ pub fn trigger_event<TPayload: PanelPayload>(key: &PanelKey, event: UiEventKind)
 /// Handle returned by `build` so tests can trigger events.
 #[derive(Clone)]
 pub struct PanelRuntimeHandle {
-    key: PanelKey,
+    pub(crate) key: PanelKey,
 }
 
 impl PanelRuntimeHandle {
@@ -1597,6 +1645,7 @@ pub struct Mui<TPayload: PanelPayload> {
     mode: FlowMode<TPayload>,
     observers: Vec<Arc<dyn PanelStyleListener<TPayload>>>,
     quad_vertex: QuadBatchKind,
+    spawn_guard: Option<SpawnGuard>,
 }
 
 impl<TPayload: PanelPayload> Mui<TPayload> {
@@ -1623,6 +1672,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
             },
             observers: Vec::new(),
             quad_vertex: QuadBatchKind::Normal,
+            spawn_guard: None,
         })
     }
 
@@ -1644,6 +1694,7 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
             },
             observers: Vec::new(),
             quad_vertex: QuadBatchKind::Normal,
+            spawn_guard: None,
         })
     }
 
@@ -1724,23 +1775,30 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
     }
 
     pub fn build(self) -> Result<PanelRuntimeHandle, DbError> {
-        let handle = self.handle;
-        let quad_vertex = self.quad_vertex;
-        match self.mode {
+        let Self {
+            handle,
+            mode,
+            observers,
+            quad_vertex,
+            spawn_guard,
+        } = self;
+        let result = match mode {
             FlowMode::Stateful {
                 default_state,
                 states,
-            } => build_stateful::<TPayload>(
-                handle,
-                default_state,
-                states,
-                self.observers,
-                quad_vertex,
-            ),
+            } => build_stateful::<TPayload>(handle.clone(), default_state, states, observers, quad_vertex),
             FlowMode::Stateless { state } => {
-                build_stateless::<TPayload>(handle, state, self.observers, quad_vertex)
+                build_stateless::<TPayload>(handle.clone(), state, observers, quad_vertex)
+            }
+        };
+        if let (Ok(h), Some(g)) = (&result, spawn_guard) {
+            if !g.passed() {
+                if let Some(hub) = runtime_event_hub() {
+                    hub.push(CpuPanelEvent::DestroyPanel(h.key.panel_id));
+                }
             }
         }
+        result
     }
 
     pub fn register_style_listener<L>(&self, listener: L) -> PanelListenerGuard<TPayload>
@@ -1748,6 +1806,14 @@ impl<TPayload: PanelPayload> Mui<TPayload> {
         L: PanelStyleListener<TPayload>,
     {
         self.handle.register_listener(Arc::new(listener))
+    }
+
+    /// Gate the spawn with an event guard. If the guard is not passed at build time,
+    /// the panel will be created and immediately scheduled for destruction on the UI event loop.
+    /// For immediate same-call visibility, prefer calling `publish_panel_custom_scope(...)` before build.
+    pub fn with_event(mut self, guard: SpawnGuard) -> Self {
+        self.spawn_guard = Some(guard);
+        self
     }
 
     /// Observe DB changes for any panels with payload type `TObserved`.
@@ -2564,6 +2630,8 @@ fn frag_template(intensity: f32) -> Expr {
 struct DataTest {
     count: u32,
 }
+
+
 //这个数据是一个绑定数据  我们可以给ui当作flow 比如在点击的时候改变count
 
 //这里创造了一个绑定DataTest数据流的UI  名字叫test_container
@@ -2603,6 +2671,7 @@ fn demo_panel()->Result<(),DbError> {
                             let mut data_test = flow.payload(); //这里是取出DataTest的可变引用
                             data_test.count += 1; //给他增加值;
                             flow.set_state(UiState(1)); //如果点击 我们切换到状态1
+
                         })
                         .finish();
                     state
@@ -2778,6 +2847,9 @@ struct TestUi{
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+struct DefaultUI;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 struct SliderLock{
     pub lock:bool
 }
@@ -2789,6 +2861,15 @@ struct SliderLock{
 pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
     let mut handles: Vec<PanelRuntimeHandle> = Vec::new();
 
+    let _menu = Mui::<DefaultUI>::new("test_menu")?
+                    .with_event(SpawnGuard::CustomScopeAnyOf(2))
+                    .state(UiState(0), |state|{
+                        let state = state
+                            .size(vec2(200.0,200.0))
+                            .color(vec4(1.0, 1.0, 1.0, 1.0));
+                        state
+                    })
+                    .build();
     // Target color panel
     let color_panel = Mui::<TestUi>::new("demo_color_target")?
         .default_state(UiState(0))
@@ -2805,27 +2886,13 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                         if(flow.payload_ref().lock_state){ return; }
                         flow.style_set(PanelField::TRANSPARENT.bits(), [target.brightness,0.0,0.0,0.0]);
                     })
-                    .on_event(UiEventKind::Hover, |flow| {
-                    // Optional: local hover feedback independent of brightness
-                              flow.position_anim()
-                              .from_current()
-                              .to_offset(vec2(0.0, -6.0))
-                              .duration(0.10)
-                              .easing(Easing::QuadraticOut)
-                              .push(flow);
-                      })
-                    .on_event(UiEventKind::Out, |flow| {
-                        flow.position_anim()
-                            .from_current()
-                            .to_snapshot()
-                            .duration(0.10)
-                            .easing(Easing::QuadraticIn)
-                            .push(flow);
+                    .on_event(UiEventKind::Click, |_|{
+                        publish_panel_custom_scope(2);
                     })
                 .finish();
             state
         })
-            .build()?
+        .build()?
         ;
     handles.push(color_panel.clone());
 

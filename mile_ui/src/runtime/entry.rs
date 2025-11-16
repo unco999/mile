@@ -185,6 +185,12 @@ pub struct PanelCpuDescriptor {
     pub quad_vertex: QuadBatchKind,
 }
 
+type PanelFieldBits = u32;
+
+#[derive(Debug)]
+pub struct PanelCustomScopeEvent{
+    pub panel_field:PanelFieldBits
+}
 /// Central runtime orchestrator that will eventually replace `GpuUi`.
 pub struct MuiRuntime {
     pub buffers: BufferArena,
@@ -203,6 +209,7 @@ pub struct MuiRuntime {
     pub global_event_bus: &'static EventBus,
     pub global_db: &'static MileDb,
     shader_events: EventStream<KennelResultIdxEvent>,
+    pub panel_custom_events:EventStream<PanelCustomScopeEvent>,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
     pub panel_snapshots: Vec<Panel>,
@@ -319,6 +326,7 @@ impl MuiRuntime {
         let compute = ComputePipelines::new(device, &buffers, global_uniform.buffer(), hub.clone());
         install_runtime_event_bridge(registry, hub.clone());
         let shader_events = global_event_bus().subscribe::<KennelResultIdxEvent>();
+        let panel_custom_events = global_event_bus().subscribe::<PanelCustomScopeEvent>();
 
         Self {
             texture_atlas_store: TextureAtlasStore::default(),
@@ -346,6 +354,7 @@ impl MuiRuntime {
             animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime_render")),
             pending_relation_flush: false,
+            panel_custom_events,
         }
     }
 
@@ -358,6 +367,13 @@ impl MuiRuntime {
     #[inline]
     pub fn buffers(&self) -> &BufferArena {
         &self.buffers
+    }
+
+    pub fn poll_panel_custom_events(&self){
+        while let Ok(event) = self.panel_custom_events.try_recv() {
+            let event = event.into_arc();
+            println!("当前收到了面板的自定义事件 {:?}",event);
+        }
     }
 
     pub fn test_rel_build(&mut self) {
@@ -888,11 +904,56 @@ impl MuiRuntime {
             if let CpuPanelEvent::StateTransition(transition) = &event {
                 println!("transition {:?}", transition);
                 self.apply_state_transition(transition.clone(), queue);
+                continue;
+            }
+            if let CpuPanelEvent::DestroyPanel(panel_id) = &event {
+                self.apply_destroy_panel(queue, *panel_id);
+                continue;
             }
             guard.emit(&event);
         }
         drop(guard);
         self.process_shader_results(queue);
+    }
+
+    fn apply_destroy_panel(&mut self, queue: &Queue, panel_id: u32) {
+        // Remove from cache by key
+        if let Some(key) = self
+            .panel_cache
+            .keys()
+            .find(|k| k.panel_id == panel_id)
+            .cloned()
+        {
+            println!("销毁了一个panel");
+            self.panel_cache.remove(&key);
+            clear_panel_relations(panel_id);
+            // 立即清空该实例的 GPU/CPU 数据，不依赖后续的实例重建。
+            if let Some((index, _panel)) = self
+                .panel_instances
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|(_, p)| p.id == panel_id)
+            {
+                // 构造“清空”后的面板：保留 id，其余字段默认（不参与交互与渲染）
+                let mut empty = Panel::default();
+                // 写入实例与快照缓冲（整块写）
+                self.write_panel(queue, index as u32, &empty);
+                self.write_snapshot_panel(queue, index as u32, &empty);
+                // 同步到 CPU 缓存
+                if let Some(slot) = self.panel_instances.get_mut(index) {
+                    *slot = empty;
+                }
+                if let Some(slot) = self.panel_snapshots.get_mut(index) {
+                    *slot = empty;
+                }
+                // 清空该 id 的增量缓冲（整块写）
+                let stride = std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress;
+                let base = (panel_id as wgpu::BufferAddress) * stride;
+                let mut zero = PanelAnimDelta::default();
+                zero.write_to_buffer(queue, &self.buffers.panel_anim_delta, base);
+            }
+        }
     }
 
     fn apply_panel_style_rewrite(&mut self, queue: &Queue, sig: &PanelStyleRewrite) {

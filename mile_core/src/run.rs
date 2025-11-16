@@ -149,6 +149,7 @@ impl App {
         if let Some(runtime_cell) = &self.mui_runtime {
             let mut runtime = runtime_cell.borrow_mut();
             runtime.event_poll(&ctx.device, &ctx.queue);
+            runtime.poll_panel_custom_events();
         }
 
         if let Some(runtime_cell) = &self.mile_font{
