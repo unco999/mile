@@ -23,20 +23,69 @@ use std::{
 };
 use wgpu::{SurfaceError, TextureFormat};
 use winit::{
-    application::ApplicationHandler,
-    dpi::PhysicalPosition,
-    event::{ElementState, KeyEvent, WindowEvent},
-    keyboard::{KeyCode, PhysicalKey},
-    window::{self, Window, WindowAttributes},
+    application::ApplicationHandler, dpi::PhysicalPosition, event::{ElementState, KeyEvent, WindowEvent}, event_loop::EventLoop, keyboard::{KeyCode, PhysicalKey}, window::{self, Window, WindowAttributes}
 };
 use winit::{
     event::MouseButton,
     event_loop::{ActiveEventLoop, ControlFlow},
 };
 
-use crate::GlobalState;
+pub struct Mile{
+    App:App,
+    runtime:Option<EventLoop<AppEvent>>
+}
 
-#[derive(Clone)]
+impl Mile{
+   pub fn add_demo<F>(&mut self, f: F)->&mut Self
+    where
+        F: Fn() + 'static,
+    {
+        println!("插入案例");
+        self.App.demo = Some(Box::new(f));
+        self
+    }
+
+    pub fn new()->Mile{
+        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> = EventLoop::<AppEvent>::with_user_event();
+        
+        let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
+        let _proxy = event_loop_main.create_proxy();
+        
+        // GlobalState keeps GPU/device handles shared across threads.
+        
+        // App bundles hubs, fonts, rendering context, and timing info.
+        let mut app = App::new();
+        Mile{
+            App:app,
+            runtime:Some(event_loop_main)
+        }
+    }
+
+    pub fn run(&mut self){
+        if let Some(event_loop) = self.runtime.take() {
+            event_loop
+                .run_app(&mut self.App)
+                .expect("runtime error");
+        }
+    }
+}
+
+impl App {
+    pub fn build() -> App {
+        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> = EventLoop::<AppEvent>::with_user_event();
+        
+        let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
+        let _proxy = event_loop_main.create_proxy();
+        
+        // GlobalState keeps GPU/device handles shared across threads.
+        
+        // App bundles hubs, fonts, rendering context, and timing info.
+        let mut app = App::new();
+        
+        app
+    }
+}
+
 pub struct App {
     pub wgpu_context: Option<WGPUContext>,
     pub mui_runtime: Option<Arc<RefCell<MuiRuntime>>>,
@@ -49,6 +98,7 @@ pub struct App {
     pub delta_time: Duration,
     pub frame_index: u32,
     pub demo_panel_handles: Vec<PanelRuntimeHandle>,
+    pub demo:Option<Box<dyn Fn()>>
 }
 
 
@@ -67,6 +117,7 @@ impl App {
             delta_time: Duration::from_secs_f32(0.0),
             frame_index: 0,
             demo_panel_handles: Vec::new(),
+            demo:None
         }
     }
 
@@ -214,6 +265,17 @@ impl App {
                 font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
             }
         }
+
+        if let Some(demo) = self.demo.take() {
+            (demo)();
+        }
+        if let Some(runtime_cell) = &self.mui_runtime {
+            let ctx = self.wgpu_context.as_ref().unwrap();
+            let mut runtime = runtime_cell.borrow_mut();
+            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+            runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+            runtime.schedule_relation_flush();
+        }
     }
 }
 
@@ -350,26 +412,26 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if matches!(event.state, ElementState::Pressed)
-                    && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Space))
-                {
+                // if matches!(event.state, ElementState::Pressed)
+                //     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Space))
+                // {
                         
-                }
-                if matches!(event.state, ElementState::Pressed)
-                    && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
-                {
-                    if let Some(runtime_cell) = &self.mui_runtime {
-                        if runtime_cell.borrow().panel_instances.is_empty() {
-                            if let Ok(handles) = build_demo_panel() {
-                                let ctx = self.wgpu_context.as_ref().unwrap();
-                                let mut runtime = runtime_cell.borrow_mut();
-                                runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
-                                runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-                                runtime.schedule_relation_flush();
-                            }
-                        }
-                    }
-                }
+                // }
+                // if matches!(event.state, ElementState::Pressed)
+                //     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))
+                // {
+                //     if let Some(runtime_cell) = &self.mui_runtime {
+                //         if runtime_cell.borrow().panel_instances.is_empty() {
+                //             if let Ok(handles) = build_demo_panel() {
+                //                 let ctx = self.wgpu_context.as_ref().unwrap();
+                //                 let mut runtime = runtime_cell.borrow_mut();
+                //                 runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+                //                 runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+                //                 runtime.schedule_relation_flush();
+                //             }
+                //         }
+                //     }
+                // }
             }
             _ => {}
         }

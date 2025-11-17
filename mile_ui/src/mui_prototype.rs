@@ -778,6 +778,8 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
 ) {
     let mut states: HashSet<UiState> = HashSet::new();
     states.extend(callbacks.keys().copied());
+    states.extend(callbacks_with.keys().copied());
+    states.extend(data_callbacks.keys().copied());
     states.extend(transitions.keys().copied());
     for targets in transitions.values() {
         states.extend(targets.values().copied());
@@ -961,11 +963,11 @@ pub struct PanelEventArgs<TPayload: PanelPayload> {
 }
 
 pub struct EventFlow<'a, TPayload: PanelPayload> {
-    record: &'a mut PanelRecord<TPayload>,
-    args: &'a PanelEventArgs<TPayload>,
-    current_state: &'a mut UiState,
-    transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
-    override_state: Option<UiState>,
+    pub record: &'a mut PanelRecord<TPayload>,
+    pub args: &'a PanelEventArgs<TPayload>,
+    pub current_state: &'a mut UiState,
+    pub transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
+    pub override_state: Option<UiState>,
 }
 
 impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {

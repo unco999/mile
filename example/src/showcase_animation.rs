@@ -1,7 +1,7 @@
 use glam::{vec2, vec4};
 use mile_db::DbError;
-use mile_ui::mui_prototype::{Mui, UiEventKind, UiPanelData, UiState};
 use mile_ui::mui_anim::Easing;
+use mile_ui::mui_prototype::{Mui, UiEventKind, UiPanelData, UiState};
 
 // A panel that animates position and color on hover/click.
 pub fn register_animation_demo() -> Result<(), DbError> {
@@ -41,6 +41,6 @@ pub fn register_animation_demo() -> Result<(), DbError> {
                 .finish()
         })
         .build()?;
+        println!("执行了");
     Ok(())
 }
-

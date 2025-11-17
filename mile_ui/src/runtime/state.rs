@@ -166,6 +166,7 @@ impl PanelEventRegistry {
                 Self::emit_callbacks(self.entry_callbacks.get_mut(scope), scope.panel_id);
             }
             CpuPanelEvent::Drag((vec2, scope)) => {
+                println!("接受到拖拽");
                 Self::emit_callbacks(self.drag_callbacks.get_mut(scope), vec2.clone());
             }
             CpuPanelEvent::Hover((_frame, scope)) => {

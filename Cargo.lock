@@ -764,6 +764,9 @@ dependencies = [
  "mile_gpu_dsl",
  "mile_graphics",
  "mile_ui",
+ "serde",
+ "serde_json",
+ "winit",
 ]
 
 [[package]]
