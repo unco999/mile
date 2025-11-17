@@ -87,7 +87,9 @@ impl BufferArena {
         let spawn_flags = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui::spawn-flags"),
             size: (cfg.max_panels as u64 * std::mem::size_of::<u32>() as u64).max(4),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let panel_index_stride = (cfg.max_panels as usize).max(1);

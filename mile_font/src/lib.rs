@@ -8,7 +8,7 @@ pub mod event {
 
     use crate::prelude::FontStyle;
 
-    pub fn font_str<'a>(text:&'a str)->Arc<str>{
+    pub fn font_str<'a>(text: &'a str) -> Arc<str> {
         Arc::from(text)
     }
 
@@ -18,14 +18,13 @@ pub mod event {
         pub font_file_path: Arc<str>,
     }
 
-    
     /**
      * 批量文件的plan
      * 需要写清楚
      */
     pub struct BatchRenderFont {
         pub text: Arc<str>,
-        pub font_file_path: Arc<str>,    
+        pub font_file_path: Arc<str>,
         pub parent: PanelId,
         pub font_style: Arc<FontStyle>,
     }

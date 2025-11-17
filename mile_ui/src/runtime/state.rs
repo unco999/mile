@@ -30,6 +30,9 @@ pub struct WgslResult {
 /// Callbacks registered for UI interaction scopes.
 pub type ClickCallback = Box<dyn FnMut(u32) + Send>;
 pub type DragCallback = Box<dyn FnMut(Vec2) + Send>;
+pub type SourceDragCallback = Box<dyn FnMut(u32) + Send>;
+pub type TargetDragCallback = Box<dyn FnMut(u32) + Send>;
+pub type TargetDragOverCallback = Box<dyn FnMut(Vec2) + Send>;
 pub type HoverCallback = Box<dyn FnMut(u32) + Send>;
 pub type EntryCallBack = Box<dyn FnMut(u32) + Send>;
 pub type OutCallBack = Box<dyn FnMut(u32) + Send>;
@@ -46,12 +49,20 @@ pub struct UiInteractionScope {
 pub struct PanelEventRegistry {
     click_callbacks: HashMap<UiInteractionScope, Vec<ClickCallback>>,
     drag_callbacks: HashMap<UiInteractionScope, Vec<DragCallback>>,
+    source_drag_start_callbacks: HashMap<UiInteractionScope, Vec<SourceDragCallback>>,
+    source_drag_drop_callbacks: HashMap<UiInteractionScope, Vec<SourceDragCallback>>,
+    target_drag_enter_callbacks: HashMap<UiInteractionScope, Vec<TargetDragCallback>>,
+    target_drag_leave_callbacks: HashMap<UiInteractionScope, Vec<TargetDragCallback>>,
+    target_drag_drop_callbacks: HashMap<UiInteractionScope, Vec<TargetDragCallback>>,
+    target_drag_over_callbacks: HashMap<UiInteractionScope, Vec<TargetDragOverCallback>>,
     hover_callbacks: HashMap<UiInteractionScope, Vec<HoverCallback>>,
     entry_callbacks: HashMap<UiInteractionScope, Vec<EntryCallBack>>,
     out_callbacks: HashMap<UiInteractionScope, Vec<OutCallBack>>,
     frag_callbacks: HashMap<UiInteractionScope, Vec<EntryFragBack>>,
     vertex_callbacks: HashMap<UiInteractionScope, Vec<EntryVertexBack>>,
     data_callbacks: HashMap<UiInteractionScope, Vec<DataChangeReg>>,
+    drag_source: Option<UiInteractionScope>,
+    drag_target: Option<UiInteractionScope>,
 }
 
 type DataChangeTrigger = Box<dyn FnMut(&DataChangeEnvelope) + Send>;
@@ -70,7 +81,7 @@ impl PanelEventRegistry {
         map.entry(scope).or_default()
     }
 
-    fn emit_callbacks<T,V:Clone>(callbacks: Option<&mut Vec<T>>, val: V)
+    fn emit_callbacks<T, V: Clone>(callbacks: Option<&mut Vec<T>>, val: V)
     where
         T: FnMut(V),
     {
@@ -82,12 +93,24 @@ impl PanelEventRegistry {
     pub fn unregister_scope(&mut self, scope: &UiInteractionScope) {
         self.click_callbacks.remove(scope);
         self.drag_callbacks.remove(scope);
+        self.source_drag_start_callbacks.remove(scope);
+        self.source_drag_drop_callbacks.remove(scope);
+        self.target_drag_enter_callbacks.remove(scope);
+        self.target_drag_leave_callbacks.remove(scope);
+        self.target_drag_drop_callbacks.remove(scope);
+        self.target_drag_over_callbacks.remove(scope);
         self.hover_callbacks.remove(scope);
         self.entry_callbacks.remove(scope);
         self.out_callbacks.remove(scope);
         self.frag_callbacks.remove(scope);
         self.vertex_callbacks.remove(scope);
         self.data_callbacks.remove(scope);
+        if self.drag_source == Some(*scope) {
+            self.drag_source = None;
+        }
+        if self.drag_target == Some(*scope) {
+            self.drag_target = None;
+        }
     }
 
     pub fn register_click<F>(&mut self, scope: UiInteractionScope, callback: F)
@@ -102,6 +125,48 @@ impl PanelEventRegistry {
         F: FnMut(Vec2) + Send + 'static,
     {
         Self::registry_for(&mut self.drag_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_source_drag_start<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(u32) + Send + 'static,
+    {
+        Self::registry_for(&mut self.source_drag_start_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_source_drag_drop<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(u32) + Send + 'static,
+    {
+        Self::registry_for(&mut self.source_drag_drop_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_target_drag_enter<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(u32) + Send + 'static,
+    {
+        Self::registry_for(&mut self.target_drag_enter_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_target_drag_leave<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(u32) + Send + 'static,
+    {
+        Self::registry_for(&mut self.target_drag_leave_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_target_drag_drop<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(u32) + Send + 'static,
+    {
+        Self::registry_for(&mut self.target_drag_drop_callbacks, scope).push(Box::new(callback));
+    }
+
+    pub fn register_target_drag_over<F>(&mut self, scope: UiInteractionScope, callback: F)
+    where
+        F: FnMut(Vec2) + Send + 'static,
+    {
+        Self::registry_for(&mut self.target_drag_over_callbacks, scope).push(Box::new(callback));
     }
 
     pub fn register_hover<F>(&mut self, scope: UiInteractionScope, callback: F)
@@ -166,8 +231,45 @@ impl PanelEventRegistry {
                 Self::emit_callbacks(self.entry_callbacks.get_mut(scope), scope.panel_id);
             }
             CpuPanelEvent::Drag((vec2, scope)) => {
-                println!("接受到拖拽");
                 Self::emit_callbacks(self.drag_callbacks.get_mut(scope), vec2.clone());
+            }
+            CpuPanelEvent::SourceDragStart((_frame, scope)) => {
+                self.drag_source = Some(*scope);
+                Self::emit_callbacks(
+                    self.source_drag_start_callbacks.get_mut(scope),
+                    scope.panel_id,
+                );
+            }
+            CpuPanelEvent::SourceDragDrop((_frame, scope)) => {
+                self.drag_source = None;
+                Self::emit_callbacks(
+                    self.source_drag_drop_callbacks.get_mut(scope),
+                    scope.panel_id,
+                );
+            }
+            CpuPanelEvent::TargetDragEnter((_frame, scope)) => {
+                self.drag_target = Some(*scope);
+                Self::emit_callbacks(
+                    self.target_drag_enter_callbacks.get_mut(scope),
+                    scope.panel_id,
+                );
+            }
+            CpuPanelEvent::TargetDragLeave((_frame, scope)) => {
+                self.drag_target = None;
+                Self::emit_callbacks(
+                    self.target_drag_leave_callbacks.get_mut(scope),
+                    scope.panel_id,
+                );
+            }
+            CpuPanelEvent::TargetDragDrop((_frame, scope)) => {
+                self.drag_target = None;
+                Self::emit_callbacks(
+                    self.target_drag_drop_callbacks.get_mut(scope),
+                    scope.panel_id,
+                );
+            }
+            CpuPanelEvent::TargetDragOver((vec2, scope)) => {
+                Self::emit_callbacks(self.target_drag_over_callbacks.get_mut(scope), vec2.clone());
             }
             CpuPanelEvent::Hover((_frame, scope)) => {
                 Self::emit_callbacks(self.hover_callbacks.get_mut(scope), scope.panel_id);
@@ -216,6 +318,8 @@ pub struct UIEventHub {
     pub sender: Sender<CpuPanelEvent>,
     pub receiver: Receiver<CpuPanelEvent>,
     pub pre_hover_panel_id: Option<u32>,
+    pub drag_source: Option<UiInteractionScope>,
+    pub drag_target: Option<UiInteractionScope>,
 }
 
 impl UIEventHub {
@@ -225,6 +329,8 @@ impl UIEventHub {
             sender,
             receiver,
             pre_hover_panel_id: None,
+            drag_source: None,
+            drag_target: None,
         }
     }
 
@@ -242,30 +348,30 @@ impl UIEventHub {
 }
 
 #[derive(Debug, Clone)]
-    pub struct StateConfigDes {
-        pub is_open_frag: bool,
-        pub is_open_vertex: bool,
-        pub open_api: Vec<StateOpenCall>,
-        pub texture_id: Option<String>,
-        pub pos: Option<Vec2>,
-        pub size: Option<Vec2>,
-        // 目标状态颜色（如定义）。状态切换时用于对外可观测的目标值携带；实际应用由 entry 中的过渡逻辑处理。
-        pub color: Option<[f32; 4]>,
-    }
+pub struct StateConfigDes {
+    pub is_open_frag: bool,
+    pub is_open_vertex: bool,
+    pub open_api: Vec<StateOpenCall>,
+    pub texture_id: Option<String>,
+    pub pos: Option<Vec2>,
+    pub size: Option<Vec2>,
+    // 目标状态颜色（如定义）。状态切换时用于对外可观测的目标值携带；实际应用由 entry 中的过渡逻辑处理。
+    pub color: Option<[f32; 4]>,
+}
 
-    impl Default for StateConfigDes {
-        fn default() -> Self {
-            Self {
-                is_open_frag: false,
-                is_open_vertex: false,
-                open_api: Vec::new(),
-                texture_id: None,
-                pos: None,
-                size: None,
-                color: None,
-            }
+impl Default for StateConfigDes {
+    fn default() -> Self {
+        Self {
+            is_open_frag: false,
+            is_open_vertex: false,
+            open_api: Vec::new(),
+            texture_id: None,
+            pos: None,
+            size: None,
+            color: None,
         }
     }
+}
 
 #[derive(Debug, Clone)]
 pub enum StateOpenCall {
@@ -307,6 +413,12 @@ pub enum CpuPanelEvent {
     Click((FRAME, UiInteractionScope)),
     StateTransition(StateTransition),
     Drag((Vec2, UiInteractionScope)),
+    SourceDragStart((FRAME, UiInteractionScope)),
+    SourceDragDrop((FRAME, UiInteractionScope)),
+    TargetDragEnter((FRAME, UiInteractionScope)),
+    TargetDragLeave((FRAME, UiInteractionScope)),
+    TargetDragDrop((FRAME, UiInteractionScope)),
+    TargetDragOver((Vec2, UiInteractionScope)),
     NetWorkTransition(NetWorkTransition),
     TotalUpdate(FRAME),
     SwapInteractionFrame(FRAME),
@@ -319,7 +431,7 @@ pub enum CpuPanelEvent {
     DataChange(DataChangeEnvelope),
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub struct DataChangeEnvelope {
     pub source_uuid: String,
     pub payload_type: TypeId,

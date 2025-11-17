@@ -72,8 +72,8 @@ pub struct GpuDebug {
     import_name: &'static str,
     structs: GpuDebugReadCallBack,
     pub buffer: Option<wgpu::Buffer>,
-    last_print: Cell<Instant>,      // 上一次打印时间
-    print_interval: Duration, // 最小间隔
+    last_print: Cell<Instant>, // 上一次打印时间
+    print_interval: Duration,  // 最小间隔
 }
 
 impl GpuDebugReadCallBack {
@@ -117,7 +117,6 @@ impl GpuDebug {
         }
     }
 
-
     pub fn create_buffer(&mut self, device: &wgpu::Device) {
         let out = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Shared State"),
@@ -147,7 +146,7 @@ impl GpuDebug {
         );
     }
 
-    pub fn check(&self)->bool{
+    pub fn check(&self) -> bool {
         if self.last_print.get().elapsed() < self.print_interval {
             self.last_print.set(Instant::now()); // 更新上次打印时间
             return false;
@@ -221,9 +220,9 @@ pub struct GlobalUniform {
 }
 
 impl GlobalUniform {
-    pub fn new() -> GlobalUniform{
-        GlobalUniform{
-            pad_atomic1:u32::MAX,
+    pub fn new() -> GlobalUniform {
+        GlobalUniform {
+            pad_atomic1: u32::MAX,
             ..Default::default()
         }
     }

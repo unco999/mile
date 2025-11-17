@@ -1,19 +1,22 @@
 use glam::{vec2, vec4};
 use mile_db::DbError;
-use mile_ui::mui_anim::Easing;
-use mile_ui::mui_prototype::{
-    Mui, ShaderStage, UiEventKind, UiPanelData, UiState,
-};
-use mile_gpu_dsl::prelude::Expr;
-use mile_gpu_dsl::dsl::{cv, rv, smoothstep};
 use mile_gpu_dsl::core::dsl::{sin, wvec4};
+use mile_gpu_dsl::dsl::{cv, rv, smoothstep};
+use mile_gpu_dsl::prelude::Expr;
+use mile_ui::mui_anim::Easing;
+use mile_ui::mui_prototype::{Mui, ShaderStage, UiEventKind, UiPanelData, UiState};
 
 fn frag_wave() -> Expr {
     let uv = rv("uv");
     let t = cv("time");
     let wave = (sin(uv.x() * 8.0 + t.clone() * 1.2) + sin(uv.y() * 9.0 - t * 1.1)) * 0.5;
     let crest = smoothstep(0.55, 0.9, (wave + 1.0) * 0.5);
-    wvec4(0.10 + 0.8 * crest.clone(), 0.20 + 0.3 * crest.clone(), 0.28 + crest.clone(), 1.0)
+    wvec4(
+        0.10 + 0.8 * crest.clone(),
+        0.20 + 0.3 * crest.clone(),
+        0.28 + crest.clone(),
+        1.0,
+    )
 }
 
 pub fn register_ast_shader_demo() -> Result<(), DbError> {
@@ -51,4 +54,3 @@ pub fn register_ast_shader_demo() -> Result<(), DbError> {
         .build()?;
     Ok(())
 }
-

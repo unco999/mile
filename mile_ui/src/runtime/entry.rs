@@ -18,13 +18,13 @@ use std::{
 use super::{
     buffers::{BufferArena, BufferArenaConfig, BufferViewSet},
     compute::{ComputePipelines, FrameComputeContext},
-    state::PanelStyleRewrite,
     relations::{
         RelationWorkItem, clear_panel_relations, flush_pending_relations, inject_relation_work,
         layout_flags, set_panel_active_state,
     },
     render::{QuadBatchKind, RenderPipelines},
     snapshot_registry,
+    state::PanelStyleRewrite,
     state::{
         CpuPanelEvent, FrameState, PanelEventRegistry, RuntimeState, StateTransition, UIEventHub,
     },
@@ -32,10 +32,13 @@ use super::{
 use crate::{
     mui_anim::{AnimProperty, AnimTargetValue, AnimationSpec, Easing},
     mui_prototype::{
-        self, PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateChanged, PanelStateOverrides, ShaderStage, UiPanelData, UiState, install_runtime_event_bridge, registered_panel_keys, take_pending_shader
+        self, PanelBinding, PanelKey, PanelPayload, PanelRecord, PanelSnapshot, PanelStateChanged,
+        PanelStateOverrides, ShaderStage, UiPanelData, UiState, install_runtime_event_bridge,
+        registered_panel_keys, take_pending_shader,
     },
     runtime::_ty::{
-        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, PanelAnimDelta, TransformAnimFieldInfo
+        AnimtionFieldOffsetPtr, GpuAnimationDes, GpuInteractionFrame, Panel, PanelAnimDelta,
+        TransformAnimFieldInfo,
     },
     structs::{AnimOp, EasingMask, MouseState, PanelField},
     util::texture_atlas_store::{self, GpuUiTextureInfo, TextureAtlasStore, UiTextureInfo},
@@ -543,8 +546,12 @@ impl MuiRuntime {
                     let mut flags = rule.flags;
                     // Add axis-only flags implicitly for the new field variants
                     match rule.field {
-                        RelPanelField::OnlyPositionX => { flags |= 1 << 1; }
-                        RelPanelField::OnlyPositionY => { flags |= 1 << 2; }
+                        RelPanelField::OnlyPositionX => {
+                            flags |= 1 << 1;
+                        }
+                        RelPanelField::OnlyPositionY => {
+                            flags |= 1 << 2;
+                        }
                         _ => {}
                     }
                     rules.push(GpuClampRule {
@@ -565,8 +572,8 @@ impl MuiRuntime {
         // Write descriptor (count)
         let desc = GpuClampDescriptor {
             count: rules.len() as u32,
-            _pad0:[0;3],
-            _pad1:[0;4],
+            _pad0: [0; 3],
+            _pad1: [0; 4],
         };
         queue.write_buffer(&self.buffers.clamp_desc, 0, bytemuck::bytes_of(&desc));
         // Write rules (if any)
@@ -626,7 +633,11 @@ impl MuiRuntime {
         let stride = std::mem::size_of::<PanelAnimDelta>() as wgpu::BufferAddress;
         let base = (panel_id as wgpu::BufferAddress) * stride;
         let field_off = offset_of!(PanelAnimDelta, container_origin) as wgpu::BufferAddress;
-        queue.write_buffer(&self.buffers.panel_anim_delta, base + field_off, bytes_of(&origin));
+        queue.write_buffer(
+            &self.buffers.panel_anim_delta,
+            base + field_off,
+            bytes_of(&origin),
+        );
     }
 
     pub fn write_snapshot_bytes(
@@ -1064,7 +1075,9 @@ impl MuiRuntime {
                 write_snapshot(self, off, bytes_of(&value));
             }
         }
-        if bits & PanelField::PREPOSITION_X.bits() != 0 || bits & PanelField::PREPOSITION_Y.bits() != 0 {
+        if bits & PanelField::PREPOSITION_X.bits() != 0
+            || bits & PanelField::PREPOSITION_Y.bits() != 0
+        {
             // map to z_index/pass_through as example; adjust as needed
             if bits & PanelField::PREPOSITION_X.bits() != 0 {
                 let value = if add {
@@ -1128,8 +1141,13 @@ impl MuiRuntime {
                 if state_cpu.overrides.trigger_mouse_pos {
                     let pid = desc_mut.key.panel_id;
                     let flag: u32 = 1;
-                    let offset = (pid as wgpu::BufferAddress) * std::mem::size_of::<u32>() as wgpu::BufferAddress;
-                    queue.write_buffer(&self.buffers.spawn_flags, offset, bytemuck::bytes_of(&flag));
+                    let offset = (pid as wgpu::BufferAddress)
+                        * std::mem::size_of::<u32>() as wgpu::BufferAddress;
+                    queue.write_buffer(
+                        &self.buffers.spawn_flags,
+                        offset,
+                        bytemuck::bytes_of(&flag),
+                    );
                     // Clear the one-shot flag so future refreshes won't keep overwriting position.
                     state_cpu.overrides.trigger_mouse_pos = false;
                     // Mark delta stage dirty so it runs this frame.
@@ -1177,11 +1195,7 @@ impl MuiRuntime {
         let mut ultra_ids = Vec::new();
         for p in &self.panel_instances {
             // Find descriptor for this id
-            if let Some(desc_found) = self
-                .panel_cache
-                .values()
-                .find(|d| d.key.panel_id == p.id)
-            {
+            if let Some(desc_found) = self.panel_cache.values().find(|d| d.key.panel_id == p.id) {
                 match desc_found.quad_vertex {
                     QuadBatchKind::Normal => normal_ids.push(p.id),
                     QuadBatchKind::MultiVertex => multi_ids.push(p.id),
@@ -1218,9 +1232,24 @@ impl MuiRuntime {
         // Recompute new ranges
         let total = self.panel_instances.len() as u32;
         // Recount per kind (as above)
-        let n_count = normal_ids.len() + if matches!(kind, QuadBatchKind::Normal) { 1 } else { 0 };
-        let m_count = multi_ids.len() + if matches!(kind, QuadBatchKind::MultiVertex) { 1 } else { 0 };
-        let u_count = ultra_ids.len() + if matches!(kind, QuadBatchKind::UltraVertex) { 1 } else { 0 };
+        let n_count = normal_ids.len()
+            + if matches!(kind, QuadBatchKind::Normal) {
+                1
+            } else {
+                0
+            };
+        let m_count = multi_ids.len()
+            + if matches!(kind, QuadBatchKind::MultiVertex) {
+                1
+            } else {
+                0
+            };
+        let u_count = ultra_ids.len()
+            + if matches!(kind, QuadBatchKind::UltraVertex) {
+                1
+            } else {
+                0
+            };
         // Normal: 0..n_count
         self.set_render_batch_range(QuadBatchKind::Normal, 0..n_count as u32);
         // Multi: n_count..n_count+m_count
@@ -1301,7 +1330,11 @@ impl MuiRuntime {
             // 无论是否声明 Interaction，都重写一次掩码。
             let off = offset_of!(Panel, interaction) as wgpu::BufferAddress;
             let panel_off = Self::panel_offset(instance_index as u32);
-            queue.write_buffer(&self.buffers.instance, panel_off + off, bytemuck::bytes_of(&new_interaction_bits));
+            queue.write_buffer(
+                &self.buffers.instance,
+                panel_off + off,
+                bytemuck::bytes_of(&new_interaction_bits),
+            );
             instance.interaction = new_interaction_bits;
             // 切换状态后清一次拖拽残留的位移（保险），避免 GPU 残留 delta 导致视觉漂移。
             self.clear_panel_drag_delta(queue, panel_id);
@@ -1479,7 +1512,6 @@ impl MuiRuntime {
             self.apply_shader_result(&event, queue);
         }
     }
-
 
     fn apply_shader_result(&mut self, event: &KennelResultIdxEvent, queue: &Queue) {
         let Some((panel_key, state, pending_stage)) = take_pending_shader(event.idx) else {

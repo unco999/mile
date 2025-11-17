@@ -1,8 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::{
     any::{TypeId, type_name},
     collections::{HashMap, HashSet},
 };
-use serde::{Serialize, Deserialize};
 
 /// Field identifiers that can be targeted by relation rules.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

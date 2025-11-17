@@ -68,7 +68,7 @@ impl GpuOffsetRange {
 
 #[derive(Clone)]
 pub struct SdfInfo {
-    char_with_texture:u32,
+    char_with_texture: u32,
     texture_x: u32,
     texture_y: u32,
 }
@@ -93,13 +93,12 @@ pub struct FontSDFIndexDynamicArea<'a> {
     pub valid_size: usize,
 }
 
-
 #[derive(Debug)]
-pub struct CpuText{
+pub struct CpuText {
     //原始数据
-    pub raw:Arc<str>,
-    pub slice:Vec<GpuChar>,
-    pub link_panel_quad:PanelId
+    pub raw: Arc<str>,
+    pub slice: Vec<GpuChar>,
+    pub link_panel_quad: PanelId,
 }
 
 /**字体style */
@@ -112,27 +111,26 @@ pub struct FontStyle {
     pub font_line_height: u32,
 }
 
-
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable,Debug)]
-pub struct GpuChar{
-    pub char_index:u32,
-    pub gpu_text_index:u32,
-    pub panel_index:u32,
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
+pub struct GpuChar {
+    pub char_index: u32,
+    pub gpu_text_index: u32,
+    pub panel_index: u32,
     // relative order inside its owning text (0-based)
-    pub self_index:u32,
+    pub self_index: u32,
     // per-glyph metrics (TTF units)
     pub glyph_advance_width: u32,
     pub glyph_left_side_bearing: i32,
     pub glyph_ver_advance: u32,
     pub glyph_ver_side_bearing: i32,
 }
-pub struct GpuText{
-    pub sdf_char_index_start_offset:u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
-    pub sdf_char_index_end_offset:u32,  //这个实际上是 GpuChar这个gpu结构体的索引
-    pub font_size:f32,
-    pub size:u32,
-    pub color:[f32;4],
+pub struct GpuText {
+    pub sdf_char_index_start_offset: u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
+    pub sdf_char_index_end_offset: u32,   //这个实际上是 GpuChar这个gpu结构体的索引
+    pub font_size: f32,
+    pub size: u32,
+    pub color: [f32; 4],
     // text origin (pixels or logical units depending on pipeline)
-    pub position:[f32;2],
+    pub position: [f32; 2],
 }

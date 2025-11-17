@@ -487,20 +487,18 @@ impl WGPUContext {
     pub fn adopt_global_uniform(&mut self, buffer: &wgpu::Buffer) {
         // Recreate bind group with external buffer
         let layout = self.render_pipeline.get_bind_group_layout(0);
-        self.bindgroup = self
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Uniform Bind Group (adopt)"),
-                layout: &layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                }],
-            });
+        self.bindgroup = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniform Bind Group (adopt)"),
+            layout: &layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
         self.global_uniform_buffer = buffer.clone();
     }
 }

@@ -1,7 +1,9 @@
 use glam::{Vec2, vec2, vec4};
 use mile_db::DbError;
 use mile_ui::mui_anim::Easing;
-use mile_ui::mui_prototype::{BorderStyle, Mui, StateStageBuilder, UiEventData, UiEventKind, UiPanelData, UiState};
+use mile_ui::mui_prototype::{
+    BorderStyle, Mui, StateStageBuilder, UiEventData, UiEventKind, UiPanelData, UiState,
+};
 use mile_ui::mui_rel::{RelLayoutKind, RelSpace};
 use mile_ui::prelude::Field;
 use mile_ui::structs::PanelField;
@@ -15,26 +17,25 @@ struct DataTest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 struct UIDefault;
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct TestCustomData {
     pub count: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-struct TestUi{
-    pub test_count:f32,
-    pub lock_state:bool
+struct TestUi {
+    pub test_count: f32,
+    pub lock_state: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-struct SliderLock{
-    pub lock:bool
+struct SliderLock {
+    pub lock: bool,
 }
 
 // Responsive-like behavior using container percent and row wrap.
 pub fn register_responsive_layout() -> Result<(), DbError> {
-      let color_panel = Mui::<TestUi>::new("demo_color_target")?
+    let color_panel = Mui::<TestUi>::new("demo_color_target")?
         .default_state(UiState(0))
         .state(UiState(0), |state| {
             let state = state
@@ -44,32 +45,36 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                 .color(vec4(0.12, 0.28, 0.60, 1.0))
                 // Respond to brightness changes via observers (data-driven)
                 .events()
-                    //新增数据响应式触发  当UiPanelData 状态发生改变 我们应用逻辑 这里实现了响应式布局
-                    .on_data_change::<UiPanelData,_>(None,|target,flow|{
-                        println!("当前color面版监听的事件 {:?}",target);
-                        if(flow.payload_ref().lock_state){ return; }
-                        flow.style_set(PanelField::TRANSPARENT.bits(), [target.brightness,0.0,0.0,0.0]);
-                    })
-                    .on_event(UiEventKind::Click, |flow|{
-                        let position = Vec2::from_array(flow.record.snapshot.position);
-                        println!("当前position {:?}",position);
-                        let _ = Mui::<UIDefault>::new("nb").unwrap()
-                            .default_state(UiState(0))
-                            .state(UiState(0), |state|{
-                                let state = state
-                                    .color(vec4(0.0, 1.0, 1.0, 1.0))
-                                    .size(vec2(300.0, 300.0))
-                                    .with_trigger_mouse_pos()
-                                    ;
-                                state
-                            })
-                            .build();
-                    })
+                //新增数据响应式触发  当UiPanelData 状态发生改变 我们应用逻辑 这里实现了响应式布局
+                .on_data_change::<UiPanelData, _>(None, |target, flow| {
+                    println!("当前color面版监听的事件 {:?}", target);
+                    if (flow.payload_ref().lock_state) {
+                        return;
+                    }
+                    flow.style_set(
+                        PanelField::TRANSPARENT.bits(),
+                        [target.brightness, 0.0, 0.0, 0.0],
+                    );
+                })
+                .on_event(UiEventKind::Click, |flow| {
+                    let position = Vec2::from_array(flow.record.snapshot.position);
+                    println!("当前position {:?}", position);
+                    let _ = Mui::<UIDefault>::new("nb")
+                        .unwrap()
+                        .default_state(UiState(0))
+                        .state(UiState(0), |state| {
+                            let state = state
+                                .color(vec4(0.0, 1.0, 1.0, 1.0))
+                                .size(vec2(300.0, 300.0))
+                                .with_trigger_mouse_pos();
+                            state
+                        })
+                        .build();
+                })
                 .finish();
             state
         })
-            .build()?
-        ;
+        .build()?;
 
     // Slider "thumb" – draggable only on X, clamped into [120, 580] with 5px steps
     let x_min = 120.0_f32;
@@ -86,14 +91,14 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                 // X-only with relative budget [0..(x_max-x_min)], step 5px; origin from snapshot
                 .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
                 .events()
-                .on_data_change::<SliderLock,_>(None, |target,flow|{
-                    if(target.lock){
+                .on_data_change::<SliderLock, _>(None, |target, flow| {
+                    if (target.lock) {
                         //当这里滑块检测到锁 把自己的状态设置为1
                         flow.set_state(UiState(1));
                     }
                 })
                 //当他拖拽  状态发生改变  update_self_payload  亮度加上拖拽数据
-                .on_event_with(UiEventKind::Drag, move |flow,drag_detla| {
+                .on_event_with(UiEventKind::Drag, move |flow, drag_detla| {
                     // 将滑块位置映射为 [0,1] 的进度，并写入“颜色面板”的 payload.brightness，
                     // 触发本面板的 DB 提交（只允许改自己）。
                     let pos = Vec2::from_array(flow.args().record_snapshot.snapshot.position);
@@ -103,34 +108,31 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                     match drag_detla {
                         UiEventData::Vec2(vec2) => {
                             flow.update_self_payload(|data| {
-                                 data.brightness += vec2.x / x_max;
+                                data.brightness += vec2.x / x_max;
                             });
-                        },
-                        _=>{}
+                        }
+                        _ => {}
                     }
-
-           
                 })
                 .finish();
             state
         })
-        .state(UiState(1), move |state|{
+        .state(UiState(1), move |state| {
             let state = state
-                 //状态1的color是红色 
-                 .color(vec4(1.0, 0.0, 0.22, 1.0))
-                 .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
-                 .events()
-                 .on_data_change::<SliderLock,_>(None, |target,flow|{
-                    if(target.lock == false){
-                         println!("回到state 0");
-                         flow.set_state(UiState(0));
+                //状态1的color是红色
+                .color(vec4(1.0, 0.0, 0.22, 1.0))
+                .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
+                .events()
+                .on_data_change::<SliderLock, _>(None, |target, flow| {
+                    if (target.lock == false) {
+                        println!("回到state 0");
+                        flow.set_state(UiState(0));
                     }
-                    flow.update_self_payload(|payload|{
+                    flow.update_self_payload(|payload| {
                         payload.brightness = 0.0;
                     });
-                  })
-                 .finish()
-                ;
+                })
+                .finish();
             state
         })
         .build()?;
@@ -172,6 +174,5 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
             state
         })
         .build()?;
-   Ok(())
+    Ok(())
 }
-
