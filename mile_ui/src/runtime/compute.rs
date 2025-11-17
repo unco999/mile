@@ -473,7 +473,6 @@ impl InteractionComputeStage {
                 let new_frame: GpuInteractionFrame = frames[1];
 
                 if new_frame.click_id != u32::MAX {
-                    println!("点击事件 {:?}", new_frame.click_id);
                     hub.push(CpuPanelEvent::Click((
                         new_frame.frame,
                         UiInteractionScope {
@@ -484,6 +483,7 @@ impl InteractionComputeStage {
                 }
 
                 if new_frame.drag_id != u32::MAX {
+                    println!("拖拽事件 {}",new_frame.drag_id);
                     hub.push(CpuPanelEvent::Drag((
                         Vec2::from_array(new_frame.drag_delta),
                         UiInteractionScope {
@@ -494,7 +494,6 @@ impl InteractionComputeStage {
                 }
 
                 if new_frame.hover_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
-                    println!("悬浮事件 {:?}", new_frame.hover_id);
                     hub.push(CpuPanelEvent::Hover((
                         new_frame.frame,
                         UiInteractionScope {
@@ -505,7 +504,6 @@ impl InteractionComputeStage {
                 }
 
                 if old_frame.hover_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
-                    println!("离开事件");
                     hub.push(CpuPanelEvent::OUT((
                         new_frame.frame,
                         UiInteractionScope {

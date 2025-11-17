@@ -220,6 +220,14 @@ pub struct GlobalUniform {
     pub pad_extra: [f32; 2], // 16 bytes
 }
 
+impl GlobalUniform {
+    pub fn new() -> GlobalUniform{
+        GlobalUniform{
+            pad_atomic1:u32::MAX,
+            ..Default::default()
+        }
+    }
+}
 pub struct CpuGlobalUniform {
     inner: Rc<RefCell<GlobalUniform>>,
     buffer: wgpu::Buffer,
@@ -263,7 +271,7 @@ impl CpuGlobalUniform {
 
         println!("目前的gpu w:{} h:{}", width, height);
 
-        let mut global_uniform = GlobalUniform::default();
+        let mut global_uniform = GlobalUniform::new();
         global_uniform.screen_size = [width, height];
 
         let global_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
