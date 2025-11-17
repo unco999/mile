@@ -14,11 +14,13 @@ mod showcase_animation;
 mod showcase_responsive;
 mod showcase_text;
 mod showcase_ast_shader;
+mod showcase_state;
 use mile_core::{App, AppEvent};
 pub use showcase_basic_layout::register_basic_layout;
 pub use showcase_animation::register_animation_demo;
 pub use showcase_responsive::register_responsive_layout;
 pub use showcase_text::register_text_demo;
 pub use showcase_ast_shader::register_ast_shader_demo;
+pub use showcase_state::register_state_demo;
 use winit::event_loop::EventLoop;
 

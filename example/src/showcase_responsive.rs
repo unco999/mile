@@ -44,6 +44,7 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                 .color(vec4(0.12, 0.28, 0.60, 1.0))
                 // Respond to brightness changes via observers (data-driven)
                 .events()
+                    //新增数据响应式触发  当UiPanelData 状态发生改变 我们应用逻辑 这里实现了响应式布局
                     .on_data_change::<UiPanelData,_>(None,|target,flow|{
                         println!("当前color面版监听的事件 {:?}",target);
                         if(flow.payload_ref().lock_state){ return; }
@@ -73,6 +74,7 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
     // Slider "thumb" – draggable only on X, clamped into [120, 580] with 5px steps
     let x_min = 120.0_f32;
     let x_max = 580.0_f32;
+    //这里是状态源头 UiPanelData
     let slider_thumb = Mui::<UiPanelData>::new("demo_slider_thumb")?
         .default_state(UiState(0))
         .state(UiState(0), move |state: StateStageBuilder<UiPanelData>| {
@@ -86,9 +88,11 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                 .events()
                 .on_data_change::<SliderLock,_>(None, |target,flow|{
                     if(target.lock){
+                        //当这里滑块检测到锁 把自己的状态设置为1
                         flow.set_state(UiState(1));
                     }
                 })
+                //当他拖拽  状态发生改变  update_self_payload  亮度加上拖拽数据
                 .on_event_with(UiEventKind::Drag, move |flow,drag_detla| {
                     // 将滑块位置映射为 [0,1] 的进度，并写入“颜色面板”的 payload.brightness，
                     // 触发本面板的 DB 提交（只允许改自己）。
@@ -112,6 +116,7 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
         })
         .state(UiState(1), move |state|{
             let state = state
+                 //状态1的color是红色 
                  .color(vec4(1.0, 0.0, 0.22, 1.0))
                  .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
                  .events()
@@ -145,7 +150,7 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
             state
         })
         .build()?;
-
+    //SliderLock这里响应的是锁
     // Update button: clicking it will bump the color target's brightness and trigger its observers.
     let update_button = Mui::<SliderLock>::new("demo_update_button")?
         .default_state(UiState(0))
@@ -158,6 +163,7 @@ pub fn register_responsive_layout() -> Result<(), DbError> {
                 .events()
                 .on_event(UiEventKind::Click, |flow| {
                     // 只允许改自己的 payload，提交 DB 触发观察者
+                    //点击以后会把锁轮换
                     flow.update_self_payload(|data| {
                         data.lock = !data.lock;
                     });
