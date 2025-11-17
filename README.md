@@ -43,6 +43,12 @@ A modern Rust UI/GPU playground with real-time rendering, UI interaction, and a 
 - 亮点：DSL 表达式（`sin`、`smoothstep`、`wvec4`）、运行时 shader 请求。
 - 入口：`example/src/bin/showcase_ast_shader.rs`
 
+### 6) 状态轮换 / Text
+- 描述：状态轮换机制。
+- 亮点：`state(UiState(x))` 状态轮换自动会在样式描述中插值。
+- 入口：`example/src/bin/showcase_state.rs`
+
+
 ## 架构概览 / Architecture
 - `mile_core`: 事件循环、WGPU 上下文、UI/字体/DSL 运行时装配。
 - `mile_ui`: UI 原型系统，包含面板 DSL、事件流、动画、交互 compute pipeline。
