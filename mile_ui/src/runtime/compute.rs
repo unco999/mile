@@ -44,7 +44,7 @@ impl ComputePipelines {
         Self {
             interaction: InteractionComputeStage::new(device, buffers, global_uniform, event_hub),
             relations: RelationComputeStage::new(device, buffers),
-            panel_delta: PanelDeltaStage::new(device, buffers,global_uniform),
+            panel_delta: PanelDeltaStage::new(device, buffers, global_uniform),
             animation: AnimationComputeStage::new(device, buffers, global_uniform),
         }
     }
@@ -127,7 +127,8 @@ impl ComputePipelines {
         self.interaction
             .rebuild_bind_group(device, buffers, global_uniform);
         self.interaction.set_dirty();
-        self.panel_delta.rebuild_bind_group(device, buffers,&global_uniform);
+        self.panel_delta
+            .rebuild_bind_group(device, buffers, &global_uniform);
     }
 
     pub fn rebuild_animation_bind_group(
@@ -139,7 +140,8 @@ impl ComputePipelines {
         self.animation
             .rebuild_bind_groups(device, buffers, global_uniform);
         self.animation.set_dirty();
-        self.panel_delta.rebuild_bind_group(device, buffers, global_uniform);
+        self.panel_delta
+            .rebuild_bind_group(device, buffers, global_uniform);
     }
 
     pub fn update_animation_count(&mut self, count: u32) {
@@ -472,6 +474,10 @@ impl InteractionComputeStage {
                 let old_frame = frames[0];
                 let new_frame: GpuInteractionFrame = frames[1];
 
+                // Source drag start/drop transitions
+                let drag_started = old_frame.drag_id == u32::MAX && new_frame.drag_id != u32::MAX;
+                let drag_ended = old_frame.drag_id != u32::MAX && new_frame.drag_id == u32::MAX;
+
                 if new_frame.click_id != u32::MAX {
                     hub.push(CpuPanelEvent::Click((
                         new_frame.frame,
@@ -482,8 +488,17 @@ impl InteractionComputeStage {
                     )));
                 }
 
+                if drag_started {
+                    hub.push(CpuPanelEvent::SourceDragStart((
+                        new_frame.frame,
+                        UiInteractionScope {
+                            panel_id: new_frame.drag_id,
+                            state: new_frame.trigger_panel_state,
+                        },
+                    )));
+                }
+
                 if new_frame.drag_id != u32::MAX {
-                    println!("拖拽事件 {}",new_frame.drag_id);
                     hub.push(CpuPanelEvent::Drag((
                         Vec2::from_array(new_frame.drag_delta),
                         UiInteractionScope {
@@ -491,6 +506,15 @@ impl InteractionComputeStage {
                             state: new_frame.trigger_panel_state,
                         },
                     )));
+                    if new_frame.hover_id != u32::MAX {
+                        hub.push(CpuPanelEvent::TargetDragOver((
+                            Vec2::from_array(new_frame.drag_delta),
+                            UiInteractionScope {
+                                panel_id: new_frame.hover_id,
+                                state: new_frame.trigger_panel_state,
+                            },
+                        )));
+                    }
                 }
 
                 if new_frame.hover_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
@@ -501,6 +525,47 @@ impl InteractionComputeStage {
                             state: new_frame.trigger_panel_state,
                         },
                     )));
+                }
+
+                // Target drag enter/leave during drag
+                if new_frame.drag_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
+                    if old_frame.hover_id != u32::MAX {
+                        hub.push(CpuPanelEvent::TargetDragLeave((
+                            new_frame.frame,
+                            UiInteractionScope {
+                                panel_id: old_frame.hover_id,
+                                state: old_frame.trigger_panel_state,
+                            },
+                        )));
+                    }
+                    if new_frame.hover_id != u32::MAX {
+                        hub.push(CpuPanelEvent::TargetDragEnter((
+                            new_frame.frame,
+                            UiInteractionScope {
+                                panel_id: new_frame.hover_id,
+                                state: new_frame.trigger_panel_state,
+                            },
+                        )));
+                    }
+                }
+
+                if drag_ended {
+                    hub.push(CpuPanelEvent::SourceDragDrop((
+                        new_frame.frame,
+                        UiInteractionScope {
+                            panel_id: old_frame.drag_id,
+                            state: old_frame.trigger_panel_state,
+                        },
+                    )));
+                    if old_frame.hover_id != u32::MAX {
+                        hub.push(CpuPanelEvent::TargetDragDrop((
+                            new_frame.frame,
+                            UiInteractionScope {
+                                panel_id: old_frame.hover_id,
+                                state: old_frame.trigger_panel_state,
+                            },
+                        )));
+                    }
                 }
 
                 if old_frame.hover_id != u32::MAX && new_frame.hover_id != old_frame.hover_id {
@@ -1100,7 +1165,11 @@ pub struct PanelDeltaStage {
 impl PanelDeltaStage {
     const WORKGROUP_SIZE: u32 = 64;
 
-    pub fn new(device: &wgpu::Device, buffers: &BufferArena, global_uniform: &wgpu::Buffer) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ui::panel-delta-layout"),
             entries: &[
@@ -1232,7 +1301,12 @@ impl PanelDeltaStage {
         self.trace.debug(device, queue);
     }
 
-    pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, buffers: &BufferArena, global_uniform: &wgpu::Buffer) {
+    pub fn rebuild_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        buffers: &BufferArena,
+        global_uniform: &wgpu::Buffer,
+    ) {
         let layout = self.pipeline.get_bind_group_layout(0);
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ui::panel-delta-bind-group"),

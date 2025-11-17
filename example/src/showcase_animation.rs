@@ -41,6 +41,6 @@ pub fn register_animation_demo() -> Result<(), DbError> {
                 .finish()
         })
         .build()?;
-        println!("执行了");
+    println!("执行了");
     Ok(())
 }

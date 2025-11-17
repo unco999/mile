@@ -1,7 +1,8 @@
 use crate::{
     mui_anim::{AnimBuilder, AnimProperty, AnimationSpec, Easing},
     mui_rel::{
-        Field, RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis, RelSpace, RelViewKey, panel_field
+        Field, RelComposer, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelScrollAxis,
+        RelSpace, RelViewKey, panel_field,
     },
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
@@ -19,11 +20,11 @@ use mile_api::{
     global::{global_db, global_event_bus},
     prelude::_ty::PanelId,
 };
+use mile_db::{DbError, TableBinding, TableHandle};
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
     prelude::FontStyle,
 };
-use mile_db::{DbError, TableBinding, TableHandle};
 use mile_gpu_dsl::{
     core::{
         Expr,
@@ -46,8 +47,9 @@ use std::{
 
 static EVENT_REGISTRY: OnceLock<Arc<Mutex<PanelEventRegistry>>> = OnceLock::new();
 static EVENT_HUB: OnceLock<Arc<UIEventHub>> = OnceLock::new();
-static PENDING_REGISTRATIONS: OnceLock<Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>>> =
-    OnceLock::new();
+static PENDING_REGISTRATIONS: OnceLock<
+    Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>>,
+> = OnceLock::new();
 static PENDING_STATE_EVENTS: OnceLock<Mutex<Vec<StateTransition>>> = OnceLock::new();
 static PANEL_KEY_REGISTRY: OnceLock<Mutex<HashMap<TypeId, HashSet<PanelKey>>>> = OnceLock::new();
 static PENDING_SHADERS: OnceLock<Mutex<HashMap<u32, PendingShaderRequest>>> = OnceLock::new();
@@ -75,7 +77,8 @@ fn notify_type_observers_erased(ty: TypeId, source: &PanelKey, payload: &dyn Any
     }
 }
 
-fn pending_registrations() -> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>> {
+fn pending_registrations()
+-> &'static Mutex<Vec<Box<dyn Fn(&mut PanelEventRegistry) + Send + 'static>>> {
     PENDING_REGISTRATIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
@@ -272,7 +275,18 @@ pub enum UiEventKind {
     /// Panel 初始化时调用（构建完成后立即触发一次）
     Init,
     Click,
+    /// 通用拖拽位移（仍保留兼容旧逻辑）
     Drag,
+    /// 拖拽源：开始/持续/离开/放下
+    SourceDragStart,
+    SourceDragOver,
+    SourceDragLeave,
+    SourceDragDrop,
+    /// 拖拽目标：进入/停留/离开/放下
+    TargetDragEnter,
+    TargetDragOver,
+    TargetDragLeave,
+    TargetDragDrop,
     Hover,
     Out,
 }
@@ -284,6 +298,92 @@ pub enum UiEventData {
     Vec2(glam::Vec2),
     U32(u32),
     Bool(bool),
+}
+
+/// Identifies a drag payload by its Rust type and an optional user-provided tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DragPayloadId {
+    type_id: TypeId,
+    tag: Option<u64>,
+}
+
+impl DragPayloadId {
+    pub fn of<T: 'static>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            tag: None,
+        }
+    }
+
+    pub fn with_tag(mut self, tag: u64) -> Self {
+        self.tag = Some(tag);
+        self
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+
+    pub fn tag(&self) -> Option<u64> {
+        self.tag
+    }
+}
+
+/// Type-erased payload transferred between drag source/targets.
+#[derive(Clone, Debug)]
+pub struct DragPayload {
+    id: DragPayloadId,
+    data: Arc<dyn Any + Send + Sync>,
+}
+
+impl DragPayload {
+    pub fn new<T>(value: T) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        Self::with_id(DragPayloadId::of::<T>(), value)
+    }
+
+    pub fn with_id<T>(id: DragPayloadId, value: T) -> Self
+    where
+        T: Send + Sync + 'static,
+    {
+        Self {
+            id,
+            data: Arc::new(value),
+        }
+    }
+
+    pub fn id(&self) -> DragPayloadId {
+        self.id
+    }
+
+    pub fn downcast_ref<T>(&self) -> Option<&T>
+    where
+        T: 'static,
+    {
+        self.data.as_ref().downcast_ref::<T>()
+    }
+
+    pub fn downcast_arc<T>(&self) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.data.clone().downcast::<T>().ok()
+    }
+}
+
+/// Captures the drag payload and its originating panel.
+#[derive(Clone, Debug)]
+pub struct DragContext {
+    pub source: PanelKey,
+    pub payload: DragPayload,
+}
+
+impl DragContext {
+    pub fn new(source: PanelKey, payload: DragPayload) -> Self {
+        Self { source, payload }
+    }
 }
 
 /// Visual/Layout overrides persisted for each state.
@@ -808,7 +908,8 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
             let state_copy = state;
             let scope_copy = scope;
             match event {
-                UiEventKind::Init => { /* init is triggered programmatically once; no runtime registry */ }
+                UiEventKind::Init => { /* init is triggered programmatically once; no runtime registry */
+                }
                 UiEventKind::Click => registry.register_click(scope_copy, move |_ignored| {
                     trigger_event_internal_with::<TPayload>(
                         &key_clone,
@@ -825,6 +926,73 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
                         UiEventData::Vec2(vec2),
                     );
                 }),
+                UiEventKind::SourceDragStart => {
+                    registry.register_source_drag_start(scope_copy, move |_id| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::SourceDragStart,
+                            UiEventData::None,
+                        );
+                    })
+                }
+                UiEventKind::SourceDragOver => registry.register_drag(scope_copy, move |vec2| {
+                    trigger_event_internal_with::<TPayload>(
+                        &key_clone,
+                        Some(state_copy),
+                        UiEventKind::SourceDragOver,
+                        UiEventData::Vec2(vec2),
+                    );
+                }),
+                UiEventKind::SourceDragLeave => (),
+                UiEventKind::SourceDragDrop => {
+                    registry.register_source_drag_drop(scope_copy, move |_id| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::SourceDragDrop,
+                            UiEventData::None,
+                        );
+                    })
+                }
+                UiEventKind::TargetDragEnter => {
+                    registry.register_target_drag_enter(scope_copy, move |_id| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::TargetDragEnter,
+                            UiEventData::None,
+                        );
+                    })
+                }
+                UiEventKind::TargetDragOver => registry.register_target_drag_over(scope_copy, move |vec2| {
+                    trigger_event_internal_with::<TPayload>(
+                        &key_clone,
+                        Some(state_copy),
+                        UiEventKind::TargetDragOver,
+                        UiEventData::Vec2(vec2),
+                    );
+                }),
+                UiEventKind::TargetDragLeave => {
+                    registry.register_target_drag_leave(scope_copy, move |_id| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::TargetDragLeave,
+                            UiEventData::None,
+                        );
+                    })
+                }
+                UiEventKind::TargetDragDrop => {
+                    registry.register_target_drag_drop(scope_copy, move |_id| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::TargetDragDrop,
+                            UiEventData::None,
+                        );
+                    })
+                }
                 UiEventKind::Hover => registry.register_hover(scope_copy, move |_ignored| {
                     trigger_event_internal_with::<TPayload>(
                         &key_clone,
@@ -888,7 +1056,7 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
     key: &PanelKey,
     state: UiState,
     env: &crate::runtime::state::DataChangeEnvelope,
-){
+) {
     // Lookup runtime
     let arc = runtime_map::<TPayload>();
     let mut registry = arc.lock().unwrap();
@@ -915,8 +1083,15 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
         let handle = &runtime.handle;
         let transitions = &runtime.transitions;
         let current_state_ref = &mut runtime.current_state;
-        let _ = handle.mutate(|record| {
-            let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+        let mut updated_drag: Option<DragContext> = None;
+        if let Err(err) = handle.mutate(|record| {
+            let mut flow = EventFlow::new(
+                record,
+                &args,
+                current_state_ref,
+                transitions,
+                runtime.active_drag.clone(),
+            );
             for entry in list {
                 if entry.ty == env.payload_type {
                     if let Some(ref src) = entry.source_uuid {
@@ -927,7 +1102,13 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
                     (entry.handler)(env.payload.as_ref(), &mut flow);
                 }
             }
-        });
+            updated_drag = flow.take_drag_context();
+        }) {
+            eprintln!("data change mutation failed: {err:?}");
+        }
+        if let Some(ctx) = updated_drag {
+            runtime.active_drag = Some(ctx);
+        }
     }
 }
 
@@ -940,6 +1121,8 @@ struct PanelRuntime<TPayload: PanelPayload> {
     callbacks_with: HashMap<UiState, HashMap<UiEventKind, Arc<EventFnWith<TPayload>>>>,
     observer_guards: Vec<PanelListenerGuard<TPayload>>,
     data_callbacks: HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>>,
+    /// Active drag context shared across handlers (source writes, targets read).
+    active_drag: Option<DragContext>,
 }
 type EventFn<TPayload> = dyn for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static;
 type EventFnWith<TPayload> =
@@ -968,6 +1151,8 @@ pub struct EventFlow<'a, TPayload: PanelPayload> {
     pub current_state: &'a mut UiState,
     pub transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
     pub override_state: Option<UiState>,
+    /// Active drag context if any (source sets, targets read).
+    drag_context: Option<DragContext>,
 }
 
 impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
@@ -976,6 +1161,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         args: &'a PanelEventArgs<TPayload>,
         current_state: &'a mut UiState,
         transitions: &'a HashMap<UiState, HashMap<UiEventKind, UiState>>,
+        drag_context: Option<DragContext>,
     ) -> Self {
         Self {
             record,
@@ -983,6 +1169,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             current_state,
             transitions,
             override_state: None,
+            drag_context,
         }
     }
 
@@ -1013,7 +1200,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         };
         global_event_bus().publish(BatchFontEntry {
             text: Arc::from(text.to_string()),
-            font_file_path:font_path.clone(),
+            font_file_path: font_path.clone(),
         });
         global_event_bus().publish(BatchRenderFont {
             text: Arc::from(text.to_string()),
@@ -1094,6 +1281,37 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
 
     pub fn args(&self) -> &PanelEventArgs<TPayload> {
         self.args
+    }
+
+    /// Get a typed view of the current drag payload if it matches type `T`.
+    pub fn drag_payload<T: 'static>(&self) -> Option<&T> {
+        self.drag_context
+            .as_ref()
+            .and_then(|ctx| ctx.payload.downcast_ref::<T>())
+    }
+
+    /// Set the active drag payload for this flow; targets can read via `drag_payload`.
+    pub fn set_drag_payload<T>(&mut self, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        let id = DragPayloadId::of::<T>();
+        self.drag_payload_with_id(id, payload);
+    }
+
+    /// Set drag payload with an explicit id (e.g., custom tag for matching).
+    pub fn drag_payload_with_id<T>(&mut self, id: DragPayloadId, payload: T)
+    where
+        T: Send + Sync + 'static,
+    {
+        let payload = DragPayload::with_id(id, payload);
+        let source = self.args.panel_key.clone();
+        self.drag_context = Some(DragContext::new(source, payload));
+    }
+
+    /// Consume and return the current drag context so callers can persist it.
+    pub fn take_drag_context(&mut self) -> Option<DragContext> {
+        self.drag_context.take()
     }
 
     pub fn state(&self) -> UiState {
@@ -1512,12 +1730,23 @@ fn trigger_event_internal<TPayload: PanelPayload>(
         let handle = &runtime.handle;
         let transitions = &runtime.transitions;
         let current_state_ref = &mut runtime.current_state;
+        let mut updated_drag: Option<DragContext> = None;
         if let Err(err) = handle.mutate(|record| {
-            let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+            let mut flow = EventFlow::new(
+                record,
+                &args,
+                current_state_ref,
+                transitions,
+                runtime.active_drag.clone(),
+            );
             handler(&mut flow);
             applied_override = flow.take_override().is_some();
+            updated_drag = flow.take_drag_context();
         }) {
             eprintln!("event mutation failed: {err:?}");
+        }
+        if let Some(ctx) = updated_drag {
+            runtime.active_drag = Some(ctx);
         }
     }
 
@@ -1578,10 +1807,29 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
             let handle = &runtime.handle;
             let transitions = &runtime.transitions;
             let current_state_ref = &mut runtime.current_state;
-            let _ = handle.mutate(|record| {
-                let mut flow = EventFlow::new(record, &args, current_state_ref, transitions);
+            let mut updated_drag: Option<DragContext> = None;
+            if let Err(err) = handle.mutate(|record| {
+                let mut flow = EventFlow::new(
+                    record,
+                    &args,
+                    current_state_ref,
+                    transitions,
+                    runtime.active_drag.clone(),
+                );
                 handler(&mut flow, data);
-            });
+                updated_drag = flow.take_drag_context();
+            }) {
+                eprintln!("event mutation failed: {err:?}");
+            }
+            if let Some(ctx) = updated_drag {
+                runtime.active_drag = Some(ctx);
+            } else if matches!(
+                event,
+                UiEventKind::SourceDragDrop | UiEventKind::SourceDragLeave
+            ) {
+                // 清理拖拽上下文
+                runtime.active_drag = None;
+            }
             return;
         }
     }
@@ -1923,7 +2171,7 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
     ///   Axis is locked accordingly (X-only or Y-only).
     pub fn clamp_offset(mut self, field: Field, range: [f32; 3]) -> Self {
         let mut rule = ClampOffset {
-            field:field.clone(),
+            field: field.clone(),
             min: [range[0], 0.0],
             max: [range[1], 0.0],
             step: [range[2], 0.0],
@@ -1977,8 +2225,12 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         // flags: relative budget; axis locks derive from field variant
         let mut flags = 1u32; // relative budget
         match field {
-            Field::OnlyPositionX => { flags |= 1 << 1; } // axis_x_only
-            Field::OnlyPositionY => { flags |= 1 << 2; } // axis_y_only
+            Field::OnlyPositionX => {
+                flags |= 1 << 1;
+            } // axis_x_only
+            Field::OnlyPositionY => {
+                flags |= 1 << 2;
+            } // axis_y_only
             _ => {}
         }
         let rule = ClampOffset {
@@ -2002,8 +2254,12 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
     ) -> Self {
         let mut flags = 1u32; // relative budget
         match field {
-            Field::OnlyPositionX => { flags |= 1 << 1; }
-            Field::OnlyPositionY => { flags |= 1 << 2; }
+            Field::OnlyPositionX => {
+                flags |= 1 << 1;
+            }
+            Field::OnlyPositionY => {
+                flags |= 1 << 2;
+            }
             _ => {}
         }
         let rule = ClampOffset {
@@ -2268,6 +2524,149 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
         self.last_event = Some(event);
         self
     }
+
+    /// Drag 专用：仅当当前 drag_payload 能 downcast 为 `T` 时才触发。
+    /// 回调收到拖拽 delta 和强类型 payload。
+    pub fn on_drag_with_payload<T, F>(self, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, glam::Vec2, T) + Send + Sync + 'static,
+    {
+        self.register_target_with_payload_delta(UiEventKind::Drag, handler)
+    }
+
+    fn register_target_with_payload<T, F>(mut self, event: UiEventKind, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, T) + Send + Sync + 'static,
+    {
+        let event_fn: Arc<EventFnWith<TPayload>> = Arc::new(move |flow, data| {
+            let _ = data;
+            let Some(payload) = flow.drag_payload::<T>() else {
+                return;
+            };
+            handler(flow, payload.clone());
+        });
+        self.stage.callbacks_with.insert(event, event_fn);
+        self.last_event = Some(event);
+        self
+    }
+
+    fn register_target_with_payload_delta<T, F>(mut self, event: UiEventKind, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, glam::Vec2, T) + Send + Sync + 'static,
+    {
+        let event_fn: Arc<EventFnWith<TPayload>> = Arc::new(move |flow, data| {
+            let UiEventData::Vec2(delta) = data else {
+                return;
+            };
+            let Some(payload) = flow.drag_payload::<T>() else {
+                return;
+            };
+            handler(flow, delta, payload.clone());
+        });
+        self.stage.callbacks_with.insert(event, event_fn);
+        self.last_event = Some(event);
+        self
+    }
+
+    /// 拖拽源：开始阶段。
+    pub fn source_drag_start<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::SourceDragStart, handler)
+    }
+
+    /// 拖拽源：开始阶段（并设置 payload）。
+    pub fn source_drag_start_with_payload<T, F>(self, builder: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) -> T + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::SourceDragStart, move |flow| {
+            let payload = builder(flow);
+            flow.set_drag_payload(payload);
+        })
+    }
+
+    /// 拖拽源：开始阶段（指定自定义 DragPayloadId）。
+    pub fn source_drag_start_with_id<T, F>(self, id: DragPayloadId, builder: F) -> Self
+    where
+        T: Send + Sync + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) -> T + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::SourceDragStart, move |flow| {
+            let payload = builder(flow);
+            flow.drag_payload_with_id(id, payload);
+        })
+    }
+
+    /// 拖拽源：拖拽过程中持续更新（带 Vec2 delta）。
+    pub fn source_drag_over<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, glam::Vec2) + Send + Sync + 'static,
+    {
+        self.on_event_with(UiEventKind::SourceDragOver, move |flow, data| {
+            let UiEventData::Vec2(delta) = data else {
+                return;
+            };
+            handler(flow, delta);
+        })
+    }
+
+    /// 拖拽源：drag 离开。
+    pub fn source_drag_leave<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::SourceDragLeave, handler)
+    }
+
+    /// 拖拽源：drag drop/结束。
+    pub fn source_drag_drop<F>(self, handler: F) -> Self
+    where
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>) + Send + Sync + 'static,
+    {
+        self.on_event(UiEventKind::SourceDragDrop, handler)
+    }
+
+    /// 拖拽目标：drag enter。
+    pub fn target_drag_enter<T, F>(self, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, T) + Send + Sync + 'static,
+    {
+        self.register_target_with_payload(UiEventKind::TargetDragEnter, handler)
+    }
+
+    /// 拖拽目标：drag over（带 Vec2 delta）。
+    pub fn target_drag_over<T, F>(self, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, glam::Vec2, T) + Send + Sync + 'static,
+    {
+        self.register_target_with_payload_delta(UiEventKind::TargetDragOver, handler)
+    }
+
+    /// 拖拽目标：drag leave。
+    pub fn target_drag_leave<T, F>(self, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, T) + Send + Sync + 'static,
+    {
+        self.register_target_with_payload(UiEventKind::TargetDragLeave, handler)
+    }
+
+    /// 拖拽目标：drag drop。
+    pub fn target_drag_drop<T, F>(self, handler: F) -> Self
+    where
+        T: Send + Sync + Clone + 'static,
+        F: for<'a> Fn(&mut EventFlow<'a, TPayload>, T) + Send + Sync + 'static,
+    {
+        self.register_target_with_payload(UiEventKind::TargetDragDrop, handler)
+    }
     /// Register a data-change listener for any panels with payload type `TObserved`.
     /// If `source_uuid` is Some(uuid), only changes from that panel trigger the callback.
     pub fn on_data_change<TObserved, F>(mut self, source_uuid: Option<&str>, handler: F) -> Self
@@ -2320,7 +2719,15 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             interaction_mask |= match kind {
                 UiEventKind::Init => 0,
                 UiEventKind::Click => PanelInteraction::CLICKABLE.bits(),
-                UiEventKind::Drag => PanelInteraction::DRAGGABLE.bits(),
+                UiEventKind::Drag
+                | UiEventKind::SourceDragStart
+                | UiEventKind::SourceDragOver
+                | UiEventKind::SourceDragLeave
+                | UiEventKind::SourceDragDrop
+                | UiEventKind::TargetDragEnter
+                | UiEventKind::TargetDragOver
+                | UiEventKind::TargetDragLeave
+                | UiEventKind::TargetDragDrop => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
                 UiEventKind::Out => PanelInteraction::Out.bits(),
             };
@@ -2346,7 +2753,15 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
             interaction_mask |= match kind {
                 UiEventKind::Init => 0,
                 UiEventKind::Click => PanelInteraction::CLICKABLE.bits(),
-                UiEventKind::Drag => PanelInteraction::DRAGGABLE.bits(),
+                UiEventKind::Drag
+                | UiEventKind::SourceDragStart
+                | UiEventKind::SourceDragOver
+                | UiEventKind::SourceDragLeave
+                | UiEventKind::SourceDragDrop
+                | UiEventKind::TargetDragEnter
+                | UiEventKind::TargetDragOver
+                | UiEventKind::TargetDragLeave
+                | UiEventKind::TargetDragDrop => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
                 UiEventKind::Out => PanelInteraction::Out.bits(),
             };
@@ -2363,10 +2778,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
         overrides.transitions.extend(transitions);
         self.parent.definition.callbacks.extend(callbacks);
         self.parent.definition.callbacks_with.extend(callbacks_with);
-        self.parent
-            .definition
-            .data_callbacks
-            .extend(data_callbacks);
+        self.parent.definition.data_callbacks.extend(data_callbacks);
         self.parent
     }
 }
@@ -2395,7 +2807,7 @@ fn build_stateful<TPayload: PanelPayload>(
         }
         // 初始化 snapshot，使之与默认状态的 overrides 对齐，方便与 GPU snapshot 对接
         let ov = record.states.get(&default).cloned().unwrap();
-        apply_initial_snapshot_from_overrides(record,&ov);
+        apply_initial_snapshot_from_overrides(record, &ov);
     })?;
 
     let mut transitions = HashMap::new();
@@ -2448,6 +2860,7 @@ fn build_stateful<TPayload: PanelPayload>(
         callbacks_with,
         observer_guards: Vec::new(),
         data_callbacks: data_map,
+        active_drag: None,
     };
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
@@ -2474,8 +2887,7 @@ fn build_stateless<TPayload: PanelPayload>(
         record.snapshot.quad_vertex = quad_vertex;
         record.states.insert(state_id, definition.overrides.clone());
         let ov = record.states.get(&state_id).cloned().unwrap();
-        apply_initial_snapshot_from_overrides(record,&ov);
-        
+        apply_initial_snapshot_from_overrides(record, &ov);
     })?;
 
     let PanelStateDefinition {
@@ -2518,8 +2930,9 @@ fn build_stateless<TPayload: PanelPayload>(
         callbacks_with,
         observer_guards: Vec::new(),
         data_callbacks: data_map,
+        active_drag: None,
     };
-    
+
     runtime.observer_guards = attach_observers(&runtime.handle, &observers);
     register_runtime(panel_key.clone(), runtime);
 
@@ -2568,18 +2981,22 @@ pub struct TestCustomData {
 
 //这是一个在rust 写好的shader函数dsl 最终会编译成gpu ast分解计算
 fn frag_template(intensity: f32) -> Expr {
-    let uv = rv("uv"); 
+    let uv = rv("uv");
     let t = cv("time");
-    let wave = (sin(uv.x()*8.0 + t.clone()*1.2) + sin(uv.y()*9.0 - t*1.1)) * 0.5;
+    let wave = (sin(uv.x() * 8.0 + t.clone() * 1.2) + sin(uv.y() * 9.0 - t * 1.1)) * 0.5;
     let crest = smoothstep(0.55, 0.9, (wave + 1.0) * 0.5) * intensity;
-    wvec4(0.02 + 0.8*crest.clone(), 0.05 + 0.3*crest.clone(), 0.12 + crest.clone(), 1.0)
+    wvec4(
+        0.02 + 0.8 * crest.clone(),
+        0.05 + 0.3 * crest.clone(),
+        0.12 + crest.clone(),
+        1.0,
+    )
 }
 
 //新增了全局DB数据中心  这个数据中心
 //UI可以在数据流里操作  比如事件响应 点击 拖拽等
 //也可以在别的系统里面 同步获取 &mut
 //让我们来创造这个数据
-
 
 //    Mui::<DataTest>::new("test_panel")?
 //         .default_state(UiState(0))
@@ -2605,21 +3022,21 @@ fn frag_template(intensity: f32) -> Expr {
 //                         "枯枝探新芽，
 //                               细雨吻旧窗。
 //                               时光轻驻足，
-//                               春意悄然藏。", 
+//                               春意悄然藏。",
 //                         Arc::from("tf/STXIHEI.ttf"),
-//                         60, 
-//                         [1.0,1.0,1.0,1.0], 
-//                         1, 
+//                         60,
+//                         [1.0,1.0,1.0,1.0],
+//                         1,
 //                         1
 //                     );
 //                 })
 //                 .on_event(UiEventKind::Click, |flow| {
 //                     flow.text(
-//                         "枯枝悄悄抽出新芽，细雨温柔地敲打着旧窗。时光仿佛在这一刻驻足，冬日的萧瑟悄然褪去，泥土的芬芳在空气中弥漫。我听见冰凌融化的轻响，看见屋檐下蜘蛛编织新的网。春意就这样无声无息地，在每道裂缝里生根发芽，把积蓄一季的力量，化作枝头第一抹鹅黄。", 
+//                         "枯枝悄悄抽出新芽，细雨温柔地敲打着旧窗。时光仿佛在这一刻驻足，冬日的萧瑟悄然褪去，泥土的芬芳在空气中弥漫。我听见冰凌融化的轻响，看见屋檐下蜘蛛编织新的网。春意就这样无声无息地，在每道裂缝里生根发芽，把积蓄一季的力量，化作枝头第一抹鹅黄。",
 //                         Arc::from("tf/STXIHEI.ttf"),
-//                         60, 
-//                         [1.0,1.0,1.0,1.0], 
-//                         1, 
+//                         60,
+//                         [1.0,1.0,1.0,1.0],
+//                         1,
 //                         1
 //                     );
 //                 })
@@ -2627,8 +3044,6 @@ fn frag_template(intensity: f32) -> Expr {
 //             state
 //         })
 //         .build()?;
-
-
 
 //PanelPayload  是他绑定的全局数据流
 //使用DB 可以让程序从同步中的任何hook阶段 让UI和实际执行操作一份数据
@@ -2643,72 +3058,72 @@ struct DataTest {
 //并且把他的样式写清楚了
 //支持透明度
 //我们来给面板渲染一点字体
-fn demo_panel()->Result<(),DbError> {
+fn demo_panel() -> Result<(), DbError> {
     let _ = Mui::<DataTest>::new("test_container")?
-            //我们的UI设计 遵循状态设计  他可以在交互事件中自由的切换状态  比如
-            //下次会修复这个bug
-            //让我们给他附加 超多面板吧
-            //接着上回  我们的面板可以写入实时frag
-            //让我们给他加入小面板
-            //按grid排列
-            .default_state(UiState(0))
-            .state(UiState(0), |state|{
-                //我们要把这个panel当作一个容器 然后我们去写他的容器配置
-                //好吧  因为新的更改 排列似乎出问题了  我需要回头检查一下
-                let state=  state
-                    .z_index(1)
-                    .container_style()
-                        //小问题 没有设置容器大小 再来看看
-                        .slot_size(vec2(108.0, 52.0))
-                        .size_container(vec2(500.0, 500.0))
-                        .layout(RelLayoutKind::grid([0.0,0.0]))
-                        .finish() //这里要退出容器设置的上下文;
-                    .position(vec2(300.0, 200.0))
-                    .color(vec4(0.5, 0.7, 0.6, 0.3))
-                    .border(BorderStyle { color: [0.1,0.3,0.2,1.0], width: 8.0, radius: 0.0 })
-                    //我们在状态里面加入这个接口 加入frag实时计算buffer
-                    .fragment_shader(|e|{
-                        frag_template(1.0)
-                    })
-                    .size(vec2(500.0, 500.0))
-                    .events()   //进入event上下文构建
-                        .on_event(UiEventKind::Click, |flow|{
-                            let mut data_test = flow.payload(); //这里是取出DataTest的可变引用
-                            data_test.count += 1; //给他增加值;
-                            flow.set_state(UiState(1)); //如果点击 我们切换到状态1
-                        })
-                        .finish();
-                    state
-            })
-            .state(UiState(1), |state|{
-                //在点击后  就会转换到状态1 这里我们再加一个状态轮换
-                let state = state
-                        .size(vec2(400.0, 400.0))
-                        .events()
-                            .on_event(UiEventKind::Click, |flow|{
-                                flow.set_state(UiState(0)); //我们来看看效果
-                            })
-                            .finish();
-                state
-            })
+        //我们的UI设计 遵循状态设计  他可以在交互事件中自由的切换状态  比如
+        //下次会修复这个bug
+        //让我们给他附加 超多面板吧
+        //接着上回  我们的面板可以写入实时frag
+        //让我们给他加入小面板
+        //按grid排列
+        .default_state(UiState(0))
+        .state(UiState(0), |state| {
+            //我们要把这个panel当作一个容器 然后我们去写他的容器配置
+            //好吧  因为新的更改 排列似乎出问题了  我需要回头检查一下
+            let state = state
+                .z_index(1)
+                .container_style()
+                //小问题 没有设置容器大小 再来看看
+                .slot_size(vec2(108.0, 52.0))
+                .size_container(vec2(500.0, 500.0))
+                .layout(RelLayoutKind::grid([0.0, 0.0]))
+                .finish() //这里要退出容器设置的上下文;
+                .position(vec2(300.0, 200.0))
+                .color(vec4(0.5, 0.7, 0.6, 0.3))
+                .border(BorderStyle {
+                    color: [0.1, 0.3, 0.2, 1.0],
+                    width: 8.0,
+                    radius: 0.0,
+                })
+                //我们在状态里面加入这个接口 加入frag实时计算buffer
+                .fragment_shader(|e| frag_template(1.0))
+                .size(vec2(500.0, 500.0))
+                .events() //进入event上下文构建
+                .on_event(UiEventKind::Click, |flow| {
+                    let mut data_test = flow.payload(); //这里是取出DataTest的可变引用
+                    data_test.count += 1; //给他增加值;
+                    flow.set_state(UiState(1)); //如果点击 我们切换到状态1
+                })
+                .finish();
+            state
+        })
+        .state(UiState(1), |state| {
+            //在点击后  就会转换到状态1 这里我们再加一个状态轮换
+            let state = state
+                .size(vec2(400.0, 400.0))
+                .events()
+                .on_event(UiEventKind::Click, |flow| {
+                    flow.set_state(UiState(0)); //我们来看看效果
+                })
+                .finish();
+            state
+        })
         .build();
 
-        //  让我们创造子面板
+    //  让我们创造子面板
 
-            //加24个小面板
-        for idx in 0..24 {
+    //加24个小面板
+    for idx in 0..24 {
         let uuid = format!("demo_entry_{idx}");
         let panel = Mui::<TestCustomData>::new(Box::leak(uuid.into_boxed_str()))?
             .default_state(UiState(0))
             .state(
                 UiState(0),
                 move |mut state: StateStageBuilder<TestCustomData>| {
-
                     //访问关系组件 rel  让他依附 一个panel 当作容器
                     state.rel().container_with::<DataTest>("test_container");
 
                     //通过子类 确定自己要进入的容器  这里指定DataTest 和test_container 就可以绑定了
-                    
 
                     state
                         .z_index(4 + idx)
@@ -2742,23 +3157,9 @@ fn demo_panel()->Result<(),DbError> {
                 },
             )
             .build()?;
-   }
-   Ok(())
-
+    }
+    Ok(())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 fn build_demo_panel_with_uuid(
     panel_uuid: &'static str,
@@ -2845,19 +3246,18 @@ pub fn build_demo_panel() -> Result<(), DbError> {
     Ok(())
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-struct TestUi{
-    pub test_count:f32,
-    pub lock_state:bool
+struct TestUi {
+    pub test_count: f32,
+    pub lock_state: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
-struct SliderLock{
-    pub lock:bool
+struct SliderLock {
+    pub lock: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 struct UIDefault;
-
 
 /// Build a small demo: one draggable slider (with X-axis clamp) and a color panel
 /// whose color responds to events (hover: lighten; out: restore). The slider's drag
@@ -2877,31 +3277,35 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                 .color(vec4(0.12, 0.28, 0.60, 1.0))
                 // Respond to brightness changes via observers (data-driven)
                 .events()
-                    .on_data_change::<UiPanelData,_>(None,|target,flow|{
-                        println!("当前color面版监听的事件 {:?}",target);
-                        if(flow.payload_ref().lock_state){ return; }
-                        flow.style_set(PanelField::TRANSPARENT.bits(), [target.brightness,0.0,0.0,0.0]);
-                    })
-                    .on_event(UiEventKind::Click, |flow|{
-                        let position = Vec2::from_array(flow.record.snapshot.position);
-                        println!("当前position {:?}",position);
-                        let _ = Mui::<UIDefault>::new("nb").unwrap()
-                            .default_state(UiState(0))
-                            .state(UiState(0), |state|{
-                                let state = state
-                                    .color(vec4(0.0, 1.0, 1.0, 1.0))
-                                    .size(vec2(300.0, 300.0))
-                                    .with_trigger_mouse_pos()
-                                    ;
-                                state
-                            })
-                            .build();
-                    })
+                .on_data_change::<UiPanelData, _>(None, |target, flow| {
+                    println!("当前color面版监听的事件 {:?}", target);
+                    if (flow.payload_ref().lock_state) {
+                        return;
+                    }
+                    flow.style_set(
+                        PanelField::TRANSPARENT.bits(),
+                        [target.brightness, 0.0, 0.0, 0.0],
+                    );
+                })
+                .on_event(UiEventKind::Click, |flow| {
+                    let position = Vec2::from_array(flow.record.snapshot.position);
+                    println!("当前position {:?}", position);
+                    let _ = Mui::<UIDefault>::new("nb")
+                        .unwrap()
+                        .default_state(UiState(0))
+                        .state(UiState(0), |state| {
+                            let state = state
+                                .color(vec4(0.0, 1.0, 1.0, 1.0))
+                                .size(vec2(300.0, 300.0))
+                                .with_trigger_mouse_pos();
+                            state
+                        })
+                        .build();
+                })
                 .finish();
             state
         })
-            .build()?
-        ;
+        .build()?;
     handles.push(color_panel.clone());
 
     // Slider "thumb" – draggable only on X, clamped into [120, 580] with 5px steps
@@ -2918,12 +3322,12 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                 // X-only with relative budget [0..(x_max-x_min)], step 5px; origin from snapshot
                 .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
                 .events()
-                .on_data_change::<SliderLock,_>(None, |target,flow|{
-                    if(target.lock){
+                .on_data_change::<SliderLock, _>(None, |target, flow| {
+                    if (target.lock) {
                         flow.set_state(UiState(1));
                     }
                 })
-                .on_event_with(UiEventKind::Drag, move |flow,drag_detla| {
+                .on_event_with(UiEventKind::Drag, move |flow, drag_detla| {
                     // 将滑块位置映射为 [0,1] 的进度，并写入“颜色面板”的 payload.brightness，
                     // 触发本面板的 DB 提交（只允许改自己）。
                     let pos = Vec2::from_array(flow.args().record_snapshot.snapshot.position);
@@ -2933,33 +3337,30 @@ pub fn build_slider_color_demo() -> Result<Vec<PanelRuntimeHandle>, DbError> {
                     match drag_detla {
                         UiEventData::Vec2(vec2) => {
                             flow.update_self_payload(|data| {
-                                 data.brightness += vec2.x / x_max;
+                                data.brightness += vec2.x / x_max;
                             });
-                        },
-                        _=>{}
+                        }
+                        _ => {}
                     }
-
-           
                 })
                 .finish();
             state
         })
-        .state(UiState(1), move |state|{
+        .state(UiState(1), move |state| {
             let state = state
-                 .color(vec4(1.0, 0.0, 0.22, 1.0))
-                 .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
-                 .events()
-                 .on_data_change::<SliderLock,_>(None, |target,flow|{
-                    if(target.lock == false){
-                         println!("回到state 0");
-                         flow.set_state(UiState(0));
+                .color(vec4(1.0, 0.0, 0.22, 1.0))
+                .clamp_offset(Field::OnlyPositionX, [0.0, (x_max - x_min - 36.0), 5.0])
+                .events()
+                .on_data_change::<SliderLock, _>(None, |target, flow| {
+                    if (target.lock == false) {
+                        println!("回到state 0");
+                        flow.set_state(UiState(0));
                     }
-                    flow.update_self_payload(|payload|{
+                    flow.update_self_payload(|payload| {
                         payload.brightness = 0.0;
                     });
-                  })
-                 .finish()
-                ;
+                })
+                .finish();
             state
         })
         .build()?;

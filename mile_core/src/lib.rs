@@ -1,8 +1,10 @@
-﻿use mile_api::prelude::{
-    _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus
+use mile_api::prelude::{
+    _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
 };
 use mile_font::{
-    event::{BatchFontEntry, BatchRenderFont}, minimal_runtime::MiniFontRuntime, prelude::FontStyle,
+    event::{BatchFontEntry, BatchRenderFont},
+    minimal_runtime::MiniFontRuntime,
+    prelude::FontStyle,
 };
 use mile_gpu_dsl::prelude::{
     gpu_ast_compute_pipeline::ComputePipelineConfig,
@@ -23,20 +25,25 @@ use std::{
 };
 use wgpu::{SurfaceError, TextureFormat};
 use winit::{
-    application::ApplicationHandler, dpi::PhysicalPosition, event::{ElementState, KeyEvent, WindowEvent}, event_loop::EventLoop, keyboard::{KeyCode, PhysicalKey}, window::{self, Window, WindowAttributes}
+    application::ApplicationHandler,
+    dpi::PhysicalPosition,
+    event::{ElementState, KeyEvent, WindowEvent},
+    event_loop::EventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    window::{self, Window, WindowAttributes},
 };
 use winit::{
     event::MouseButton,
     event_loop::{ActiveEventLoop, ControlFlow},
 };
 
-pub struct Mile{
-    App:App,
-    runtime:Option<EventLoop<AppEvent>>
+pub struct Mile {
+    App: App,
+    runtime: Option<EventLoop<AppEvent>>,
 }
 
-impl Mile{
-   pub fn add_demo<F>(&mut self, f: F)->&mut Self
+impl Mile {
+    pub fn add_demo<F>(&mut self, f: F) -> &mut Self
     where
         F: Fn() + 'static,
     {
@@ -45,43 +52,43 @@ impl Mile{
         self
     }
 
-    pub fn new()->Mile{
-        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> = EventLoop::<AppEvent>::with_user_event();
-        
+    pub fn new() -> Mile {
+        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> =
+            EventLoop::<AppEvent>::with_user_event();
+
         let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
         let _proxy = event_loop_main.create_proxy();
-        
+
         // GlobalState keeps GPU/device handles shared across threads.
-        
+
         // App bundles hubs, fonts, rendering context, and timing info.
         let mut app = App::new();
-        Mile{
-            App:app,
-            runtime:Some(event_loop_main)
+        Mile {
+            App: app,
+            runtime: Some(event_loop_main),
         }
     }
 
-    pub fn run(&mut self){
+    pub fn run(&mut self) {
         if let Some(event_loop) = self.runtime.take() {
-            event_loop
-                .run_app(&mut self.App)
-                .expect("runtime error");
+            event_loop.run_app(&mut self.App).expect("runtime error");
         }
     }
 }
 
 impl App {
     pub fn build() -> App {
-        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> = EventLoop::<AppEvent>::with_user_event();
-        
+        let mut event_loop: winit::event_loop::EventLoopBuilder<AppEvent> =
+            EventLoop::<AppEvent>::with_user_event();
+
         let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
         let _proxy = event_loop_main.create_proxy();
-        
+
         // GlobalState keeps GPU/device handles shared across threads.
-        
+
         // App bundles hubs, fonts, rendering context, and timing info.
         let mut app = App::new();
-        
+
         app
     }
 }
@@ -98,10 +105,8 @@ pub struct App {
     pub delta_time: Duration,
     pub frame_index: u32,
     pub demo_panel_handles: Vec<PanelRuntimeHandle>,
-    pub demo:Option<Box<dyn Fn()>>
+    pub demo: Option<Box<dyn Fn()>>,
 }
-
-
 
 impl App {
     pub fn new() -> Self {
@@ -117,7 +122,7 @@ impl App {
             delta_time: Duration::from_secs_f32(0.0),
             frame_index: 0,
             demo_panel_handles: Vec::new(),
-            demo:None
+            demo: None,
         }
     }
 
@@ -140,7 +145,6 @@ impl App {
         // 始终刷新已注册的 payload；upload 会根据 dirty 标志决定是否重建实例
         runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
         runtime.upload_panel_instances(&ctx.device, &ctx.queue);
-
 
         // runtime.copy_interaction_swap_frame();
         runtime.tick_frame_update_data(&ctx.queue);
@@ -202,9 +206,9 @@ impl App {
             runtime.event_poll(&ctx.device, &ctx.queue);
         }
 
-        if let Some(runtime_cell) = &self.mile_font{
+        if let Some(runtime_cell) = &self.mile_font {
             let mut mile_font = runtime_cell.borrow_mut();
-             mile_font.poll_global_event(&ctx.device, &ctx.queue);
+            mile_font.poll_global_event(&ctx.device, &ctx.queue);
         }
 
         if let Some(kennel_cell) = &self.kennel {
@@ -415,7 +419,7 @@ impl ApplicationHandler<AppEvent> for App {
                 // if matches!(event.state, ElementState::Pressed)
                 //     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Space))
                 // {
-                        
+
                 // }
                 // if matches!(event.state, ElementState::Pressed)
                 //     && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter))

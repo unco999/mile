@@ -1,12 +1,15 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
 
 use mile_api::prelude::{GpuDebug, ModEventStream, Renderable, global_event_bus};
-use winit::dpi::PhysicalSize;
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
-use wgpu::{DepthBiasState, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, util::DeviceExt};
+use wgpu::{
+    DepthBiasState, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+    TextureViewDescriptor, util::DeviceExt,
+};
+use winit::dpi::PhysicalSize;
 
 use crate::{
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
@@ -72,7 +75,6 @@ impl GlyphBuilder {
     }
 }
 
-
 impl MiniFontRuntime {
     pub fn render_texture_view(&self) -> Option<&wgpu::TextureView> {
         self.buffers.as_ref().map(|b| &b.render_texture_view)
@@ -91,7 +93,7 @@ impl MiniFontRuntime {
             glyph_ver_advance: 0,
             glyph_ver_side_bearing: 0,
         }
-    } 
+    }
 
     fn round_pow2(n: u32) -> u32 {
         if n <= 1 {
@@ -204,7 +206,12 @@ impl MiniFontRuntime {
 
 impl MiniFontRuntime {
     /// Create render pipeline and static buffers for font.wgsl. Call once after init_gpu().
-    pub fn init_render_pipeline(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, format: TextureFormat) {
+    pub fn init_render_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: TextureFormat,
+    ) {
         if self.render.is_some() || self.buffers.is_none() {
             return;
         }
@@ -325,7 +332,9 @@ impl MiniFontRuntime {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mini.render.init.copy") });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("mini.render.init.copy"),
+        });
         enc.copy_buffer_to_buffer(&staging, 0, &global_uniform, 0, gu_bytes.len() as u64);
         queue.submit(Some(enc.finish()));
 
@@ -358,36 +367,60 @@ impl MiniFontRuntime {
             label: Some("mini.render.bg0"),
             layout: &bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bufs.render_texture_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: bufs.descriptor_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: global_uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: instance.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: panel_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: panel_delta_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&bufs.render_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: bufs.descriptor_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: global_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: panel_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: panel_delta_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding(),
+                },
             ],
         });
-        
-            const quad: [UiVertex; 4] = [
-                UiVertex {
-                    pos: [0.0, 0.0],
-                    uv: [0.0, 0.0],
-                },
-                UiVertex {
-                    pos: [1.0, 0.0],
-                    uv: [1.0, 0.0],
-                },
-                UiVertex {
-                    pos: [1.0, 1.0],
-                    uv: [1.0, 1.0],
-                },
-                UiVertex {
-                    pos: [0.0, 1.0],
-                    uv: [0.0, 1.0],
-                },
-            ];
-       
+
+        const quad: [UiVertex; 4] = [
+            UiVertex {
+                pos: [0.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            UiVertex {
+                pos: [1.0, 0.0],
+                uv: [1.0, 0.0],
+            },
+            UiVertex {
+                pos: [1.0, 1.0],
+                uv: [1.0, 1.0],
+            },
+            UiVertex {
+                pos: [0.0, 1.0],
+                uv: [0.0, 1.0],
+            },
+        ];
+
         let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
         let vertex = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mini.render.quad.vb"),
@@ -434,13 +467,13 @@ impl MiniFontRuntime {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: DepthBiasState::default(),
-                }),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
@@ -478,12 +511,20 @@ impl MiniFontRuntime {
                 if let Some(ch) = self.out_gpu_chars.get(i as usize) {
                     let desc = self.cpu_glyph_metrics.get(ch.char_index as usize);
                     let (units_per_em, advance_units, _lsb_units) = if let Some(m) = desc {
-                        (m.units_per_em as f32, m.glyph_advance_width as f32, m.glyph_left_side_bearing as f32)
+                        (
+                            m.units_per_em as f32,
+                            m.glyph_advance_width as f32,
+                            m.glyph_left_side_bearing as f32,
+                        )
                     } else {
                         (1.0_f32, 0.0_f32, 0.0_f32)
                     };
                     let pos_px = [t.position[0] + pen_x_px, t.position[1]];
-                    let adv_px = if units_per_em > 0.0 { advance_units * size_px / units_per_em } else { 0.0 };
+                    let adv_px = if units_per_em > 0.0 {
+                        advance_units * size_px / units_per_em
+                    } else {
+                        0.0
+                    };
                     out.push(GpuInstance {
                         char_index: ch.char_index,
                         text_index: ch.gpu_text_index,
@@ -501,11 +542,16 @@ impl MiniFontRuntime {
     }
 
     fn upload_instances_to_gpu(&mut self, queue: &wgpu::Queue) {
-        let Some(render) = &self.render else { return; };
+        let Some(render) = &self.render else {
+            return;
+        };
         let all = self.build_instance_slice();
         let cap = render.instance_capacity as usize;
         let count = all.len().min(cap);
-        if count == 0 { self.draw_instance_count = 0; return; }
+        if count == 0 {
+            self.draw_instance_count = 0;
+            return;
+        }
         queue.write_buffer(&render.instance, 0, bytemuck::cast_slice(&all[..count]));
         self.draw_instance_count = count as u32;
         // Fill debug buffer simple counters for readback printing:
@@ -544,21 +590,53 @@ impl MiniFontRuntime {
             None => return,
         };
         let delta_res = match panel_deltas {
-            Some(b) => wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: b, offset: 0, size: None }),
+            Some(b) => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: b,
+                offset: 0,
+                size: None,
+            }),
             None => panel_delta_fallback.as_entire_binding(),
         };
         let new_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mini.render.bg0"),
             layout: &layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: desc_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: global_uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: instance.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: panels, offset: 0, size: None }) },
-                wgpu::BindGroupEntry { binding: 6, resource: delta_res },
-                wgpu::BindGroupEntry { binding: 7, resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: desc_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: global_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: instance.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: panels,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: delta_res,
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.gpu_debug.buffer.as_ref().unwrap().as_entire_binding(),
+                },
             ],
         });
         if let Some(render) = &mut self.render {
@@ -575,7 +653,9 @@ impl Renderable for MiniFontRuntime {
         _frame_view: &wgpu::TextureView,
         pass: &mut wgpu::RenderPass<'a>,
     ) {
-        let Some(render) = &self.render else { return; };
+        let Some(render) = &self.render else {
+            return;
+        };
         pass.set_pipeline(&render.pipeline);
         pass.set_bind_group(0, &render.bg, &[]);
         pass.set_vertex_buffer(0, render.vertex.slice(..));
@@ -1108,25 +1188,43 @@ impl MiniFontRuntime {
         base
     }
 
-
     fn batch_enqueue_compute(&self, device: &wgpu::Device, queue: &wgpu::Queue, glyph_count: u32) {
-        if self.buffers.is_none() || self.compute.is_none() { return; }
+        if self.buffers.is_none() || self.compute.is_none() {
+            return;
+        }
         let compute = self.compute.as_ref().unwrap();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mini.compute.encoder.n") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("mini.compute.encoder.n"),
+        });
         {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("mini.compute.pass.n"), timestamp_writes: None });
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("mini.compute.pass.n"),
+                timestamp_writes: None,
+            });
             cpass.set_pipeline(&compute.pipeline);
             cpass.set_bind_group(0, &compute.bg, &[]);
             cpass.dispatch_workgroups(8, 8, glyph_count.max(1));
         }
         queue.submit(Some(encoder.finish()));
     }
-    fn batch_enqueue_compute_n(&self, device: &wgpu::Device, queue: &wgpu::Queue, glyph_count: u32) {
-        if self.buffers.is_none() || self.compute.is_none() { return; }
+    fn batch_enqueue_compute_n(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        glyph_count: u32,
+    ) {
+        if self.buffers.is_none() || self.compute.is_none() {
+            return;
+        }
         let compute = self.compute.as_ref().unwrap();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("mini.compute.encoder.n") });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("mini.compute.encoder.n"),
+        });
         {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("mini.compute.pass.n"), timestamp_writes: None });
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("mini.compute.pass.n"),
+                timestamp_writes: None,
+            });
             cpass.set_pipeline(&compute.pipeline);
             cpass.set_bind_group(0, &compute.bg, &[]);
             // Z dimension enumerates glyphs in this batch; one 64x64 tile per glyph.
@@ -1343,8 +1441,12 @@ impl MiniFontRuntime {
         if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {
             return;
         }
-        println!("events => add_glyph:{} render_text:{} remove_text:{}",
-            batch_entry.len(), batch_render.len(), batch_remove.len());
+        println!(
+            "events => add_glyph:{} render_text:{} remove_text:{}",
+            batch_entry.len(),
+            batch_render.len(),
+            batch_remove.len()
+        );
 
         // 0) Handle RemoveRenderFont first: clear per-panel texts/allocations (keep SDF/desc)
         if !batch_remove.is_empty() {
@@ -1375,26 +1477,43 @@ impl MiniFontRuntime {
             self.upload_instances_to_gpu(queue);
         }
 
-                // 1) Handle BatchFontEntry
+        // 1) Handle BatchFontEntry
         {
             let mut grouped: HashMap<Arc<str>, HashSet<char>> = HashMap::new();
             for e in &batch_entry {
                 let set = grouped.entry(e.font_file_path.clone()).or_default();
-                for ch in e.text.chars() { set.insert(ch); }
+                for ch in e.text.chars() {
+                    set.insert(ch);
+                }
             }
             let mut did_any_upload = false;
             for (font, set) in grouped {
                 let mut new_chars: Vec<char> = Vec::new();
                 for &ch in set.iter() {
-                    let present = self.glyph_index.get(&font).map_or(false, |m| m.contains_key(&ch));
-                    if !present { new_chars.push(ch); }
+                    let present = self
+                        .glyph_index
+                        .get(&font)
+                        .map_or(false, |m| m.contains_key(&ch));
+                    if !present {
+                        new_chars.push(ch);
+                    }
                 }
-                if new_chars.is_empty() { continue; }
-                let batch = match self.queue_batch_parse_outlines(font.clone(), new_chars.iter().copied(), 16) {
+                if new_chars.is_empty() {
+                    continue;
+                }
+                let batch = match self.queue_batch_parse_outlines(
+                    font.clone(),
+                    new_chars.iter().copied(),
+                    16,
+                ) {
                     Ok(b) => b,
                     Err(_) => continue,
                 };
-                let start = self.buffers.as_ref().map(|b| b.instruction_cursor).unwrap_or(0);
+                let start = self
+                    .buffers
+                    .as_ref()
+                    .map(|b| b.instruction_cursor)
+                    .unwrap_or(0);
                 let (des, instr) = self.build_gpu_slices(&batch, start);
                 let base = self.write_batch_buffer(queue, &des, &instr);
                 {
@@ -1407,17 +1526,29 @@ impl MiniFontRuntime {
                 {
                     let needed = (base as usize) + des.len();
                     if self.cpu_glyph_descs.len() < needed {
-                        self.cpu_glyph_descs.resize(needed, MiniFontGlyphDes::default());
+                        self.cpu_glyph_descs
+                            .resize(needed, MiniFontGlyphDes::default());
                     }
                     if self.cpu_glyph_metrics.len() < needed {
-                        self.cpu_glyph_metrics.resize(needed, GlyphMetrics {
-                            units_per_em: 0,
-                            ascent: 0, descent: 0, line_gap: 0,
-                            advance_width: 0, left_side_bearing: 0,
-                            x_min: 0, y_min: 0, x_max: 0, y_max: 0,
-                            glyph_advance_width: 0, glyph_left_side_bearing: 0,
-                            glyph_ver_advance: 0, glyph_ver_side_bearing: 0,
-                        });
+                        self.cpu_glyph_metrics.resize(
+                            needed,
+                            GlyphMetrics {
+                                units_per_em: 0,
+                                ascent: 0,
+                                descent: 0,
+                                line_gap: 0,
+                                advance_width: 0,
+                                left_side_bearing: 0,
+                                x_min: 0,
+                                y_min: 0,
+                                x_max: 0,
+                                y_max: 0,
+                                glyph_advance_width: 0,
+                                glyph_left_side_bearing: 0,
+                                glyph_ver_advance: 0,
+                                glyph_ver_side_bearing: 0,
+                            },
+                        );
                     }
                     for (i, d) in des.iter().enumerate() {
                         self.cpu_glyph_descs[(base as usize) + i] = *d;
@@ -1440,82 +1571,97 @@ impl MiniFontRuntime {
                 self.gpu_debug.raw_debug(device, queue);
                 self.is_update = false;
             }
-        
-        for e in &batch_render {
-            let Some(char_map) = self.glyph_index.get(&e.font_file_path) else {
-                continue;
-            };
 
-            // gather glyph indices first
-            let mut indices: Vec<u32> = Vec::new();
-            for ch in e.text.chars() {
-                if let Some(&idx) = char_map.get(&ch) {
-                    indices.push(idx);
+            for e in &batch_render {
+                let Some(char_map) = self.glyph_index.get(&e.font_file_path) else {
+                    continue;
+                };
+
+                // gather glyph indices first
+                let mut indices: Vec<u32> = Vec::new();
+                for ch in e.text.chars() {
+                    if let Some(&idx) = char_map.get(&ch) {
+                        indices.push(idx);
+                    }
                 }
-            }
-            let needed = indices.len() as u32;
-            if needed == 0 {
-                continue;
-            }
+                let needed = indices.len() as u32;
+                if needed == 0 {
+                    continue;
+                }
 
-            // key by (panel_id, font_path) so the same panel updates in place when possible
-            let key = (e.parent.0, e.font_file_path.clone());
-            let alloc = self.reserve_for_text(key, needed);
+                // key by (panel_id, font_path) so the same panel updates in place when possible
+                let key = (e.parent.0, e.font_file_path.clone());
+                let alloc = self.reserve_for_text(key, needed);
 
-            // build chars for the reserved slot range
-            let this_text_index = self.out_gpu_texts.len() as u32;
-            let mut chars: Vec<GpuChar> = Vec::with_capacity(indices.len());
-            for (i, &ci) in indices.iter().enumerate() {
-                let metrics = self.cpu_glyph_metrics.get(ci as usize).cloned().unwrap_or(GlyphMetrics {
-                    units_per_em: 1,
-                    ascent: 0, descent: 0, line_gap: 0,
-                    advance_width: 0, left_side_bearing: 0,
-                    x_min: 0, y_min: 0, x_max: 0, y_max: 0,
-                    glyph_advance_width: 0, glyph_left_side_bearing: 0,
-                    glyph_ver_advance: 0, glyph_ver_side_bearing: 0,
-                });
-                chars.push(GpuChar {
-                    char_index: ci,
-                    gpu_text_index: this_text_index,
-                    panel_index: e.parent.0,
-                    self_index: i as u32,
-                    glyph_advance_width: metrics.glyph_advance_width,
-                    glyph_left_side_bearing: metrics.glyph_left_side_bearing,
-                    glyph_ver_advance: metrics.glyph_ver_advance,
-                    glyph_ver_side_bearing: metrics.glyph_ver_side_bearing,
-                });
+                // build chars for the reserved slot range
+                let this_text_index = self.out_gpu_texts.len() as u32;
+                let mut chars: Vec<GpuChar> = Vec::with_capacity(indices.len());
+                for (i, &ci) in indices.iter().enumerate() {
+                    let metrics =
+                        self.cpu_glyph_metrics
+                            .get(ci as usize)
+                            .cloned()
+                            .unwrap_or(GlyphMetrics {
+                                units_per_em: 1,
+                                ascent: 0,
+                                descent: 0,
+                                line_gap: 0,
+                                advance_width: 0,
+                                left_side_bearing: 0,
+                                x_min: 0,
+                                y_min: 0,
+                                x_max: 0,
+                                y_max: 0,
+                                glyph_advance_width: 0,
+                                glyph_left_side_bearing: 0,
+                                glyph_ver_advance: 0,
+                                glyph_ver_side_bearing: 0,
+                            });
+                    chars.push(GpuChar {
+                        char_index: ci,
+                        gpu_text_index: this_text_index,
+                        panel_index: e.parent.0,
+                        self_index: i as u32,
+                        glyph_advance_width: metrics.glyph_advance_width,
+                        glyph_left_side_bearing: metrics.glyph_left_side_bearing,
+                        glyph_ver_advance: metrics.glyph_ver_advance,
+                        glyph_ver_side_bearing: metrics.glyph_ver_side_bearing,
+                    });
+                }
+                self.write_chars_into_slots(alloc.start, &chars);
+
+                // default small container size; position kept at origin for now
+                let gpu_text = GpuText {
+                    sdf_char_index_start_offset: alloc.start,
+                    sdf_char_index_end_offset: alloc.start + needed,
+                    font_size: e.font_style.font_size as f32,
+                    size: 256,
+                    color: e.font_style.font_color,
+                    position: [0.0, 0.0],
+                };
+                // Debug print
+                println!(
+                    "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
+                    gpu_text.sdf_char_index_start_offset,
+                    gpu_text.sdf_char_index_end_offset,
+                    gpu_text.font_size,
+                    gpu_text.color[0],
+                    gpu_text.color[1],
+                    gpu_text.color[2],
+                    gpu_text.color[3],
+                    &e.text,
+                    e.parent.0
+                );
+                let new_index = self.out_gpu_texts.len();
+                self.out_gpu_texts.push(gpu_text);
+                self.text_removed.push(false);
+                self.panel_text_indices
+                    .entry(e.parent.0)
+                    .or_default()
+                    .push(new_index);
             }
-            self.write_chars_into_slots(alloc.start, &chars);
-
-            // default small container size; position kept at origin for now
-            let gpu_text = GpuText {
-                sdf_char_index_start_offset: alloc.start,
-                sdf_char_index_end_offset: alloc.start + needed,
-                font_size: e.font_style.font_size as f32,
-                size: 256,
-                color: e.font_style.font_color,
-                position: [0.0, 0.0],
-            };
-            // Debug print
-            println!(
-                "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
-                gpu_text.sdf_char_index_start_offset,
-                gpu_text.sdf_char_index_end_offset,
-                gpu_text.font_size,
-                gpu_text.color[0],
-                gpu_text.color[1],
-                gpu_text.color[2],
-                gpu_text.color[3],
-                &e.text,
-                e.parent.0
-            );
-            let new_index = self.out_gpu_texts.len();
-            self.out_gpu_texts.push(gpu_text);
-            self.text_removed.push(false);
-            self.panel_text_indices.entry(e.parent.0).or_default().push(new_index);
-        }
-        // After texts/chars updated, upload instance data for rendering
-        self.upload_instances_to_gpu(queue);
-    } // end fn poll_once
+            // After texts/chars updated, upload instance data for rendering
+            self.upload_instances_to_gpu(queue);
+        } // end fn poll_once
     }
 } // end impl MiniFontRuntime

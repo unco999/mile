@@ -2,6 +2,7 @@ use glam::{vec2, vec4};
 use mile_db::DbError;
 use mile_ui::mui_prototype::{Mui, UiEventKind, UiPanelData, UiState};
 
+// 需要codex  可以找我  量大有优惠
 // Three-state panel cycling position/size on each click.
 pub fn register_state_demo() -> Result<(), DbError> {
     Mui::<UiPanelData>::new("ex_state_panel")?

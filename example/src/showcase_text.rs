@@ -39,4 +39,3 @@ pub fn register_text_demo() -> Result<(), DbError> {
         .build()?;
     Ok(())
 }
-
