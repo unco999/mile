@@ -753,6 +753,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "example"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "mile_api",
+ "mile_core",
+ "mile_db",
+ "mile_font",
+ "mile_gpu_dsl",
+ "mile_graphics",
+ "mile_ui",
+]
+
+[[package]]
 name = "exr"
 version = "1.73.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

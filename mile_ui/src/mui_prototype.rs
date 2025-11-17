@@ -117,7 +117,7 @@ struct PendingShaderRequest {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ShaderStage {
+pub enum ShaderStage {
     Fragment,
     Vertex,
 }
