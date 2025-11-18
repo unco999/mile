@@ -2,7 +2,8 @@ use glam::{vec2, vec4};
 use mile_ui::mui_prototype::{EventFlow, Mui, UiEventKind, UiState};
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
-    Function, Lua, RegistryKey, Result as LuaResult, UserData, UserDataMethods, Value, Variadic,
+    Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods, Value,
+    Variadic,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
@@ -44,12 +45,34 @@ struct StateSpec {
     position: Option<[f32; 2]>,
     size: Option<[f32; 2]>,
     color: Option<[f32; 4]>,
+    texture: Option<String>,
+    size_with_image: bool,
+    trigger_mouse_pos: bool,
+    visible: Option<bool>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
+    data_handlers: Vec<LuaDataHandler>,
+}
+
+impl Default for StateEntry {
+    fn default() -> Self {
+        Self {
+            spec: StateSpec::default(),
+            handlers: HashMap::new(),
+            data_handlers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct LuaDataHandler {
+    ty: Option<String>,
+    source: Option<String>,
+    callback: Arc<RegistryKey>,
 }
 
 #[derive(Clone)]
@@ -114,30 +137,64 @@ impl LuaMuiBuilder {
                 if let Some(color) = entry.spec.color {
                     s = s.color(vec4(color[0], color[1], color[2], color[3]));
                 }
-
-                if state_is_default || !entry.handlers.is_empty() {
-                    let mut events = s.events();
-                    if state_is_default {
-                        let payload = payload.clone();
-                        events = events.on_event(UiEventKind::Init, move |flow| {
-                            *flow.payload() = payload.clone();
-                        });
-                    }
-
-                    for (kind, key) in entry.handlers.iter() {
-                        let lua = lua.clone();
-                        let key = key.clone();
-                        events = events.on_event(*kind, move |flow| {
-                            if let Err(err) = dispatch_lua_event(&lua, &key, flow) {
-                                eprintln!("lua on_event error: {err}");
-                            }
-                        });
-                    }
-
-                    s = events.finish();
+                if let Some(tex) = entry.spec.texture.as_ref() {
+                    s = s.texture(tex);
+                }
+                if entry.spec.size_with_image {
+                    s = s.size_with_image();
+                }
+                if entry.spec.trigger_mouse_pos {
+                    s = s.with_trigger_mouse_pos();
+                }
+                if let Some(vis) = entry.spec.visible {
+                    s = s.visible(vis);
                 }
 
-                s
+                let mut events = s.events();
+                if state_is_default {
+                    let payload = payload.clone();
+                    events = events.on_event(UiEventKind::Init, move |flow| {
+                        *flow.payload() = payload.clone();
+                    });
+                }
+
+                for (kind, key) in entry.handlers.iter() {
+                    let lua = lua.clone();
+                    let key = key.clone();
+                    events = events.on_event(*kind, move |flow| {
+                        if let Err(err) = dispatch_lua_event(&lua, &key, flow) {
+                            eprintln!("lua on_event error: {err}");
+                        }
+                    });
+                }
+
+                for handler in entry.data_handlers.iter() {
+                    let lua = lua.clone();
+                    let key = handler.callback.clone();
+                    let source_owned = handler.source.clone();
+                    let source_for_reg = source_owned.clone();
+                    let ty_filter = handler.ty.clone();
+                    let ty_filter_closure = ty_filter.clone();
+                    events = events.on_data_change::<LuaPayload, _>(
+                        source_for_reg.as_deref(),
+                        move |src_payload, flow| {
+                            if !payload_matches_ty(src_payload, ty_filter_closure.as_deref()) {
+                                return;
+                            }
+                            if let Err(err) = dispatch_lua_on_data(
+                                &lua,
+                                &key,
+                                source_owned.clone(),
+                                src_payload.clone(),
+                                flow,
+                            ) {
+                                eprintln!("lua on_target_data error: {err}");
+                            }
+                        },
+                    );
+                }
+
+                events.finish()
             });
         }
 
@@ -167,18 +224,117 @@ fn dispatch_lua_event(
     tbl.set("payload", lua.to_value(&payload.0)?)?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
+    let lua_ref = lua.as_ref();
     if let Some(Value::Table(new_tbl)) = ret {
-        let new_payload: JsonValue = lua.from_value(Value::Table(new_tbl))?;
-        *flow.payload() = LuaPayload(new_payload);
-    } else if let Ok(Value::Table(tbl_payload)) = tbl.get("payload") {
-        // 允许 Lua 直接修改入参表里的 payload 字段，无需返回值
-        let new_payload: JsonValue = lua.from_value(Value::Table(tbl_payload))?;
+        apply_flow_directives(lua_ref, &new_tbl, flow)?;
+    }
+    apply_flow_directives(lua_ref, &tbl, flow)?;
+    Ok(())
+}
+
+fn dispatch_lua_on_data(
+    lua: &Arc<Lua>,
+    key: &RegistryKey,
+    source_uuid: Option<String>,
+    source_payload: LuaPayload,
+    flow: &mut EventFlow<'_, LuaPayload>,
+) -> LuaResult<()> {
+    let func: Function = lua.registry_value(key)?;
+    let tbl = lua.create_table()?;
+    tbl.set("panel_id", flow.args().panel_key.panel_uuid.clone())?;
+    tbl.set("state", flow.state().0)?;
+    tbl.set("event", "on_target_data")?;
+    tbl.set("payload", lua.to_value(&flow.payload_ref().0)?)?;
+    if let Some(src) = source_uuid.as_ref() {
+        tbl.set("source_uuid", src.clone())?;
+    }
+    tbl.set("source_payload", lua.to_value(&source_payload.0)?)?;
+
+    let ret: Option<Value> = func.call(tbl.clone())?;
+    let lua_ref = lua.as_ref();
+    if let Some(Value::Table(new_tbl)) = ret {
+        apply_flow_directives(lua_ref, &new_tbl, flow)?;
+    }
+    apply_flow_directives(lua_ref, &tbl, flow)?;
+    Ok(())
+}
+
+fn payload_matches_ty(payload: &LuaPayload, ty: Option<&str>) -> bool {
+    let Some(expected) = ty else {
+        return true;
+    };
+    if expected.is_empty() {
+        return true;
+    }
+    match &payload.0 {
+        JsonValue::Object(map) => map
+            .get("data_ty")
+            .and_then(|value| value.as_str())
+            .map_or(false, |value| value == expected),
+        _ => false,
+    }
+}
+
+fn apply_flow_directives(
+    lua: &Lua,
+    table: &Table,
+    flow: &mut EventFlow<'_, LuaPayload>,
+) -> LuaResult<()> {
+    if let Ok(Value::Table(payload_tbl)) = table.get("payload") {
+        let new_payload: JsonValue = lua.from_value(Value::Table(payload_tbl.clone()))?;
         *flow.payload() = LuaPayload(new_payload);
     }
-
-    if let Ok(Some(next_state)) = tbl.get::<Option<u32>>("next_state") {
+    if let Ok(value) = table.get::<Value>("text") {
+        if !matches!(value, Value::Nil) {
+            apply_text_from_lua(flow, &value)?;
+        }
+    }
+    if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
+    Ok(())
+}
+
+fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> LuaResult<()> {
+    let table = match value {
+        Value::Table(t) => t.clone(),
+        other => {
+            return Err(mlua::Error::external(format!(
+                "flow:text expects table, got {}",
+                other.type_name()
+            )))
+        }
+    };
+
+    // 支持字段：text, font_path, font_size, color (array[4]), weight, line_height
+    let text: String = table
+        .get("text")
+        .map_err(|_| mlua::Error::external("flow.text requires field 'text'"))?;
+    let font_path: Option<String> = table.get("font_path").ok();
+    let font_size: u32 = table.get("font_size").unwrap_or(16);
+    let color: Option<Vec<f32>> = table.get("color").ok();
+    let weight: u32 = table.get("weight").unwrap_or(400);
+    let line_height: u32 = table.get("line_height").unwrap_or(0);
+
+    let final_color = if let Some(c) = color {
+        let mut arr = [1.0, 1.0, 1.0, 1.0];
+        for (i, v) in c.iter().copied().take(4).enumerate() {
+            arr[i] = v;
+        }
+        arr
+    } else {
+        [1.0, 1.0, 1.0, 1.0]
+    };
+
+    let path = font_path.map(|p| p.into()).unwrap_or_else(|| "tf/Alibaba-PuHuiTi-Regular.ttf".into());
+    flow.text(
+        &text,
+        path,
+        font_size,
+        final_color,
+        weight,
+        line_height,
+    );
     Ok(())
 }
 
@@ -198,6 +354,26 @@ impl UserData for LuaMuiBuilder {
 
         methods.add_method_mut("color", |lua, this, (r,g,b,a): (f32, f32,f32,f32)| {
             this.current_entry_mut().spec.color = Some([r,g,b,a]);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("texture", |lua, this, path: String| {
+            this.current_entry_mut().spec.texture = Some(path);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("size_with_image", |lua, this, ()| {
+            this.current_entry_mut().spec.size_with_image = true;
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("with_trigger_mouse_pos", |lua, this, ()| {
+            this.current_entry_mut().spec.trigger_mouse_pos = true;
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("visible", |lua, this, visible: bool| {
+            this.current_entry_mut().spec.visible = Some(visible);
             lua.create_userdata(this.clone())
         });
 
@@ -228,6 +404,21 @@ impl UserData for LuaMuiBuilder {
             this.default_state = Some(state_id);
             lua.create_userdata(this.clone())
         });
+
+        methods.add_method_mut(
+            "on_target_data",
+            |lua, this, (ty, source, func): (Option<String>, Option<String>, Function)| {
+                let key = Arc::new(lua.create_registry_value(func)?);
+                this.current_entry_mut()
+                    .data_handlers
+                    .push(LuaDataHandler {
+                        ty,
+                        source,
+                        callback: key,
+                    });
+                lua.create_userdata(this.clone())
+            },
+        );
 
         // 构建面板
         methods.add_method("build", |_lua, this, ()| {
