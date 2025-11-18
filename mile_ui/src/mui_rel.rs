@@ -1,7 +1,9 @@
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::{
     any::{TypeId, type_name},
     collections::{HashMap, HashSet},
+    sync::Mutex,
 };
 
 /// Field identifiers that can be targeted by relation rules.
@@ -799,6 +801,39 @@ impl RelComposer {
     {
         self.properties.retain(|prop| !predicate(prop));
     }
+}
+
+type ContainerAliasBinder = fn(&mut RelComposer, &str);
+
+static CONTAINER_ALIAS_REGISTRY: Lazy<Mutex<HashMap<String, ContainerAliasBinder>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+pub fn register_container_alias<T: 'static>(alias: impl Into<String>) {
+    let alias = alias.into();
+    let binder: ContainerAliasBinder = container_alias_binder::<T>;
+    let mut registry = CONTAINER_ALIAS_REGISTRY
+        .lock()
+        .expect("container alias registry poisoned");
+    registry.insert(alias, binder);
+    registry
+        .entry(type_name::<T>().to_string())
+        .or_insert(binder);
+}
+
+pub fn apply_container_alias(composer: &mut RelComposer, alias: &str, panel_uuid: &str) -> bool {
+    let registry = CONTAINER_ALIAS_REGISTRY
+        .lock()
+        .expect("container alias registry poisoned");
+    if let Some(&binder) = registry.get(alias) {
+        binder(composer, panel_uuid);
+        true
+    } else {
+        false
+    }
+}
+
+fn container_alias_binder<T: 'static>(composer: &mut RelComposer, panel_uuid: &str) {
+    composer.container_with::<T>(panel_uuid);
 }
 #[derive(Clone, Debug)]
 pub struct RelNodeState {

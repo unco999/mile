@@ -965,14 +965,16 @@ fn apply_runtime_callbacks<TPayload: PanelPayload>(
                         );
                     })
                 }
-                UiEventKind::TargetDragOver => registry.register_target_drag_over(scope_copy, move |vec2| {
-                    trigger_event_internal_with::<TPayload>(
-                        &key_clone,
-                        Some(state_copy),
-                        UiEventKind::TargetDragOver,
-                        UiEventData::Vec2(vec2),
-                    );
-                }),
+                UiEventKind::TargetDragOver => {
+                    registry.register_target_drag_over(scope_copy, move |vec2| {
+                        trigger_event_internal_with::<TPayload>(
+                            &key_clone,
+                            Some(state_copy),
+                            UiEventKind::TargetDragOver,
+                            UiEventData::Vec2(vec2),
+                        );
+                    })
+                }
                 UiEventKind::TargetDragLeave => {
                     registry.register_target_drag_leave(scope_copy, move |_id| {
                         trigger_event_internal_with::<TPayload>(
@@ -1145,6 +1147,7 @@ pub struct PanelEventArgs<TPayload: PanelPayload> {
     pub record_snapshot: PanelRecord<TPayload>,
 }
 
+#[derive(Debug)]
 pub struct EventFlow<'a, TPayload: PanelPayload> {
     pub record: &'a mut PanelRecord<TPayload>,
     pub args: &'a PanelEventArgs<TPayload>,

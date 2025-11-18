@@ -235,7 +235,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
 
     // 更锐利的边缘
-    let edge_width = 0.12; // 更小的边缘宽度
+    let edge_width = 0.5; // 更小的边缘宽度
     let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
 
     // 或者使用阶梯函数获得完全锐利的边缘
