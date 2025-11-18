@@ -1,5 +1,8 @@
 use glam::{vec2, vec4};
-use mile_ui::mui_prototype::{EventFlow, Mui, UiEventKind, UiState};
+use mile_ui::{
+    mui_prototype::{EventFlow, Mui, UiEventKind, UiState},
+    mui_rel::{apply_container_alias, RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace},
+};
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
     Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods, Value,
@@ -9,6 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// Generated Lua DB structs (see lua_types/*.lua via build.rs)
+include!(concat!(env!("OUT_DIR"), "/lua_registered_types.rs"));
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LuaPayload(pub JsonValue);
@@ -49,6 +55,8 @@ struct StateSpec {
     size_with_image: bool,
     trigger_mouse_pos: bool,
     visible: Option<bool>,
+    container: Option<RelContainerSpec>,
+    z_index: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -56,6 +64,8 @@ struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
     data_handlers: Vec<LuaDataHandler>,
+    container_links: Vec<String>,
+    container_aliases: Vec<(String, String)>,
 }
 
 impl Default for StateEntry {
@@ -64,6 +74,8 @@ impl Default for StateEntry {
             spec: StateSpec::default(),
             handlers: HashMap::new(),
             data_handlers: Vec::new(),
+            container_links: Vec::new(),
+            container_aliases: Vec::new(),
         }
     }
 }
@@ -149,6 +161,24 @@ impl LuaMuiBuilder {
                 if let Some(vis) = entry.spec.visible {
                     s = s.visible(vis);
                 }
+                if let Some(z) = entry.spec.z_index {
+                    s = s.z_index(z);
+                }
+                if let Some(container) = entry.spec.container.as_ref() {
+                    let spec = container.clone();
+                    s.rel().container_self(move |target| *target = spec);
+                }
+                for (alias, panel_uuid) in entry.container_aliases.iter() {
+                    if !apply_container_alias(s.rel(), alias, panel_uuid) {
+                        eprintln!(
+                            "Lua container_with_alias failed: alias='{}', panel='{}'",
+                            alias, panel_uuid
+                        );    
+                    }
+                }
+                for panel_uuid in entry.container_links.iter() {
+                    s.rel().container_with::<LuaPayload>(panel_uuid);
+                }
 
                 let mut events = s.events();
                 if state_is_default {
@@ -216,11 +246,11 @@ fn dispatch_lua_event(
     let event_name = format!("{:#?}", flow.args().event);
     let payload = flow.payload_ref().clone();
 
-        let func: Function = lua.registry_value(key)?;
-        let tbl = lua.create_table()?;
-        tbl.set("panel_id", panel_id)?;
-        tbl.set("state", state_id)?;
-        tbl.set("event", event_name)?;
+    let func: Function = lua.registry_value(key)?;
+    let tbl = lua.create_table()?;
+    tbl.set("panel_id", panel_id)?;
+    tbl.set("state", state_id)?;
+    tbl.set("event", event_name)?;
     tbl.set("payload", lua.to_value(&payload.0)?)?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
@@ -302,7 +332,7 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
             return Err(mlua::Error::external(format!(
                 "flow:text expects table, got {}",
                 other.type_name()
-            )))
+            )));
         }
     };
 
@@ -326,15 +356,10 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
         [1.0, 1.0, 1.0, 1.0]
     };
 
-    let path = font_path.map(|p| p.into()).unwrap_or_else(|| "tf/Alibaba-PuHuiTi-Regular.ttf".into());
-    flow.text(
-        &text,
-        path,
-        font_size,
-        final_color,
-        weight,
-        line_height,
-    );
+    let path = font_path
+        .map(|p| p.into())
+        .unwrap_or_else(|| "tf/Alibaba-PuHuiTi-Regular.ttf".into());
+    flow.text(&text, path, font_size, final_color, weight, line_height);
     Ok(())
 }
 
@@ -352,8 +377,8 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
-        methods.add_method_mut("color", |lua, this, (r,g,b,a): (f32, f32,f32,f32)| {
-            this.current_entry_mut().spec.color = Some([r,g,b,a]);
+        methods.add_method_mut("color", |lua, this, (r, g, b, a): (f32, f32, f32, f32)| {
+            this.current_entry_mut().spec.color = Some([r, g, b, a]);
             lua.create_userdata(this.clone())
         });
 
@@ -377,6 +402,40 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
+        methods.add_method_mut("z_index", |lua, this, z: i32| {
+            this.current_entry_mut().spec.z_index = Some(z);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("container", |lua, this, value: Value| {
+            let new_spec = match value {
+                Value::Nil => None,
+                Value::Table(tbl) => Some(parse_container_spec(&tbl)?),
+                other => {
+                    return Err(mlua::Error::external(format!(
+                        "container expects table or nil, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            this.current_entry_mut().spec.container = new_spec;
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("container_with", |lua, this, panel_uuid: String| {
+            this.current_entry_mut().container_links.push(panel_uuid);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut(
+            "container_with_alias",
+            |lua, this, (alias, panel_uuid): (String, String)| {
+                this.current_entry_mut()
+                    .container_aliases
+                    .push((alias, panel_uuid));
+                lua.create_userdata(this.clone())
+            },
+        );
 
         // 事件回调：目前只支持 click（可按需扩展）
         methods.add_method_mut("on_event", |lua, this, (name, func): (String, Function)| {
@@ -386,7 +445,7 @@ impl UserData for LuaMuiBuilder {
                     return Err(mlua::Error::external(format!(
                         "unsupported event '{}' (only click)",
                         other
-                    )))
+                    )));
                 }
             };
             let key = Arc::new(lua.create_registry_value(func)?);
@@ -396,7 +455,9 @@ impl UserData for LuaMuiBuilder {
 
         methods.add_method_mut("state", |lua, this, state_id: u32| {
             this.current_state = state_id;
-            this.states.entry(state_id).or_insert_with(StateEntry::default);
+            this.states
+                .entry(state_id)
+                .or_insert_with(StateEntry::default);
             lua.create_userdata(this.clone())
         });
 
@@ -409,13 +470,11 @@ impl UserData for LuaMuiBuilder {
             "on_target_data",
             |lua, this, (ty, source, func): (Option<String>, Option<String>, Function)| {
                 let key = Arc::new(lua.create_registry_value(func)?);
-                this.current_entry_mut()
-                    .data_handlers
-                    .push(LuaDataHandler {
-                        ty,
-                        source,
-                        callback: key,
-                    });
+                this.current_entry_mut().data_handlers.push(LuaDataHandler {
+                    ty,
+                    source,
+                    callback: key,
+                });
                 lua.create_userdata(this.clone())
             },
         );
@@ -441,7 +500,7 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
                     return Err(mlua::Error::external(format!(
                         "Mui.new expects table, got {}",
                         other.type_name()
-                    )))
+                    )));
                 }
             };
 
@@ -494,4 +553,169 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
     })?;
     globals.set("print", print_fn)?;
     Ok(())
+}
+
+fn parse_container_spec(table: &Table) -> LuaResult<RelContainerSpec> {
+    let mut spec = RelContainerSpec::default();
+    if let Some(space) = table.get::<Option<String>>("space")? {
+        spec.space = parse_space_name(&space)?;
+    }
+    if let Some(origin) = parse_vec2_field(table, "origin")? {
+        spec.origin = origin;
+    }
+    if let Some(size) = parse_vec2_field(table, "size")? {
+        spec.size = Some(size);
+    }
+    if let Some(slot) = parse_vec2_field(table, "slot_size")? {
+        spec.slot_size = Some(slot);
+    }
+    if let Some(padding) = parse_vec4_field(table, "padding")? {
+        spec.padding = padding;
+    }
+    if let Some(clip) = table.get::<Option<bool>>("clip_content")? {
+        spec.clip_content = clip;
+    } else if let Some(clip) = table.get::<Option<bool>>("clip")? {
+        spec.clip_content = clip;
+    }
+    if let Some(axis) = table.get::<Option<String>>("scroll_axis")? {
+        spec.scroll_axis = parse_scroll_axis_name(&axis)?;
+    }
+    if let Some(layout_value) = table.get::<Option<Value>>("layout")? {
+        spec.layout = parse_layout_value(layout_value)?;
+    }
+    Ok(spec)
+}
+
+fn parse_layout_value(value: Value) -> LuaResult<RelLayoutKind> {
+    match value {
+        Value::Nil => Ok(RelLayoutKind::free()),
+        Value::String(name) => parse_layout_kind(&name.to_string_lossy(), None),
+        Value::Table(tbl) => {
+            let kind: String = tbl
+                .get("kind")
+                .map_err(|_| mlua::Error::external("layout.kind required"))?;
+            parse_layout_kind(&kind, Some(&tbl))
+        }
+        other => Err(mlua::Error::external(format!(
+            "layout expects string or table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_layout_kind(kind: &str, table: Option<&Table>) -> LuaResult<RelLayoutKind> {
+    let lower = kind.to_lowercase();
+    match lower.as_str() {
+        "free" => Ok(RelLayoutKind::free()),
+        "horizontal" => {
+            let spacing = table
+                .map(|tbl| tbl.get::<Option<f32>>("spacing"))
+                .transpose()?
+                .flatten()
+                .unwrap_or(0.0);
+            Ok(RelLayoutKind::horizontal(spacing))
+        }
+        "vertical" => {
+            let spacing = table
+                .map(|tbl| tbl.get::<Option<f32>>("spacing"))
+                .transpose()?
+                .flatten()
+                .unwrap_or(0.0);
+            Ok(RelLayoutKind::vertical(spacing))
+        }
+        "grid" => {
+            let spacing = table
+                .and_then(|tbl| parse_vec2_field(tbl, "spacing").transpose())
+                .transpose()?
+                .unwrap_or([0.0, 0.0]);
+            let columns = table
+                .map(|tbl| tbl.get::<Option<u32>>("columns"))
+                .transpose()?
+                .flatten();
+            let rows = table
+                .map(|tbl| tbl.get::<Option<u32>>("rows"))
+                .transpose()?
+                .flatten();
+            Ok(RelLayoutKind::Grid {
+                spacing,
+                columns,
+                rows,
+            })
+        }
+        "ring" => {
+            let tbl = table.ok_or_else(|| {
+                mlua::Error::external("layout.kind 'ring' requires radius/start_angle")
+            })?;
+            let radius: f32 = tbl
+                .get("radius")
+                .map_err(|_| mlua::Error::external("ring layout requires radius"))?;
+            let start_angle: f32 = tbl.get("start_angle").unwrap_or(0.0);
+            let clockwise: bool = tbl.get("clockwise").unwrap_or(true);
+            Ok(RelLayoutKind::Ring {
+                radius,
+                start_angle,
+                clockwise,
+            })
+        }
+        other => Err(mlua::Error::external(format!(
+            "unsupported layout kind '{other}'"
+        ))),
+    }
+}
+
+fn parse_vec2_field(table: &Table, key: &str) -> LuaResult<Option<[f32; 2]>> {
+    match table.get::<Value>(key)? {
+        Value::Nil => Ok(None),
+        Value::Table(seq) => {
+            let mut values = [0.0f32; 2];
+            for (idx, item) in seq.sequence_values::<f32>().enumerate() {
+                if idx >= 2 {
+                    break;
+                }
+                values[idx] = item?;
+            }
+            Ok(Some(values))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn parse_vec4_field(table: &Table, key: &str) -> LuaResult<Option<[f32; 4]>> {
+    match table.get::<Value>(key)? {
+        Value::Nil => Ok(None),
+        Value::Table(seq) => {
+            let mut values = [0.0f32; 4];
+            for (idx, item) in seq.sequence_values::<f32>().enumerate() {
+                if idx >= 4 {
+                    break;
+                }
+                values[idx] = item?;
+            }
+            Ok(Some(values))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn parse_scroll_axis_name(name: &str) -> LuaResult<RelScrollAxis> {
+    match name.to_lowercase().as_str() {
+        "none" => Ok(RelScrollAxis::None),
+        "horizontal" | "x" => Ok(RelScrollAxis::Horizontal),
+        "vertical" | "y" => Ok(RelScrollAxis::Vertical),
+        "both" | "xy" => Ok(RelScrollAxis::Both),
+        other => Err(mlua::Error::external(format!(
+            "unsupported scroll axis '{other}'"
+        ))),
+    }
+}
+
+fn parse_space_name(name: &str) -> LuaResult<RelSpace> {
+    match name.to_lowercase().as_str() {
+        "screen" => Ok(RelSpace::Screen),
+        "parent" => Ok(RelSpace::Parent),
+        "local" => Ok(RelSpace::Local),
+        other => Err(mlua::Error::external(format!(
+            "unsupported container space '{other}'"
+        ))),
+    }
 }
