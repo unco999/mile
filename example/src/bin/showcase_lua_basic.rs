@@ -1,3 +1,5 @@
+use std::env;
+
 use mile_core::Mile;
 use mile_lua::register_lua_api;
 use mlua::{Function, Lua, Table, prelude::LuaSerdeExt};
@@ -6,11 +8,13 @@ use serde_json::{json, Value as JsonValue};
 
 fn launch_lua_entry(lua: &Lua) -> mlua::Result<()> {
     // 载入 main.lua（可用 include_str! 或读取文件）
+        // 设置 Lua 包路径 - 关键步骤！
+
     let script_path = format!("lua/main.lua");
     println!("lua entry start => {}",script_path);
     let script = std::fs::read_to_string(script_path)?;
     lua.load(&script).set_name("main.lua").exec()?;
-
+    
     // 获取 mile_entry，全局可选传入 context（lua.create_table()? 里可写配置）
     let globals = lua.globals();
     let entry: Function = globals.get("mile_entry")?;

@@ -1,7 +1,8 @@
 -- Entry Lua script for build-time type registration + runtime entry.
 -- Add/require your own Lua modules here.
 
-
+require("test_require")
+require("mui")
 
 -- 运行时入口函数（可被 Rust 调用）
 -- 约定：Rust 获取全局函数 mile_entry 并调用它

@@ -1,6 +1,7 @@
 mod lua_db_codegen;
 
 use lua_db_codegen::generate_types;
+use mlua::Lua;
 use std::{
     env,
     error::Error,
@@ -8,7 +9,78 @@ use std::{
     path::{Path, PathBuf},
 };
 
+fn read_lua_script_file(){
+ // 获取当前包的目录 (mile_lua/)
+    let current_pkg_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:warning=当前包目录: {}", current_pkg_dir);
+    
+    // 直接使用当前包目录的父目录作为工作区根目录
+    let workspace_root = Path::new(&current_pkg_dir).parent().unwrap();
+    println!("cargo:warning=Workspace 根目录: {:?}", workspace_root);
+    
+    // Lua 源目录应该在 workspace 根目录下的 lua 文件夹
+    let lua_src_dir = workspace_root.join("lua");
+    println!("cargo:warning=Lua 源目录: {:?}", lua_src_dir);
+    
+    // 检查源目录是否存在
+    if !lua_src_dir.exists() {
+        println!("cargo:warning=❌ Lua 源目录不存在: {:?}", lua_src_dir);
+        
+        // 列出目录内容来调试
+        if let Ok(entries) = fs::read_dir(workspace_root) {
+            println!("cargo:warning=Workspace 根目录内容:");
+            for entry in entries.flatten() {
+                println!("cargo:warning=  - {:?}", entry.file_name());
+            }
+        }
+        return;
+    }
+    
+    let out_dir = env::var("OUT_DIR").unwrap();
+    
+    // 目标目录
+    let target_dir = Path::new(&out_dir)
+        .parent().unwrap()  // target/debug/build/mile_lua-hash
+        .parent().unwrap()  // target/debug/build
+        .parent().unwrap(); // target/debug
+    
+    println!("cargo:warning=目标目录: {:?}", target_dir);
+    
+    let lua_target_dir = target_dir.join("lua");
+    println!("cargo:warning=Lua 目标目录: {:?}", lua_target_dir);
+    
+    // 复制文件
+    if let Err(e) = copy_dir_all(&lua_src_dir, &lua_target_dir) {
+        println!("cargo:warning=复制失败: {}", e);
+    } else {
+        println!("cargo:warning=✅ Lua 文件复制成功!");
+        
+        // 验证复制结果
+        if lua_target_dir.join("main.lua").exists() {
+            println!("cargo:warning=✅ main.lua 复制成功");
+        }
+        if lua_target_dir.join("test_require.lua").exists() {
+            println!("cargo:warning=✅ test_require.lua 复制成功");
+        }
+    }
+}
+
+fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    fs::create_dir_all(&dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        } else {
+            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    read_lua_script_file();
     println!("开始编译lua注册结构体 (入口脚本)");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
