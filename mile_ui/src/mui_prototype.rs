@@ -1145,6 +1145,7 @@ pub struct PanelEventArgs<TPayload: PanelPayload> {
     pub record_snapshot: PanelRecord<TPayload>,
 }
 
+#[derive(Debug)]
 pub struct EventFlow<'a, TPayload: PanelPayload> {
     pub record: &'a mut PanelRecord<TPayload>,
     pub args: &'a PanelEventArgs<TPayload>,
