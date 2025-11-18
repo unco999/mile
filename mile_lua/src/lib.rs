@@ -13,7 +13,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Generated Lua DB structs (see lua_types/*.lua via build.rs)
+// Generated Lua DB structs (build.rs executes Lua entry script; default: lua/main.lua)
 include!(concat!(env!("OUT_DIR"), "/lua_registered_types.rs"));
 
 #[derive(Clone, Debug, PartialEq)]

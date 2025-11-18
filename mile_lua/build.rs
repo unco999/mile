@@ -9,25 +9,28 @@ use std::{
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("开始编译lua注册结构体");
+    println!("开始编译lua注册结构体 (入口脚本)");
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
-    let lua_dir = env::var("LUA_DB_TYPE_DIR")
+
+    let entry_path = env::var("LUA_DB_ENTRY")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join("lua_types"));
+        .unwrap_or_else(|_| manifest_dir.join("lua").join("main.lua"));
 
     let output_path = out_dir.join("lua_registered_types.rs");
-    if !lua_dir.exists() {
-        fs::write(&output_path, "// auto-generated: no lua types found\n")?;
-        println!("cargo:rerun-if-env-changed=LUA_DB_TYPE_DIR");
+    if !entry_path.exists() {
+        fs::write(&output_path, "// auto-generated: no lua entry file found\n")?;
+        println!("cargo:rerun-if-env-changed=LUA_DB_ENTRY");
         return Ok(());
     }
 
-    let code = generate_types(&lua_dir)?;
+    let code = generate_types(&entry_path)?;
     fs::write(&output_path, code)?;
 
-    println!("cargo:rerun-if-env-changed=LUA_DB_TYPE_DIR");
-    emit_rerun_for_dir(&lua_dir)?;
+    println!("cargo:rerun-if-env-changed=LUA_DB_ENTRY");
+    if let Some(dir) = entry_path.parent() {
+        emit_rerun_for_dir(dir)?;
+    }
 
     Ok(())
 }

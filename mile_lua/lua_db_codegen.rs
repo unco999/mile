@@ -1,4 +1,4 @@
-use mlua::{Lua, Table, Value};
+use mlua::{Lua, LuaOptions, StdLib, Table, Value};
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -28,10 +28,10 @@ struct RegisteredType {
     fields: Vec<RegisteredField>,
 }
 
-pub fn generate_types(dir: &Path) -> Result<String, Box<dyn Error>> {
+pub fn generate_types(entry_path: &Path) -> Result<String, Box<dyn Error>> {
     let registry: Arc<Mutex<BTreeMap<String, RegisteredType>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
-    collect_registered_types(dir, &registry)?;
+    collect_registered_types(entry_path, &registry)?;
     let types = registry
         .lock()
         .expect("registry poisoned")
@@ -40,10 +40,10 @@ pub fn generate_types(dir: &Path) -> Result<String, Box<dyn Error>> {
 }
 
 fn collect_registered_types(
-    dir: &Path,
+    entry_path: &Path,
     registry: &Arc<Mutex<BTreeMap<String, RegisteredType>>>,
 ) -> Result<(), Box<dyn Error>> {
-    let lua = Lua::new();
+    let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())?;
 
     {
         let registry_ptr = registry.clone();
@@ -55,34 +55,27 @@ fn collect_registered_types(
         lua.globals().set("register_db_type", register_fn)?;
     }
 
-    walk_lua_files(dir, &mut |path| -> Result<(), Box<dyn Error>> {
-        let source = std::fs::read_to_string(path)?;
-        let chunk = lua
-            .load(&source)
-            .set_name(path.to_string_lossy().into_owned());
-        chunk.exec()?;
-        Ok(())
-    })?;
-
-    Ok(())
-}
-
-fn walk_lua_files(
-    dir: &Path,
-    f: &mut dyn FnMut(&Path) -> Result<(), Box<dyn Error>>,
-) -> Result<(), Box<dyn Error>> {
-    if !dir.exists() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            walk_lua_files(&path, f)?;
-        } else if path.extension().is_some_and(|ext| ext == "lua") {
-            f(&path)?;
+    // Configure package.path so relative `require` from the entry file works.
+    if let Some(parent) = entry_path.parent() {
+        if let Ok(mut package) = lua.globals().get::<Table>("package") {
+            if let Ok(old_path) = package.get::<String>("path") {
+                let base_path = parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| parent.to_path_buf());
+                let base = base_path.to_string_lossy().replace('\\', "/");
+                let new_prefix = format!("{base}/?.lua;{base}/?/init.lua");
+                let new_path = format!("{new_prefix};{old_path}");
+                package.set("path", new_path)?;
+            }
         }
     }
+
+    let source = std::fs::read_to_string(entry_path)?;
+    let chunk = lua
+        .load(&source)
+        .set_name(entry_path.to_string_lossy().into_owned());
+    chunk.exec()?;
+
     Ok(())
 }
 
