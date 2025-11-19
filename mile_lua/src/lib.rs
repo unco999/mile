@@ -7,7 +7,7 @@ use mile_api::prelude::{_ty::PanelId, global_db, global_event_bus};
 use mile_font::event::{RemoveRenderFont, ResetFontRuntime};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
-    mui_prototype::{EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
+    mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
     mui_rel::{apply_container_alias, RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace},
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
@@ -224,6 +224,7 @@ struct StateSpec {
     visible: Option<bool>,
     container: Option<RelContainerSpec>,
     z_index: Option<i32>,
+    border: Option<BorderStyle>,
 }
 
 #[derive(Clone)]
@@ -315,6 +316,9 @@ impl LuaMuiBuilder {
                 }
                 if let Some(color) = entry.spec.color {
                     s = s.color(vec4(color[0], color[1], color[2], color[3]));
+                }
+                if let Some(border) = entry.spec.border.as_ref() {
+                    s = s.border(border.clone());
                 }
                 if let Some(tex) = entry.spec.texture.as_ref() {
                     s = s.texture(tex);
@@ -571,6 +575,21 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
+        methods.add_method_mut("border", |lua, this, value: Value| {
+            let border = match value {
+                Value::Nil => None,
+                Value::Table(tbl) => Some(parse_border_style(&tbl)?),
+                other => {
+                    return Err(mlua::Error::external(format!(
+                        "border expects table or nil, got {}",
+                        other.type_name()
+                    )));
+                }
+            };
+            this.current_entry_mut().spec.border = border;
+            lua.create_userdata(this.clone())
+        });
+
         methods.add_method_mut("texture", |lua, this, path: String| {
             this.current_entry_mut().spec.texture = Some(path);
             lua.create_userdata(this.clone())
@@ -791,6 +810,20 @@ fn parse_container_spec(table: &Table) -> LuaResult<RelContainerSpec> {
         spec.layout = parse_layout_value(layout_value)?;
     }
     Ok(spec)
+}
+
+fn parse_border_style(table: &Table) -> LuaResult<BorderStyle> {
+    let mut style = BorderStyle::default();
+    if let Some(color) = parse_vec4_field(table, "color")? {
+        style.color = color;
+    }
+    if let Some(width) = table.get::<Option<f32>>("width")? {
+        style.width = width;
+    }
+    if let Some(radius) = table.get::<Option<f32>>("radius")? {
+        style.radius = radius;
+    }
+    Ok(style)
 }
 
 fn parse_layout_value(value: Value) -> LuaResult<RelLayoutKind> {
