@@ -23,6 +23,17 @@ pub fn load_json(idx: u32) -> Option<JsonValue> {
     registry().lock().unwrap().get(&idx).cloned()
 }
 
+pub fn clear_all() -> usize {
+    NEXT_DB_INDEX.store(1, Ordering::Relaxed);
+    let mut cleared = 0;
+    if let Some(map) = DB_REGISTRY.get() {
+        let mut guard = map.lock().unwrap();
+        cleared = guard.len();
+        guard.clear();
+    }
+    cleared
+}
+
 #[derive(Clone, Debug)]
 pub struct LuaTableDb {
     pub index: u32,
@@ -47,8 +58,11 @@ pub fn register_db_globals(lua: &Lua) -> LuaResult<()> {
         }
     })?;
 
+    let clear = lua.create_function(|_, ()| Ok(clear_all() as u32))?;
+
     let globals = lua.globals();
     globals.set("db", create)?;
     globals.set("db_get", get)?;
+    globals.set("db_clear_all", clear)?;
     Ok(())
 }

@@ -204,6 +204,7 @@ pub struct MuiRuntime {
     pub global_event_bus: &'static EventBus,
     pub global_db: &'static MileDb,
     shader_events: EventStream<KennelResultIdxEvent>,
+    reset_events: EventStream<ResetUiRuntime>,
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
     pub panel_snapshots: Vec<Panel>,
@@ -214,6 +215,9 @@ pub struct MuiRuntime {
     pub trace: RefCell<GpuDebug>,
     pending_relation_flush: bool,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResetUiRuntime;
 
 impl Renderable for MuiRuntime {
     fn render<'a>(
@@ -320,6 +324,7 @@ impl MuiRuntime {
         let compute = ComputePipelines::new(device, &buffers, global_uniform.buffer(), hub.clone());
         install_runtime_event_bridge(registry, hub.clone());
         let shader_events = global_event_bus().subscribe::<KennelResultIdxEvent>();
+        let reset_events = global_event_bus().subscribe::<ResetUiRuntime>();
 
         Self {
             texture_atlas_store: TextureAtlasStore::default(),
@@ -338,6 +343,7 @@ impl MuiRuntime {
             global_event_bus: global_event_bus(),
             global_db: global_db(),
             shader_events,
+            reset_events,
             panel_cache: HashMap::new(),
             panel_instances: Vec::new(),
             panel_snapshots: Vec::new(),
@@ -910,7 +916,11 @@ impl MuiRuntime {
         self.panel_instances_dirty = false;
     }
 
-    pub fn event_poll(&mut self, _device: &Device, queue: &Queue) {
+    pub fn event_poll(&mut self, device: &Device, queue: &Queue) {
+        let reset_events = self.reset_events.drain();
+        if !reset_events.is_empty() {
+            self.reset_runtime(device, queue);
+        }
         // 在进入事件派发前，先在安全时机安装挂起的事件注册，避免回调内重入导致死锁。
         mui_prototype::drain_pending_event_registrations();
         let events = self.event_hub().poll();
@@ -933,6 +943,42 @@ impl MuiRuntime {
         }
         drop(guard);
         self.process_shader_results(queue);
+    }
+
+    fn reset_runtime(&mut self, device: &Device, _queue: &Queue) {
+        snapshot_registry::clear();
+        let capacities = self.buffers.capacities.clone();
+        self.buffers = BufferArena::new(device, &capacities);
+        self.render = RenderPipelines::new(device);
+        self.compute = RefCell::new(ComputePipelines::new(
+            device,
+            &self.buffers,
+            self.global_uniform.buffer(),
+            self.state.event_hub.clone(),
+        ));
+        self.texture_atlas_store = TextureAtlasStore::default();
+        self.texture_bindings = None;
+        self.render_bind_group_layout = None;
+        self.render_bind_group = None;
+        self.render_surface_format = None;
+        self.kennel_bind_group_layout = None;
+        self.kennel_bind_group = None;
+        self.panel_cache.clear();
+        self.panel_instances.clear();
+        self.panel_snapshots.clear();
+        self.panel_instances_dirty = true;
+        self.transitioning_panels.clear();
+        self.animation_descriptor = GpuAnimationDes::default();
+        self.animation_field_cache.clear();
+        self.pending_relation_flush = false;
+        self.frame_history = FrameHistory::default();
+        if let Ok(mut registry) = self.state.panel_events.lock() {
+            *registry = PanelEventRegistry::default();
+        }
+        self.state.clear_frame();
+        self.state.frame_state = FrameState::default();
+        self.state.event_hub.poll();
+        self.trace = RefCell::new(GpuDebug::new("mui_runtime_render"));
     }
 
     fn apply_panel_style_rewrite(&mut self, queue: &Queue, sig: &PanelStyleRewrite) {

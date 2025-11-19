@@ -12,11 +12,12 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 
 use crate::{
-    event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
+    event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime},
     prelude::{GpuChar, GpuText},
 };
 
-type RegisterEvent = ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont)>;
+type RegisterEvent =
+    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
 
 pub struct ComputeBufferCache {}
 
@@ -1433,11 +1434,37 @@ impl MiniFontRuntime {
     /// Minimal behavior: dedup, skip cached, assign consecutive indices per font.
     // removed: legacy naive queue_batch_parse; glyph_index is only updated after GPU upload now.
 
+    fn reset_runtime_state(&mut self) {
+        self.glyph_index.clear();
+        self.fonts.clear();
+        self.cpu_glyph_descs.clear();
+        self.cpu_glyph_metrics.clear();
+        self.out_gpu_chars.clear();
+        self.out_gpu_texts.clear();
+        self.panel_text_indices.clear();
+        self.text_removed.clear();
+        self.text_allocs.clear();
+        self.free_list.clear();
+        self.tile_cursor = 0;
+        self.gpu_char_cursor = 0;
+        self.quad_index = 0;
+        self.buffers = None;
+        self.compute = None;
+        self.render = None;
+        self.is_update = false;
+        self.draw_instance_count = 0;
+        self.gpu_debug = GpuDebug::new("MiniFontRuntime");
+    }
+
     /// Poll once: process batch font entries, then render texts.
     /// - For BatchFontEntry: group by font, dedup chars, register into glyph_index.
     /// - For BatchRenderFont: map chars to glyph indices, emit a contiguous GpuChar range and one GpuText.
     pub fn poll_global_event(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let (batch_entry, batch_render, batch_remove) = self.register.poll();
+        let (batch_entry, batch_render, batch_remove, font_reset) = self.register.poll();
+        if !font_reset.is_empty() {
+            self.reset_runtime_state();
+        }
+
         if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {
             return;
         }

@@ -17,3 +17,7 @@ pub fn panel_position(panel_id: u32) -> Option<[f32; 2]> {
     let guard = registry().lock().unwrap();
     guard.get(&panel_id).copied()
 }
+
+pub fn clear() {
+    registry().lock().unwrap().clear();
+}

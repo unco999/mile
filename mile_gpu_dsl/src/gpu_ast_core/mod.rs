@@ -30,6 +30,9 @@ pub mod event {
         pub idx: u32,
         pub _type: ExprTy,
     }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct ResetKennel;
 }
 
 use super::prelude::{Expr, gpu_ast_compute_pipeline::*, *};

@@ -35,6 +35,9 @@ pub mod event {
     pub struct RemoveRenderFont {
         pub parent: PanelId,
     }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct ResetFontRuntime;
 }
 
 pub mod prelude {

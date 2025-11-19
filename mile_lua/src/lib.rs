@@ -3,21 +3,48 @@ pub mod watch;
 
 use crate::db::{register_db_globals, LuaTableDb};
 use glam::{vec2, vec4};
+use mile_api::prelude::{_ty::PanelId, global_db, global_event_bus};
+use mile_font::event::{RemoveRenderFont, ResetFontRuntime};
+use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
-    mui_prototype::{EventFlow, Mui, UiEventKind, UiState},
+    mui_prototype::{EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
     mui_rel::{apply_container_alias, RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace},
+    runtime::entry::ResetUiRuntime,
+    runtime::relations::clear_panel_relations,
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
     AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData,
     UserDataMethods, Value, Variadic,
 };
+use once_cell::sync::OnceCell;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 type SharedLua = Arc<Mutex<Lua>>;
+static LUA_PANEL_REGISTRY: OnceCell<Mutex<Vec<PanelKey>>> = OnceCell::new();
+
+fn panel_registry() -> &'static Mutex<Vec<PanelKey>> {
+    LUA_PANEL_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn track_panel_key(key: &PanelKey) {
+    let mut registry = panel_registry().lock().unwrap();
+    if registry.iter().any(|existing| existing == key) {
+        return;
+    }
+    registry.push(key.clone());
+}
+
+fn snapshot_panel_keys() -> Vec<PanelKey> {
+    panel_registry().lock().unwrap().clone()
+}
+
+fn drain_panel_keys() -> Vec<PanelKey> {
+    panel_registry().lock().unwrap().drain(..).collect()
+}
 
 // Generated Lua DB structs (build.rs executes Lua entry script; default: lua/main.lua)
 #[cfg(has_out_dir)]
@@ -90,6 +117,73 @@ fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
         }
     }
     lua.to_value(&json)
+}
+
+fn clear_db_snapshots() -> u32 {
+    crate::db::clear_all() as u32
+}
+
+fn clear_font_for_panels(panels: &[PanelKey]) {
+    if panels.is_empty() {
+        return;
+    }
+    let bus = global_event_bus();
+    for key in panels {
+        bus.publish(RemoveRenderFont {
+            parent: PanelId(key.panel_id),
+        });
+    }
+}
+
+fn clear_ui_panels() -> LuaResult<u32> {
+    let panels = drain_panel_keys();
+    if panels.is_empty() {
+        return Ok(0);
+    }
+    let table = global_db()
+        .bind_table::<PanelBinding<LuaPayload>>()
+        .map_err(|err| mlua::Error::external(format!("panel table access failed: {err}")))?;
+    for key in &panels {
+        if let Err(err) = table.remove(key) {
+            eprintln!(
+                "[lua_reset] failed to remove panel '{}': {err}",
+                key.panel_uuid
+            );
+        }
+        clear_panel_relations(key.panel_id);
+    }
+    clear_font_for_panels(&panels);
+    global_event_bus().publish(ResetUiRuntime);
+    Ok(panels.len() as u32)
+}
+
+fn clear_font_runtime_state() -> u32 {
+    let panels = snapshot_panel_keys();
+    clear_font_for_panels(&panels);
+    global_event_bus().publish(ResetFontRuntime);
+    panels.len() as u32
+}
+
+fn clear_kennel_state() -> u32 {
+    global_event_bus().publish(ResetKennel);
+    0
+}
+
+fn register_runtime_reset(lua: &Lua) -> LuaResult<()> {
+    let reset = lua.create_table()?;
+    reset.set("db", lua.create_function(|_, ()| Ok(clear_db_snapshots()))?)?;
+    reset.set("ui", lua.create_function(|_, ()| clear_ui_panels())?)?;
+    reset.set(
+        "font",
+        lua.create_function(|_, ()| Ok(clear_font_runtime_state()))?,
+    )?;
+    reset.set(
+        "kennel",
+        lua.create_function(|_, ()| Ok(clear_kennel_state()))?,
+    )?;
+    let globals = lua.globals();
+    globals.set("mile_runtime_reset", reset)?;
+    Ok(())
 }
 
 impl Default for LuaPayload {
@@ -306,9 +400,10 @@ impl LuaMuiBuilder {
             });
         }
 
-        builder
+        let handle = builder
             .build()
             .map_err(|err| mlua::Error::external(format!("Mui.build failed: {err}")))?;
+        track_panel_key(handle.key());
 
         Ok(())
     }
@@ -586,6 +681,7 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
     let lua_shared = Arc::new(Mutex::new(lua.clone()));
 
     register_db_globals(lua)?;
+    register_runtime_reset(lua)?;
 
     {
         let make_struct = lua.create_function(|lua, (ty, value): (String, Value)| {

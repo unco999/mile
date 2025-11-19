@@ -16,6 +16,10 @@ impl TickUitl {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.last_tick = Instant::now();
+    }
+
     // 检查当前时间是否超过设定的间隔，若是，返回 true，并重置计时器
     pub fn tick(&mut self) -> bool {
         if self.last_tick.elapsed() >= self.interval {
