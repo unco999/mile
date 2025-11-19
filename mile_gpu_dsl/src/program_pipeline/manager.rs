@@ -177,6 +177,14 @@ impl ProgramPipeline {
         Ok(())
     }
 
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.render_expr_nodes.clear();
+        self.programs.clear();
+        self.next_program_id = 0;
+        self.dirty = false;
+    }
+
     pub fn layers(&self) -> impl Iterator<Item = &RenderLayerDescriptor> {
         self.programs.iter().map(|slot| &slot.render_layer)
     }

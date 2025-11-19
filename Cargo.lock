@@ -1467,6 +1467,8 @@ dependencies = [
  "glam",
  "mile_api",
  "mile_db",
+ "mile_font",
+ "mile_gpu_dsl",
  "mile_ui",
  "mlua",
  "notify",

@@ -16,9 +16,12 @@ use mlua::{Function, Lua, Table};
 const LUA_SOURCE_DIR: &str = "lua";
 const LUA_DEPLOY_DIR: &str = "target/lua_runtime";
 
-fn launch_lua_entry(lua: &Lua) -> mlua::Result<()> {
+fn run_lua_entry() -> mlua::Result<()> {
+    let lua = Lua::new();
+    register_lua_api(&lua)?;
     let deploy_root = resolved_deploy_root();
-    configure_package_path(lua, &deploy_root)?;
+    configure_package_path(&lua, &deploy_root)?;
+    trigger_runtime_reset(&lua)?;
 
     let script_path = deploy_root.join("main.lua");
     println!("[lua] entry start => {}", script_path.display());
@@ -33,6 +36,7 @@ fn launch_lua_entry(lua: &Lua) -> mlua::Result<()> {
     if let Ok(run_fn) = handle.get::<Function>("run") {
         run_fn.call::<()>(())?;
     }
+
     Ok(())
 }
 
@@ -54,17 +58,21 @@ fn main() {
     bootstrap_lua_assets().expect("sync lua assets into deploy dir");
     spawn_lua_deploy_logger();
 
-    let lua = Lua::new();
-    register_lua_api(&lua).expect("register lua api");
+    run_lua_entry().expect("initial lua launch");
 
-    let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, || {
-        println!("[lua_watch] change detected -> waiting for deploy + reload");
+    let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, move || {
+        println!("[lua_watch] change detected -> reloading scripts");
+        if let Err(err) = run_lua_entry() {
+            eprintln!("[lua_watch] reload failed: {err}");
+        }
     })
     .expect("start lua file watcher");
 
     Mile::new()
         .add_demo(move || {
-            launch_lua_entry(&lua).expect("lua runtime start error");
+            if let Err(err) = run_lua_entry() {
+                eprintln!("[lua] launch failed: {err}");
+            }
         })
         .run();
 }
@@ -155,4 +163,14 @@ fn path_to_lua_str(path: &Path) -> String {
     } else {
         replaced
     }
+}
+
+fn trigger_runtime_reset(lua: &Lua) -> mlua::Result<()> {
+    let globals = lua.globals();
+    if let Ok(reset_table) = globals.get::<Table>("mile_runtime_reset") {
+        if let Ok(reset_fn) = reset_table.get::<Function>("all") {
+            let _: () = reset_fn.call(())?;
+        }
+    }
+    Ok(())
 }

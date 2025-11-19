@@ -2,10 +2,10 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use bytemuck::{Zeroable, cast_slice};
 use mile_api::prelude::*;
-use wgpu::{Device, util::DownloadBuffer};
+use wgpu::{Device, Queue, util::DownloadBuffer};
 
 use crate::prelude::{
-    event::{ExprWithIdxEvent, KennelResultIdxEvent},
+    event::{ExprWithIdxEvent, KennelResultIdxEvent, ResetKennel},
     gpu_ast::*,
     gpu_ast_compute_pipeline::ComputePipelineConfig,
     manager::*,
@@ -44,7 +44,7 @@ pub struct RegisteredProgram {
 /**
  * 此模块监听的总线
  */
-type KenelRgisterEventTuple = (ExprWithIdxEvent,);
+type KenelRgisterEventTuple = (ExprWithIdxEvent, ResetKennel);
 
 pub struct Kennel {
     pipeline: ProgramPipeline,
@@ -238,7 +238,10 @@ impl Kennel {
     }
 
     pub fn process_global_events(&mut self, queue: &wgpu::Queue, device: &Device) {
-        let (expr_events,) = self.mod_event_steams.poll();
+        let (expr_events, reset_events) = self.mod_event_steams.poll();
+        if !reset_events.is_empty() {
+            self.reset(queue);
+        }
         for delivery in expr_events {
             let event = &*delivery;
             self.enqueue_expr_with_idx(queue, device, event);
@@ -296,5 +299,15 @@ impl Kennel {
                 }
             }
         });
+    }
+
+    pub fn reset(&mut self, queue: &wgpu::Queue) {
+        self.pipeline.clear();
+        self.programs.clear();
+        self.ordered_programs.clear();
+        self.render_binding_layers.clear();
+        self.render_binding_resources = None;
+        self.render_binding_capacity = 0;
+        self.readback_tick.reset();
     }
 }
