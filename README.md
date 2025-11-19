@@ -7,7 +7,6 @@ A modern Rust UI/GPU playground with real-time rendering, UI interaction, and a 
 
 ## 快速开始 / Quick Start
 - 构建：`cargo build --workspace`
-- 运行主引擎：`cargo run -p mile_core`
 - 单独运行示例（example crate）：
   - 基础布局 Basic Layout: `cargo run -p example --bin showcase_basic_layout`
   - 动画 Animation: `cargo run -p example --bin showcase_animation`
