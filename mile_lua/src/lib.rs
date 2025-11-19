@@ -1,3 +1,7 @@
+mod db;
+pub mod watch;
+
+use crate::db::{register_db_globals, LuaTableDb};
 use glam::{vec2, vec4};
 use mile_ui::{
     mui_prototype::{EventFlow, Mui, UiEventKind, UiState},
@@ -5,19 +9,88 @@ use mile_ui::{
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
-    Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods, Value,
-    Variadic,
+    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData,
+    UserDataMethods, Value, Variadic,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value as JsonValue;
+use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+type SharedLua = Arc<Mutex<Lua>>;
 
 // Generated Lua DB structs (build.rs executes Lua entry script; default: lua/main.lua)
-include!(concat!(env!("OUT_DIR"), "/lua_registered_types.rs"));
+#[cfg(has_out_dir)]
+mod lua_registered_types {
+    include!(concat!(env!("OUT_DIR"), "/lua_registered_types.rs"));
+}
+#[cfg(has_out_dir)]
+pub use lua_registered_types::*;
+
+// Fallback for editors/analysis that skip build.rs: provide empty module so rest of file still
+// parses, but note that real builds must run the build script.
+#[cfg(not(has_out_dir))]
+mod lua_registered_types {}
+#[cfg(not(has_out_dir))]
+pub use lua_registered_types::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LuaPayload(pub JsonValue);
+
+#[derive(Clone, Debug)]
+pub struct LuaStruct {
+    pub type_name: String,
+    pub json: JsonValue,
+}
+
+impl UserData for LuaStruct {}
+
+fn inject_data_ty(mut json: JsonValue, ty: &str) -> JsonValue {
+    if ty.is_empty() {
+        return json;
+    }
+    match json {
+        JsonValue::Object(mut map) => {
+            map.entry("data_ty")
+                .or_insert_with(|| JsonValue::String(ty.to_string()));
+            JsonValue::Object(map)
+        }
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("data_ty".into(), JsonValue::String(ty.to_string()));
+            map.insert("value".into(), other);
+            JsonValue::Object(map)
+        }
+    }
+}
+
+fn lua_value_to_json(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
+    match value {
+        Value::UserData(ud) => {
+            if let Ok(ls) = ud.borrow::<LuaStruct>() {
+                let ty = ls.type_name.clone();
+                Ok(inject_data_ty(ls.json.clone(), &ty))
+            } else if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                Ok(json!({ "db_index": db_ref.index }))
+            } else {
+                lua.from_value(Value::UserData(ud))
+            }
+        }
+        other => lua.from_value(other),
+    }
+}
+
+fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
+    if let JsonValue::Object(map) = &json {
+        if let Some(idx) = map.get("db_index").and_then(|v| v.as_u64()) {
+            let ud = lua.create_userdata(LuaTableDb {
+                index: idx as u32,
+            })?;
+            return Ok(Value::UserData(ud));
+        }
+    }
+    lua.to_value(&json)
+}
 
 impl Default for LuaPayload {
     fn default() -> Self {
@@ -89,7 +162,7 @@ struct LuaDataHandler {
 
 #[derive(Clone)]
 struct LuaMuiBuilder {
-    lua: Arc<Lua>,
+    lua: SharedLua,
     id: String,
     payload: LuaPayload,
     states: HashMap<u32, StateEntry>,
@@ -98,7 +171,7 @@ struct LuaMuiBuilder {
 }
 
 impl LuaMuiBuilder {
-    fn new(lua: Arc<Lua>, id: String, payload: LuaPayload) -> Self {
+    fn new(lua: SharedLua, id: String, payload: LuaPayload) -> Self {
         let mut states = HashMap::new();
         states.insert(0, StateEntry::default());
         Self {
@@ -192,7 +265,9 @@ impl LuaMuiBuilder {
                     let lua = lua.clone();
                     let key = key.clone();
                     events = events.on_event(*kind, move |flow| {
-                        if let Err(err) = dispatch_lua_event(&lua, &key, flow) {
+                        if let Err(err) =
+                            with_lua(&lua, |lua_ctx| dispatch_lua_event(lua_ctx, &key, flow))
+                        {
                             eprintln!("lua on_event error: {err}");
                         }
                     });
@@ -211,13 +286,16 @@ impl LuaMuiBuilder {
                             if !payload_matches_ty(src_payload, ty_filter_closure.as_deref()) {
                                 return;
                             }
-                            if let Err(err) = dispatch_lua_on_data(
-                                &lua,
-                                &key,
-                                source_owned.clone(),
-                                src_payload.clone(),
-                                flow,
-                            ) {
+                            let call_result = with_lua(&lua, |lua_ctx| {
+                                dispatch_lua_on_data(
+                                    lua_ctx,
+                                    &key,
+                                    source_owned.clone(),
+                                    src_payload.clone(),
+                                    flow,
+                                )
+                            });
+                            if let Err(err) = call_result {
                                 eprintln!("lua on_target_data error: {err}");
                             }
                         },
@@ -236,8 +314,18 @@ impl LuaMuiBuilder {
     }
 }
 
+fn with_lua<R, F>(lua: &SharedLua, f: F) -> LuaResult<R>
+where
+    F: FnOnce(&Lua) -> LuaResult<R>,
+{
+    let guard = lua
+        .lock()
+        .map_err(|_| mlua::Error::external("lua runtime poisoned"))?;
+    f(&*guard)
+}
+
 fn dispatch_lua_event(
-    lua: &Arc<Lua>,
+    lua: &Lua,
     key: &RegistryKey,
     flow: &mut EventFlow<'_, LuaPayload>,
 ) -> LuaResult<()> {
@@ -251,10 +339,10 @@ fn dispatch_lua_event(
     tbl.set("panel_id", panel_id)?;
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
-    tbl.set("payload", lua.to_value(&payload.0)?)?;
+    tbl.set("payload", json_to_lua_value(lua, payload.0.clone())?)?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
-    let lua_ref = lua.as_ref();
+    let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
     }
@@ -263,7 +351,7 @@ fn dispatch_lua_event(
 }
 
 fn dispatch_lua_on_data(
-    lua: &Arc<Lua>,
+    lua: &Lua,
     key: &RegistryKey,
     source_uuid: Option<String>,
     source_payload: LuaPayload,
@@ -274,14 +362,20 @@ fn dispatch_lua_on_data(
     tbl.set("panel_id", flow.args().panel_key.panel_uuid.clone())?;
     tbl.set("state", flow.state().0)?;
     tbl.set("event", "on_target_data")?;
-    tbl.set("payload", lua.to_value(&flow.payload_ref().0)?)?;
+    tbl.set(
+        "payload",
+        json_to_lua_value(lua, flow.payload_ref().0.clone())?,
+    )?;
     if let Some(src) = source_uuid.as_ref() {
         tbl.set("source_uuid", src.clone())?;
     }
-    tbl.set("source_payload", lua.to_value(&source_payload.0)?)?;
+    tbl.set(
+        "source_payload",
+        json_to_lua_value(lua, source_payload.0.clone())?,
+    )?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
-    let lua_ref = lua.as_ref();
+    let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
     }
@@ -310,8 +404,8 @@ fn apply_flow_directives(
     table: &Table,
     flow: &mut EventFlow<'_, LuaPayload>,
 ) -> LuaResult<()> {
-    if let Ok(Value::Table(payload_tbl)) = table.get("payload") {
-        let new_payload: JsonValue = lua.from_value(Value::Table(payload_tbl.clone()))?;
+    if let Ok(value) = table.get::<Value>("payload") {
+        let new_payload = lua_value_to_json(lua, value)?;
         *flow.payload() = LuaPayload(new_payload);
     }
     if let Ok(value) = table.get::<Value>("text") {
@@ -489,10 +583,27 @@ impl UserData for LuaMuiBuilder {
 
 /// 向 Lua 注册全局 `Mui.new` 接口（最小实现：id + data + position/size + click 事件）
 pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
-    let lua_arc = Arc::new(lua.clone());
+    let lua_shared = Arc::new(Mutex::new(lua.clone()));
+
+    register_db_globals(lua)?;
+
+    {
+        let make_struct = lua.create_function(|lua, (ty, value): (String, Value)| {
+            let json = lua_value_to_json(lua, value)?;
+            let json = inject_data_ty(json, &ty);
+            let ud = lua.create_userdata(LuaStruct {
+                type_name: ty,
+                json: json.clone(),
+            })?;
+            Ok::<AnyUserData, mlua::Error>(ud)
+        })?;
+        let globals = lua.globals();
+        globals.set("struct", make_struct.clone())?;
+        globals.set("register_db_type", make_struct)?;
+    }
 
     let new_fn = {
-        let lua_arc = lua_arc.clone();
+        let lua_shared_handle = lua_shared.clone();
         lua.create_function(move |lua, table: Value| {
             let tbl = match table {
                 Value::Table(t) => t,
@@ -510,11 +621,11 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
 
             let data_value: Option<Value> = tbl.get("data").ok();
             let payload_json: JsonValue = match data_value {
-                Some(v) => lua.from_value(v)?,
+                Some(v) => lua_value_to_json(lua, v)?,
                 None => JsonValue::Null,
             };
 
-            let builder = LuaMuiBuilder::new(lua_arc.clone(), id, LuaPayload(payload_json));
+            let builder = LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
             lua.create_userdata(builder)
         })?
     };
