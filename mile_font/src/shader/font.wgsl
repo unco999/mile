@@ -77,6 +77,7 @@ struct Instance {
     pos_px: vec2<f32>,
     // Pixel height requested by CPU; quad vertices and line height are derived from this value.
     size_px: f32,
+    _pad_size: f32,
     color: vec4<f32>,
 };
 
@@ -173,12 +174,10 @@ fn vs_main(
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
     let container = panel.size;
-    // Estimate line height in pixels from font metrics and the CPU-provided size_px
-    let units = max(f32(des.units_per_em), 1.0);
-    let line_height_em = f32(des.ascent - des.descent + des.line_gap);
-    let glyph_width_px = f32(des.glyph_advance_width) / units * inst.size_px;
-    let glyph_height_px = line_height_em / units * inst.size_px;
-    let line_height_px = glyph_height_px;
+    // Simplify sizing: trust CPU-provided size directly for both glyph width/height.
+    let glyph_width_px = inst.size_px;
+    let glyph_height_px = inst.size_px;
+    let line_height_px = inst.size_px;
     // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
     let local_x = inst.pos_px.x;
     let wrap_width = max(container.x, 1.0);

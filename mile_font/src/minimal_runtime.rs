@@ -547,6 +547,7 @@ impl MiniFontRuntime {
                         panel_index: ch.panel_index,
                         pos_px,
                         size_px,
+                        _pad_size: 0.0,
                         color: t.color,
                     });
                     pen_x_px += adv_px;
@@ -865,7 +866,7 @@ struct UiVertex {
     uv: [f32; 2],
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 struct GpuInstance {
     // identity and indexing
@@ -876,6 +877,8 @@ struct GpuInstance {
     // layout in pixels
     pos_px: [f32; 2],
     size_px: f32,
+    // pad to 32 bytes so `color` matches WGSL std430 alignment (vec4<f32> @ offset 32)
+    _pad_size: f32,
     color: [f32; 4],
 }
 
