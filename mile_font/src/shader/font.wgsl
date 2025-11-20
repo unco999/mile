@@ -180,7 +180,9 @@ fn vs_main(
     let glyph_size = vec2<f32>(inst.size_px);
     // wrap relative to panel width; explicit newlines encoded in pen_px.y
     let effective_width = max(panel.size.x, glyph_size.x);
-    let wrap_count = floor((inst.pen_px.x + glyph_size.x) / effective_width);
+    let next_x = inst.pen_px.x + glyph_size.x;
+    // only wrap when the glyph would exceed the panel width (strict pixel bound)
+    let wrap_count = select(0.0, floor((next_x - 0.001) / effective_width), next_x > effective_width);
     let local_x = inst.pen_px.x - wrap_count * effective_width;
     let local_y = (inst.pen_px.y + wrap_count) * inst.line_height_px;
     let px = panel.position + delta.delta_position + inst.origin_px
