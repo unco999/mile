@@ -1,10 +1,10 @@
-use mlua::{Lua, Result as LuaResult, UserData, Value};
 use mlua::prelude::LuaSerdeExt;
+use mlua::{Lua, Result as LuaResult, UserData, Value};
 use once_cell::sync::OnceCell;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 static NEXT_DB_INDEX: AtomicU32 = AtomicU32::new(1);
 static DB_REGISTRY: OnceCell<Mutex<HashMap<u32, JsonValue>>> = OnceCell::new();

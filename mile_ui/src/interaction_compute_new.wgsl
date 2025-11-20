@@ -4,32 +4,49 @@
 // the frame cache buffer (two frames ring buffer) so the CPU can poll them.
 
 struct Panel {
-    position: vec2<f32>,
-    size: vec2<f32>;
-    uv_offset: vec2<f32>;
-    uv_scale: vec2<f32>;
+    // === 16-byte 区 1 ===
+    position: vec2<f32>,    // 8 bytes
+    size: vec2<f32>,        // 8 bytes
 
-    z_index: u32,
-    pass_through: u32,
-    id: u32,
-    interaction: u32,
+    // === 16-byte 区 2 ===
+    uv_offset: vec2<f32>,   // 8 bytes
+    uv_scale: vec2<f32>,    // 8 bytes
 
-    event_mask: u32,
-    state_mask: u32,
-    transparent: f32,
-    texture_slot: u32,
+    // === 16-byte 区 3 ===
+    z_index: u32,           // 4 bytes
+    pass_through: u32,      // 4 bytes
+    id: u32,                // 4 bytes
+    interaction: u32,       // 4 bytes
 
-    state: u32,
-    collection_state: u32,
-    kennel_des_id: u32,
-    flags: u32,
+    // === 16-byte 区 4 ===
+    event_mask: u32,        // 4 bytes
+    state_mask: u32,        // 4 bytes
+    transparent: f32,       // 4 bytes
+    texture_id: u32,        // 4 bytes
 
-    color: vec4<f32>,
-    border_color: vec4<f32>,
-    border_width: f32,
-    border_radius: f32,
-    visible: u32,
-    _pad_border: u32,
+    // === 16-byte 区 5 ===
+    state: u32,             // 4 bytes
+    collection_state: u32,  // 4 bytes
+    fragment_shader_id: u32,// 4 bytes
+    vertex_shader_id: u32,  // 4 bytes
+
+    // === 16-byte 区 6 ===
+    rotation: vec4<f32>,
+
+    // === 16-byte 区 7 ===
+    scale: vec4<f32>,
+
+    // === 16-byte 区 8 ===
+    color: vec4<f32>,       // 16 bytes
+
+    // === 16-byte 区 9 ===
+    border_color: vec4<f32>,// 16 bytes
+
+    // === 16-byte 区 10 ===
+    border_width: f32,      // 4 bytes
+    border_radius: f32,     // 4 bytes
+    visible: u32,           // 4 bytes
+    _pad_border: u32,       // 4 bytes (填充)
 };
 
 struct PanelAnimDelta {

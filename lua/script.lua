@@ -59,6 +59,7 @@ local display = Mui.new({
 })
     :default_state(1)
     :state(1)
+        :texture("caton (1).png")
         :on_event("click", function(ctx)
             ctx.text = {
                 text = "实时更新就是爽",
@@ -69,12 +70,7 @@ local display = Mui.new({
         end)
         :size(460, 320)
         :position(380, 60)
-        :color(0.06, 0.08, 0.10, 0.95)
-        :border({
-            color = { 0.95, 0.65, 0.35, 1.0 },
-            width = 4.0,
-            radius = 0.0,
-        })
+        :rotation(0,180,90)
     :build()
 
 

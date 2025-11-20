@@ -531,12 +531,20 @@ pub struct Panel {
     pub vertex_shader_id: u32,   // 12, ���뵽 16
 
     // === 16-byte �� 6 ===
-    pub color: [f32; 4],
+    pub rotation: [f32; 3],
+    pub rotation_pad: f32,
 
     // === 16-byte �� 7 ===
-    pub border_color: [f32; 4],
+    pub scale: [f32; 3],
+    pub scale_pad: f32,
 
     // === 16-byte �� 8 ===
+    pub color: [f32; 4],
+
+    // === 16-byte �� 9 ===
+    pub border_color: [f32; 4],
+
+    // === 16-byte �� 10 ===
     pub border_width: f32,
     pub border_radius: f32,
     pub visible: u32,

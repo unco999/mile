@@ -1852,11 +1852,21 @@ impl MuiRuntime {
                         wgpu::VertexAttribute {
                             offset: 112,
                             shader_location: 20,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 128,
+                            shader_location: 21,
+                            format: wgpu::VertexFormat::Float32x4,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: 144,
+                            shader_location: 22,
                             format: wgpu::VertexFormat::Float32x2,
                         },
                         wgpu::VertexAttribute {
-                            offset: 120,
-                            shader_location: 21,
+                            offset: 152,
+                            shader_location: 23,
                             format: wgpu::VertexFormat::Uint32,
                         },
                     ],
@@ -2040,6 +2050,13 @@ impl MuiRuntime {
             .unwrap_or(u32::MAX);
         let collection_state = overrides.and_then(|o| o.collection_state).unwrap_or(0);
 
+        let rotation = overrides
+            .and_then(|o| o.rotation)
+            .unwrap_or(desc.snapshot.rotation);
+        let scale = overrides
+            .and_then(|o| o.scale)
+            .unwrap_or(desc.snapshot.scale);
+
         let transparent = overrides
             .and_then(|o| o.transparent)
             .or_else(|| overrides.and_then(|o| o.color).map(|color| color[3]))
@@ -2079,6 +2096,10 @@ impl MuiRuntime {
         panel.collection_state = collection_state;
         panel.vertex_shader_id = vertex_shader_id;
         panel.fragment_shader_id = fragment_shader_id;
+        panel.rotation = rotation;
+        panel.rotation_pad = 0.0;
+        panel.scale = scale;
+        panel.scale_pad = 0.0;
 
         let color = overrides
             .and_then(|o| o.color)
@@ -2150,6 +2171,12 @@ impl MuiRuntime {
         }
         if let Some(collection_state) = overrides.and_then(|o| o.collection_state) {
             panel.collection_state = collection_state;
+        }
+        if let Some(rotation) = overrides.and_then(|o| o.rotation) {
+            panel.rotation = rotation;
+        }
+        if let Some(scale) = overrides.and_then(|o| o.scale) {
+            panel.scale = scale;
         }
 
         if let Some(color) = overrides.and_then(|o| o.color) {

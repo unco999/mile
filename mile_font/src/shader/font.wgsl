@@ -101,6 +101,8 @@ struct Panel {
     collection_state: u32,
     fragment_shader_id: u32,
     vertex_shader_id: u32,
+    rotation: vec4<f32>,
+    scale: vec4<f32>,
     color: vec4<f32>,
     border_color: vec4<f32>,
     border_width: f32,
