@@ -183,9 +183,9 @@ fn vs_main(
     let next_x = inst.pen_px.x + glyph_size.x;
     // only wrap when the glyph would exceed the panel width (strict pixel bound)
     let wrap_count = select(0.0, floor((next_x - 0.001) / effective_width), next_x > effective_width);
-    // keep intra-line spacing after wrap while clamping the first glyph to the left bound
+    // keep intra-line spacing after wrap by shifting negatives back into the line width
     let wrapped_x = inst.pen_px.x - wrap_count * effective_width;
-    let local_x = max(wrapped_x, 0.0);
+    let local_x = wrapped_x + select(0.0, effective_width, wrapped_x < 0.0);
     let local_y = (inst.pen_px.y + wrap_count) * inst.line_height_px;
     let px = panel.position + delta.delta_position + inst.origin_px
         + vec2<f32>(local_x + position.x * glyph_size.x, local_y + position.y * glyph_size.y);
