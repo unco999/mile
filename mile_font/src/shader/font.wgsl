@@ -248,5 +248,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //let alpha = select(0.0, 1.0, sdf_value > 0.5);
 
     let base_color = in.color;
-    return vec4<f32>(base_color.rgb, base_color.a * alpha);
+    return vec4<f32>(0.0,0.0,0.0,0.0);
+    //return vec4<f32>(base_color.rgb, base_color.a * alpha);
 }

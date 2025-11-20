@@ -3,7 +3,8 @@
 
 require("test_require")
 require("mui_core")
-require("script")
+-- require("script")
+require("container_demo")
 
 -- 运行时入口函数（可被 Rust 调用）
 -- 约定：Rust 获取全局函数 mile_entry 并调用它
