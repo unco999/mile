@@ -2,12 +2,18 @@ use std::sync::OnceLock;
 
 use mile_db::MileDb;
 
-use crate::prelude::{EventBus, ImportRegistry};
+use crate::prelude::{EventBus, ImportRegistry, KeyedEventBus};
 
 static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
 
+static GLOBAL_KEY_BUS: OnceLock<KeyedEventBus> = OnceLock::new();
+
 pub fn global_event_bus() -> &'static EventBus {
     GLOBAL_BUS.get_or_init(EventBus::new)
+}
+
+pub fn global_key_event_bus() -> &'static KeyedEventBus {
+    GLOBAL_KEY_BUS.get_or_init(KeyedEventBus::new)
 }
 
 static GLOBAL_DB: OnceLock<MileDb> = OnceLock::new();
