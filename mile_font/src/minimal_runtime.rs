@@ -502,11 +502,7 @@ impl MiniFontRuntime {
 
     fn build_instance_slice(&self) -> Vec<GpuInstance> {
         // Build instances by walking each GpuText; compute pen_x using glyph metrics scaled to pixels.
-        //
-        // Font-size responsibilities (CPU side):
-        // - `GpuText.font_size` already stores the requested pixel height from the event's FontStyle.
-        // - Each glyph advance is scaled by that `size_px` here before uploading to the GPU.
-        // - The shader uses `size_px` directly for quad size; no additional font-metric scaling occurs there.
+        // Newlines and panel-driven wrapping are handled in WGSL with per-instance line height.
         let mut out: Vec<GpuInstance> = Vec::new();
         for (t_idx, t) in self.out_gpu_texts.iter().enumerate() {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
@@ -516,7 +512,7 @@ impl MiniFontRuntime {
             let end = t.sdf_char_index_end_offset;
             let text_index_u32 = t_idx as u32;
             let mut pen_x_px: f32 = 0.0;
-            let mut pen_y_px: f32 = 0.0;
+            let mut line_index: u32 = 0;
             let size_px: f32 = t.font_size;
             let line_height_px: f32 = if t.line_height_px > 0.0 {
                 t.line_height_px
@@ -529,7 +525,7 @@ impl MiniFontRuntime {
                     let glyph_idx_in_line = (i - start) as u32;
                     if glyph_idx_in_line == next_break {
                         pen_x_px = 0.0;
-                        pen_y_px += line_height_px;
+                        line_index += 1;
                         line_iter.next();
                     }
                 }
@@ -544,7 +540,6 @@ impl MiniFontRuntime {
                     } else {
                         (1.0_f32, 0.0_f32, 0.0_f32)
                     };
-                    let pos_px = [t.position[0] + pen_x_px, t.position[1] + pen_y_px];
                     let adv_px = if units_per_em > 0.0 {
                         advance_units * size_px / units_per_em
                     } else {
@@ -555,9 +550,11 @@ impl MiniFontRuntime {
                         text_index: ch.gpu_text_index,
                         self_index: ch.self_index,
                         panel_index: ch.panel_index,
-                        pos_px,
+                        pen_px: [pen_x_px, line_index as f32],
+                        origin_px: t.position,
                         size_px,
-                        _pad_size: 0.0,
+                        line_height_px,
+                        _pad: [0.0; 2],
                         color: t.color,
                     });
                     pen_x_px += adv_px;
@@ -896,12 +893,13 @@ struct GpuInstance {
     text_index: u32,
     self_index: u32,
     panel_index: u32,
-    // layout in pixels
-    pos_px: [f32; 2],
-    size_px: f32,
-    // pad to 32 bytes so `color` matches WGSL std430 alignment (vec4<f32> @ offset 32)
-    _pad_size: f32,
+    // layout in pixels (pen_x, line_index) and text origin
+    pen_px: [f32; 2],
+    origin_px: [f32; 2],
     color: [f32; 4],
+    size_px: f32,
+    line_height_px: f32,
+    _pad: [f32; 2],
 }
 
 #[derive(Clone, Copy, Debug)]
