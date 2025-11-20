@@ -283,6 +283,7 @@ impl App {
         if let Some(runtime_cell) = &self.mui_runtime {
             let ctx = self.wgpu_context.as_ref().unwrap();
             let mut runtime = runtime_cell.borrow_mut();
+            println!("rust端构建");
             runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
             runtime.upload_panel_instances(&ctx.device, &ctx.queue);
             runtime.schedule_relation_flush();
