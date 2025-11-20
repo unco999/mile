@@ -78,31 +78,31 @@ pub struct GpuDebug {
 
 impl GpuDebugReadCallBack {
     pub fn print(name: &'static str, data: &GpuDebugReadCallBack) {
-        // let mut has_nonzero = false;
+        let mut has_nonzero = false;
 
-        // print!("GpuDebug:[{name}]: {{\n  floats: [");
-        // for (i, &f) in data.floats.iter().enumerate() {
-        //     if f != 0.0 {
-        //         has_nonzero = true;
-        //         print!("{}: {:.4}, ", i, f);
-        //     }
-        // }
-        // println!("]");
+        print!("GpuDebug:[{name}]: {{\n  floats: [");
+        for (i, &f) in data.floats.iter().enumerate() {
+            if f != 0.0 {
+                has_nonzero = true;
+                print!("{}: {:.4}, ", i, f);
+            }
+        }
+        println!("]");
 
-        // print!("  uints: [");
-        // for (i, &u) in data.uints.iter().enumerate() {
-        //     if u != 0 {
-        //         has_nonzero = true;
-        //         print!("{}: {}, ", i, u);
-        //     }
-        // }
-        // println!("]");
+        print!("  uints: [");
+        for (i, &u) in data.uints.iter().enumerate() {
+            if u != 0 {
+                has_nonzero = true;
+                print!("{}: {}, ", i, u);
+            }
+        }
+        println!("]");
 
-        // if !has_nonzero {
-        //     println!("  全部为 0");
-        // }
+        if !has_nonzero {
+            println!("  全部为 0");
+        }
 
-        // println!("}}");
+        println!("}}");
     }
 }
 

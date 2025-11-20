@@ -2,7 +2,6 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) vis: f32,
-    @location(2) color: vec4<f32>
 };
 
 struct GlobalUniform {
@@ -75,12 +74,9 @@ struct Instance {
     self_index: u32,
     panel_index: u32,
     pos_px: vec2<f32>,
-    // Pixel height requested by CPU; quad size comes directly from this value.
     size_px: f32,
-    _pad_size: f32,
-    color: vec4<f32>,
+    _pad: u32,
 };
-
 
 @group(0) @binding(4)
 var<storage, read> instances: array<Instance>;
@@ -168,6 +164,8 @@ fn vs_main(
     out.uv = tile_origin + uv * tile_scale;
 
     // Pixel-accurate layout with wrapping by panel.size:
+    // - Wrap X when exceeding panel.size.x
+    // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
@@ -197,7 +195,6 @@ fn vs_main(
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
     out.vis = visible;
-    out.color = inst.color;
     return out;
 }
 
@@ -245,5 +242,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //let alpha = select(0.0, 1.0, sdf_value > 0.5);
     
 
-    return vec4<f32>(in.color.x,in.color.y,in.color.z,alpha);
+    return vec4<f32>(1.0, 0.7, 0.5,alpha);
 }
