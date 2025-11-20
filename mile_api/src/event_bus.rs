@@ -1,15 +1,15 @@
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use flume::{Receiver, RecvError, RecvTimeoutError, Sender, TryRecvError, TrySendError};
+use serde_json::Value as JsonValue;
 use std::{
     any::{Any, TypeId},
     cell::Cell,
     fmt,
     marker::PhantomData,
     ops::Deref,
-    process::Output,
     sync::{
-        Arc, OnceLock, Weak,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -478,6 +478,334 @@ impl<E: Event> fmt::Debug for EventStream<E> {
     }
 }
 
+type JsonEvent = Arc<JsonValue>;
+
+#[derive(Clone)]
+struct KeyedSubscriber {
+    id: u64,
+    label: Option<String>,
+    sender: Sender<JsonEvent>,
+    overflow: OverflowStrategy,
+}
+
+#[derive(Default)]
+struct KeyedSubscriberList {
+    entries: ArcSwap<Vec<KeyedSubscriber>>,
+}
+
+impl KeyedSubscriberList {
+    fn new() -> Self {
+        Self {
+            entries: ArcSwap::from_pointee(Vec::new()),
+        }
+    }
+
+    fn snapshot(&self) -> Arc<Vec<KeyedSubscriber>> {
+        self.entries.load_full()
+    }
+
+    fn push(&self, subscriber: KeyedSubscriber) {
+        self.entries.rcu(|current| {
+            let mut next = Vec::with_capacity(current.len() + 1);
+            next.extend(current.iter().cloned());
+            next.push(subscriber.clone());
+            Arc::new(next)
+        });
+    }
+
+    fn prune(&self, subscriber_id: u64) -> bool {
+        let removed = Cell::new(false);
+        self.entries.rcu(|current| {
+            if current.iter().any(|sub| sub.id == subscriber_id) {
+                removed.set(true);
+                let filtered: Vec<_> = current
+                    .iter()
+                    .cloned()
+                    .filter(|sub| sub.id != subscriber_id)
+                    .collect();
+                Arc::new(filtered)
+            } else {
+                Arc::clone(current)
+            }
+        });
+        removed.get() && self.entries.load().is_empty()
+    }
+}
+
+#[derive(Default)]
+struct KeyedEventBusInner {
+    subscribers: DashMap<String, Arc<KeyedSubscriberList>>,
+    next_id: AtomicU64,
+}
+
+#[derive(Clone, Default)]
+pub struct KeyedEventBus {
+    inner: Arc<KeyedEventBusInner>,
+}
+
+impl KeyedEventBus {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn publish(&self, key: impl AsRef<str>, payload: JsonValue) -> usize {
+        self.publish_arc(key, Arc::new(payload))
+    }
+
+    pub fn publish_arc(&self, key: impl AsRef<str>, payload: Arc<JsonValue>) -> usize {
+        let entry = self.inner.subscribers.get(key.as_ref());
+        let Some(entry) = entry else {
+            return 0;
+        };
+        let list = entry.value().clone();
+        let snapshot = list.snapshot();
+        drop(entry);
+
+        if snapshot.is_empty() {
+            return 0;
+        }
+
+        let mut delivered = 0usize;
+        let mut stale = Vec::new();
+
+        for subscriber in snapshot.iter() {
+            let res = match subscriber.overflow {
+                OverflowStrategy::Block => subscriber
+                    .sender
+                    .send(payload.clone())
+                    .map_err(|err| TrySendError::Disconnected(err.0)),
+                OverflowStrategy::DropNewest => subscriber.sender.try_send(payload.clone()),
+            };
+
+            match res {
+                Ok(()) => delivered += 1,
+                Err(TrySendError::Full(_)) => {}
+                Err(TrySendError::Disconnected(_)) => stale.push(subscriber.id),
+            }
+        }
+
+        if !stale.is_empty() {
+            for id in stale {
+                self.inner.remove_subscriber(key.as_ref(), id);
+            }
+        }
+
+        delivered
+    }
+
+    pub fn has_subscribers(&self, key: impl AsRef<str>) -> bool {
+        self.subscriber_count(key) > 0
+    }
+
+    pub fn subscriber_count(&self, key: impl AsRef<str>) -> usize {
+        self.inner
+            .subscribers
+            .get(key.as_ref())
+            .map(
+                |entry: dashmap::mapref::one::Ref<'_, String, Arc<KeyedSubscriberList>>| {
+                    entry.value().snapshot().len()
+                },
+            )
+            .unwrap_or(0)
+    }
+
+    pub fn subscribe(&self, key: impl Into<String>) -> KeyedEventStream {
+        self.subscribe_with_options(key, SubscriptionOptions::default())
+    }
+
+    pub fn subscribe_bounded(
+        &self,
+        key: impl Into<String>,
+        capacity: usize,
+        overflow: OverflowStrategy,
+    ) -> KeyedEventStream {
+        let mut options = SubscriptionOptions::default();
+        options.buffer = Some(capacity);
+        options.overflow = overflow;
+        self.subscribe_with_options(key, options)
+    }
+
+    pub fn subscribe_with_label(
+        &self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+    ) -> KeyedEventStream {
+        let mut options = SubscriptionOptions::default();
+        options.label = Some(label.into());
+        self.subscribe_with_options(key, options)
+    }
+
+    pub fn subscribe_with_options(
+        &self,
+        key: impl Into<String>,
+        options: SubscriptionOptions,
+    ) -> KeyedEventStream {
+        let key_owned = key.into();
+        let buffer = options.buffer.filter(|&size| size != 0);
+        let (sender, receiver) = buffer
+            .map(|size| flume::bounded::<JsonEvent>(size))
+            .unwrap_or_else(flume::unbounded);
+
+        let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
+        let subscriber = KeyedSubscriber {
+            id,
+            label: options.label.clone(),
+            sender,
+            overflow: options.overflow,
+        };
+
+        self.inner
+            .register_subscriber(key_owned.clone(), subscriber);
+
+        KeyedEventStream {
+            receiver,
+            key: key_owned,
+            subscription_id: id,
+            bus: Arc::downgrade(&self.inner),
+        }
+    }
+
+    pub fn clear_key(&self, key: impl AsRef<str>) {
+        self.inner.subscribers.remove(key.as_ref());
+    }
+
+    pub fn clear_all(&self) {
+        self.inner.subscribers.clear();
+    }
+}
+
+impl KeyedEventBusInner {
+    fn register_subscriber(&self, key: String, subscriber: KeyedSubscriber) {
+        let list = self
+            .subscribers
+            .entry(key)
+            .or_insert_with(|| Arc::new(KeyedSubscriberList::new()))
+            .clone();
+        list.push(subscriber);
+    }
+
+    fn remove_subscriber(&self, key: impl AsRef<str>, subscription_id: u64) {
+        if let Some(entry) = self.subscribers.get(key.as_ref()) {
+            let list = entry.value().clone();
+            drop(entry);
+            if list.prune(subscription_id) {
+                self.subscribers.remove(key.as_ref());
+            }
+        }
+    }
+}
+
+pub struct KeyedEventDelivery {
+    inner: Arc<JsonValue>,
+}
+
+impl KeyedEventDelivery {
+    pub fn into_arc(self) -> Arc<JsonValue> {
+        self.inner
+    }
+
+    pub fn into_owned(self) -> Result<JsonValue, Arc<JsonValue>> {
+        Arc::try_unwrap(self.inner)
+    }
+
+    pub fn as_ref(&self) -> &JsonValue {
+        &self.inner
+    }
+}
+
+impl fmt::Debug for KeyedEventDelivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.inner, f)
+    }
+}
+
+pub struct KeyedEventStream {
+    receiver: Receiver<JsonEvent>,
+    key: String,
+    subscription_id: u64,
+    bus: Weak<KeyedEventBusInner>,
+}
+
+impl KeyedEventStream {
+    #[inline]
+    pub fn recv(&self) -> Result<KeyedEventDelivery, RecvError> {
+        self.receiver
+            .recv()
+            .map(|event| KeyedEventDelivery { inner: event })
+    }
+
+    #[inline]
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<KeyedEventDelivery, RecvTimeoutError> {
+        self.receiver
+            .recv_timeout(timeout)
+            .map(|event| KeyedEventDelivery { inner: event })
+    }
+
+    #[inline]
+    pub fn try_recv(&self) -> Result<KeyedEventDelivery, TryRecvError> {
+        self.receiver
+            .try_recv()
+            .map(|event| KeyedEventDelivery { inner: event })
+    }
+
+    #[inline]
+    pub fn drain(&self) -> Vec<KeyedEventDelivery> {
+        self.receiver
+            .try_iter()
+            .map(|event| KeyedEventDelivery { inner: event })
+            .collect()
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = KeyedEventDelivery> + '_ {
+        self.receiver
+            .iter()
+            .map(|event| KeyedEventDelivery { inner: event })
+    }
+
+    #[inline]
+    pub fn try_iter(&self) -> impl Iterator<Item = KeyedEventDelivery> + '_ {
+        self.receiver
+            .try_iter()
+            .map(|event| KeyedEventDelivery { inner: event })
+    }
+
+    #[inline]
+    pub fn poll_latest(&self) -> Option<KeyedEventDelivery> {
+        self.receiver
+            .try_iter()
+            .map(|event| KeyedEventDelivery { inner: event })
+            .last()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.receiver.len()
+    }
+}
+
+impl Drop for KeyedEventStream {
+    fn drop(&mut self) {
+        if let Some(bus) = self.bus.upgrade() {
+            bus.remove_subscriber(&self.key, self.subscription_id);
+        }
+    }
+}
+
+impl fmt::Debug for KeyedEventStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyedEventStream")
+            .field("key", &self.key)
+            .field("subscription_id", &self.subscription_id)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,5 +886,37 @@ mod tests {
 
         assert_eq!(pong_events.len(), 1);
         assert_eq!(pong_events.remove(0).into_arc().0, 12);
+    }
+
+    #[test]
+    fn keyed_event_bus_delivers_by_key() {
+        let bus = KeyedEventBus::new();
+        let stream_a = bus.subscribe("alpha");
+        let stream_b = bus.subscribe("beta");
+
+        assert_eq!(bus.subscriber_count("alpha"), 1);
+        assert_eq!(bus.subscriber_count("beta"), 1);
+
+        assert_eq!(bus.publish("alpha", JsonValue::from(1)), 1);
+        assert_eq!(bus.publish("beta", JsonValue::from(2)), 1);
+        assert_eq!(bus.publish("gamma", JsonValue::from(3)), 0);
+
+        assert_eq!(
+            stream_a.recv().unwrap().into_owned().unwrap(),
+            JsonValue::from(1)
+        );
+        assert_eq!(
+            stream_b.recv().unwrap().into_owned().unwrap(),
+            JsonValue::from(2)
+        );
+    }
+
+    #[test]
+    fn dropping_keyed_stream_unsubscribes() {
+        let bus = KeyedEventBus::new();
+        let stream = bus.subscribe("alpha");
+        assert!(bus.has_subscribers("alpha"));
+        drop(stream);
+        assert!(!bus.has_subscribers("alpha"));
     }
 }
