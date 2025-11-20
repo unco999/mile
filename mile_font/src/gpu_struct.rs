@@ -131,8 +131,12 @@ pub struct GpuText {
     /// Requested pixel height for this text run. Copied from `FontStyle::font_size` and
     /// forwarded to GPU instances so WGSL can scale quads and compute per-line advance.
     pub font_size: f32,
+    /// Pixel line height requested by CPU (0 defaults to `font_size`). Used for newline advance.
+    pub line_height_px: f32,
     pub size: u32,
     pub color: [f32; 4],
     // text origin (pixels or logical units depending on pipeline)
     pub position: [f32; 2],
+    /// Glyph counts marking where each `\n` occurs; values are offsets in the glyph sequence.
+    pub line_breaks: Vec<u32>,
 }
