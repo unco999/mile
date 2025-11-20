@@ -1380,6 +1380,8 @@ dependencies = [
  "flume",
  "lazy_static",
  "mile_db",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]
