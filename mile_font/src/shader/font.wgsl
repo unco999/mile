@@ -75,6 +75,7 @@ struct Instance {
     self_index: u32,
     panel_index: u32,
     pos_px: vec2<f32>,
+    // Pixel height requested by CPU; quad vertices and line height are derived from this value.
     size_px: f32,
     color: vec4<f32>,
 };
@@ -172,22 +173,25 @@ fn vs_main(
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
     let container = panel.size;
-    // Estimate line height in pixels from font metrics
+    // Estimate line height in pixels from font metrics and the CPU-provided size_px
     let units = max(f32(des.units_per_em), 1.0);
     let line_height_em = f32(des.ascent - des.descent + des.line_gap);
-    let line_height_px = line_height_em / units * inst.size_px;
+    let glyph_width_px = f32(des.glyph_advance_width) / units * inst.size_px;
+    let glyph_height_px = line_height_em / units * inst.size_px;
+    let line_height_px = glyph_height_px;
     // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
     let local_x = inst.pos_px.x;
     let wrap_width = max(container.x, 1.0);
     let base_line = floor(local_x / wrap_width);
     let x_in_line = local_x - base_line * wrap_width;
-    let overflow = (x_in_line + inst.size_px) > wrap_width;
+    let overflow = (x_in_line + glyph_width_px) > wrap_width;
     let line = base_line + select(0.0, 1.0, overflow);
     let wrapped_x = select(x_in_line, 0.0, overflow);
     let wrapped_y = inst.pos_px.y + line * line_height_px;
     // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y) + position * inst.size_px;
+    let visible = select(0.0, 1.0, wrapped_y + glyph_height_px <= container.y);
+    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y)
+        + vec2<f32>(position.x * glyph_width_px, position.y * glyph_height_px);
     debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
     out.color = inst.color;
 
