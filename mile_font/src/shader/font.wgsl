@@ -168,8 +168,6 @@ fn vs_main(
     out.uv = tile_origin + uv * tile_scale;
 
     // Pixel-accurate layout with wrapping by panel.size:
-    // - Wrap X when exceeding panel.size.x
-    // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
