@@ -15,3 +15,4 @@ serde_json = "1"
 notify = "6"
 mile_font = { path = "../mile_font" }
 mile_gpu_dsl = { path = "../mile_gpu_dsl" }
+flume = "0.11.1"

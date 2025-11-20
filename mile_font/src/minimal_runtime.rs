@@ -556,7 +556,6 @@ impl MiniFontRuntime {
                         line_break_acc,
                         color,
                         flags: ch.layout_flags,
-                        _pad: [0; 3],
                     });
                     pen_x_px += advance_px;
                 }
@@ -890,7 +889,6 @@ struct GpuInstance {
     line_break_acc: u32,
     color: [f32; 4],
     flags: u32,
-    _pad: [u32; 3],
 }
 
 #[derive(Clone, Copy, Debug)]

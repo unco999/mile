@@ -1466,6 +1466,7 @@ dependencies = [
 name = "mile_lua"
 version = "0.1.0"
 dependencies = [
+ "flume",
  "glam",
  "mile_api",
  "mile_db",

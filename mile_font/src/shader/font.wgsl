@@ -81,7 +81,6 @@ struct Instance {
     line_break_acc: u32,
     color: vec4<f32>,
     flags: u32,
-    _pad: vec3<u32>,
 };
 
 @group(0) @binding(4)
