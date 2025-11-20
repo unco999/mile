@@ -5,10 +5,7 @@ local Demo = {}
 local parent_data = db({ tag = "demo_parent" })
 
 local function build_parent()
-    Mui.new({
-        id = "lua_demo_container",
-        data = parent_data,
-    })
+    Mui.new(parent_data)
         :default_state(1)
         :state(1)
             :position(120, 120)
@@ -40,7 +37,10 @@ local function build_child(index, color)
         id = string.format("lua_demo_child_%02d", index),
         data = db({ tag = "demo_child", index = index }),
     })
+        :default_state(1)
+        :state(1)
         :size(100, 60)
+        :z_index(5)
         :color(color[1], color[2], color[3], 0.95)
         :border({
             color = { 1.0, 1.0, 1.0, 0.9 },
@@ -58,4 +58,4 @@ function Demo.run()
     build_child(3, { 0.55, 0.85, 0.55 })
 end
 
-return Demo
+Demo.run()

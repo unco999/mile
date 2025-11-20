@@ -3,7 +3,7 @@ use mile_core::{App, Mile};
 
 fn main() {
     Mile::new()
-        .add_demo(|| {
+        .add_demo(|| {  
             register_text_demo().expect("animation demo");
         })
         .run();

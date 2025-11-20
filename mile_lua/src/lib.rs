@@ -419,14 +419,6 @@ impl LuaMuiBuilder {
                     let spec = container.clone();
                     s.rel().container_self(move |target| *target = spec);
                 }
-                for (alias, panel_uuid) in entry.container_aliases.iter() {
-                    if !apply_container_alias(s.rel(), alias, panel_uuid) {
-                        eprintln!(
-                            "Lua container_with_alias failed: alias='{}', panel='{}'",
-                            alias, panel_uuid
-                        );
-                    }
-                }
                 for link in entry.container_links.iter() {
                     match link {
                         LuaContainerLink::PanelUuid(panel_uuid) => {
@@ -868,30 +860,47 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
 
     let new_fn = {
         let lua_shared_handle = lua_shared.clone();
-        lua.create_function(move |lua, table: Value| {
-            let tbl = match table {
-                Value::Table(t) => t,
-                other => {
-                    return Err(mlua::Error::external(format!(
-                        "Mui.new expects table, got {}",
-                        other.type_name()
-                    )));
+        lua.create_function(move |lua, value: Value| {
+            match value {
+                Value::Table(tbl) => {
+                    let id: String = tbl
+                        .get("id")
+                        .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
+
+                    let data_value: Option<Value> = tbl.get("data").ok();
+                    let payload_json: JsonValue = match data_value {
+                        Some(v) => lua_value_to_json(lua, v)?,
+                        None => JsonValue::Null,
+                    };
+
+                    let builder = LuaMuiBuilder::new(
+                        lua_shared_handle.clone(),
+                        id,
+                        LuaPayload(payload_json),
+                    );
+                    lua.create_userdata(builder)
                 }
-            };
-
-            let id: String = tbl
-                .get("id")
-                .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
-
-            let data_value: Option<Value> = tbl.get("data").ok();
-            let payload_json: JsonValue = match data_value {
-                Some(v) => lua_value_to_json(lua, v)?,
-                None => JsonValue::Null,
-            };
-
-            let builder =
-                LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
-            lua.create_userdata(builder)
+                Value::UserData(ud) => {
+                    if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                        let id = format!("lua_db_panel_{}", db_ref.index);
+                        let payload_json = json!({ "db_index": db_ref.index });
+                        let builder = LuaMuiBuilder::new(
+                            lua_shared_handle.clone(),
+                            id,
+                            LuaPayload(payload_json),
+                        );
+                        lua.create_userdata(builder)
+                    } else {
+                        Err(mlua::Error::external(
+                            "Mui.new expects table or db() userdata value",
+                        ))
+                    }
+                }
+                other => Err(mlua::Error::external(format!(
+                    "Mui.new expects table or db() userdata, got {}",
+                    other.type_name()
+                ))),
+            }
         })?
     };
 
