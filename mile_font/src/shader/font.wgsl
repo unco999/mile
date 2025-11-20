@@ -75,7 +75,7 @@ struct Instance {
     self_index: u32,
     panel_index: u32,
     pos_px: vec2<f32>,
-    // Pixel height requested by CPU; quad vertices and line height are derived from this value.
+    // Pixel height requested by CPU; quad size comes directly from this value.
     size_px: f32,
     _pad_size: f32,
     color: vec4<f32>,
@@ -167,30 +167,13 @@ fn vs_main(
     out.uv = tile_origin + uv * tile_scale;
 
     // Pixel-accurate layout with wrapping by panel.size:
-    // - Wrap X when exceeding panel.size.x
-    // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let container = panel.size;
-    // Simplify sizing: trust CPU-provided size directly for both glyph width/height.
-    let glyph_width_px = inst.size_px;
-    let glyph_height_px = inst.size_px;
-    let line_height_px = inst.size_px;
-    // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
-    let local_x = inst.pos_px.x;
-    let wrap_width = max(container.x, 1.0);
-    let base_line = floor(local_x / wrap_width);
-    let x_in_line = local_x - base_line * wrap_width;
-    let overflow = (x_in_line + glyph_width_px) > wrap_width;
-    let line = base_line + select(0.0, 1.0, overflow);
-    let wrapped_x = select(x_in_line, 0.0, overflow);
-    let wrapped_y = inst.pos_px.y + line * line_height_px;
-    // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + glyph_height_px <= container.y);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y)
-        + vec2<f32>(position.x * glyph_width_px, position.y * glyph_height_px);
+    let glyph_size = vec2<f32>(inst.size_px);
+    let px = panel.position + delta.delta_position + inst.pos_px
+        + vec2<f32>(position.x, position.y) * glyph_size;
     debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
     out.color = inst.color;
 
@@ -199,7 +182,7 @@ fn vs_main(
     let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
-    out.vis = visible;
+    out.vis = 1.0;
     return out;
 }
 

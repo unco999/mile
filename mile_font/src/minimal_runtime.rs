@@ -506,12 +506,7 @@ impl MiniFontRuntime {
         // Font-size responsibilities (CPU side):
         // - `GpuText.font_size` already stores the requested pixel height from the event's FontStyle.
         // - Each glyph advance is scaled by that `size_px` here before uploading to the GPU.
-        // - The shader receives `size_px` per instance and uses it to scale quad vertices and derive line height
-        //   from `FontGlyphDes` metrics (ascent/descent/line_gap vs. units_per_em).
-        //
-        // With this split, CPU performs only horizontal pen advance; vertical layout and wrapping stay in WGSL,
-        // keeping text flow deterministic relative to panel sizing without re-uploading instances when the
-        // container width changes.
+        // - The shader uses `size_px` directly for quad size; no additional font-metric scaling occurs there.
         let mut out: Vec<GpuInstance> = Vec::new();
         for (t_idx, t) in self.out_gpu_texts.iter().enumerate() {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
