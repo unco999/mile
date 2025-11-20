@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     thread,
 };
@@ -9,7 +8,7 @@ use mile_api::prelude::global_event_bus;
 use mile_core::Mile;
 use mile_lua::{
     register_lua_api,
-    watch::{spawn_lua_watch, LuaDeployEvent, LuaDeployStatus},
+    watch::{LuaDeployEvent, LuaDeployStatus, spawn_lua_watch},
 };
 use mlua::{Function, Lua, Table};
 
@@ -82,9 +81,7 @@ fn spawn_lua_deploy_logger() {
     thread::spawn(move || {
         let stream = bus.subscribe::<LuaDeployEvent>();
         while let Ok(delivery) = stream.recv() {
-            let event = delivery
-                .into_owned()
-                .unwrap_or_else(|arc| (*arc).clone());
+            let event = delivery.into_owned().unwrap_or_else(|arc| (*arc).clone());
             log_deploy_event(event);
         }
     });
@@ -105,10 +102,7 @@ fn log_deploy_event(event: LuaDeployEvent) {
             );
         }
         LuaDeployStatus::Failed(reason) => {
-            eprintln!(
-                "[lua_deploy] failed to sync {:?}: {}",
-                event.source, reason
-            );
+            eprintln!("[lua_deploy] failed to sync {:?}: {}", event.source, reason);
         }
     }
 }
@@ -152,8 +146,7 @@ fn is_lua_file(path: &Path) -> bool {
 }
 
 fn resolved_deploy_root() -> PathBuf {
-    fs::canonicalize(LUA_DEPLOY_DIR)
-        .unwrap_or_else(|_| Path::new(LUA_DEPLOY_DIR).to_path_buf())
+    fs::canonicalize(LUA_DEPLOY_DIR).unwrap_or_else(|_| Path::new(LUA_DEPLOY_DIR).to_path_buf())
 }
 
 fn path_to_lua_str(path: &Path) -> String {
