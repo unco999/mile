@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 
 type SharedLua = Arc<Mutex<Lua>>;
 static LUA_PANEL_REGISTRY: OnceCell<Mutex<Vec<PanelKey>>> = OnceCell::new();
+static PANEL_DB_LINKS: OnceCell<Mutex<HashMap<u32, String>>> = OnceCell::new();
 
 fn panel_registry() -> &'static Mutex<Vec<PanelKey>> {
     LUA_PANEL_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
@@ -36,6 +37,29 @@ fn track_panel_key(key: &PanelKey) {
         return;
     }
     registry.push(key.clone());
+}
+
+fn panel_db_links() -> &'static Mutex<HashMap<u32, String>> {
+    PANEL_DB_LINKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_panel_db_link(idx: u32, panel_uuid: &str) {
+    if idx == 0 {
+        return;
+    }
+    panel_db_links()
+        .lock()
+        .unwrap()
+        .insert(idx, panel_uuid.to_string());
+}
+
+fn unregister_panel_db_link(panel_uuid: &str) {
+    let mut map = panel_db_links().lock().unwrap();
+    map.retain(|_, existing| existing != panel_uuid);
+}
+
+fn resolve_panel_uuid_by_db(idx: u32) -> Option<String> {
+    panel_db_links().lock().unwrap().get(&idx).cloned()
 }
 
 fn snapshot_panel_keys() -> Vec<PanelKey> {
@@ -63,6 +87,18 @@ pub use lua_registered_types::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LuaPayload(pub JsonValue);
+
+impl LuaPayload {
+    fn db_index(&self) -> Option<u32> {
+        if let JsonValue::Object(map) = &self.0 {
+            map.get("db_index")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u32)
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct LuaStruct {
@@ -149,6 +185,7 @@ fn clear_ui_panels() -> LuaResult<u32> {
             );
         }
         clear_panel_relations(key.panel_id);
+        unregister_panel_db_link(&key.panel_uuid);
     }
     clear_font_for_panels(&panels);
     global_event_bus().publish(ResetUiRuntime);
@@ -230,8 +267,7 @@ struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
     data_handlers: Vec<LuaDataHandler>,
-    container_links: Vec<String>,
-    container_aliases: Vec<(String, String)>,
+    container_links: Vec<LuaContainerLink>,
 }
 
 impl Default for StateEntry {
@@ -241,8 +277,50 @@ impl Default for StateEntry {
             handlers: HashMap::new(),
             data_handlers: Vec::new(),
             container_links: Vec::new(),
-            container_aliases: Vec::new(),
         }
+    }
+}
+
+#[derive(Clone)]
+enum LuaContainerLink {
+    PanelUuid(String),
+    DbIndex(u32),
+}
+
+fn parse_container_link(value: Value) -> LuaResult<LuaContainerLink> {
+    match value {
+        Value::String(s) => Ok(LuaContainerLink::PanelUuid(s.to_string_lossy())),
+        Value::Integer(i) => {
+            if i < 0 {
+                Err(mlua::Error::external(
+                    "container_with expects non-negative db_index",
+                ))
+            } else {
+                Ok(LuaContainerLink::DbIndex(i as u32))
+            }
+        }
+        Value::Number(n) => {
+            if !n.is_finite() || n < 0.0 {
+                Err(mlua::Error::external(
+                    "container_with expects finite non-negative number",
+                ))
+            } else {
+                Ok(LuaContainerLink::DbIndex(n as u32))
+            }
+        }
+        Value::UserData(ud) => {
+            if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                Ok(LuaContainerLink::DbIndex(db_ref.index))
+            } else {
+                Err(mlua::Error::external(
+                    "container_with expects panel id string or db() reference",
+                ))
+            }
+        }
+        other => Err(mlua::Error::external(format!(
+            "container_with expects string/db reference, got {}",
+            other.type_name()
+        ))),
     }
 }
 
@@ -294,6 +372,7 @@ impl LuaMuiBuilder {
         let mut builder = Mui::<LuaPayload>::new(&self.id)
             .map_err(|err| mlua::Error::external(format!("Mui.new failed: {err}")))?;
         builder = builder.default_state(UiState(default_state));
+        let panel_uuid_root = self.id.clone();
 
         for state_id in state_ids {
             let entry = self
@@ -304,6 +383,7 @@ impl LuaMuiBuilder {
             let state_is_default = state_id == default_state;
             let lua = lua.clone();
             let payload = payload_for_init.clone();
+            let panel_uuid = panel_uuid_root.clone();
             builder = builder.state(UiState(state_id), move |state| {
                 let mut s = state;
                 if let Some(pos) = entry.spec.position {
@@ -337,16 +417,22 @@ impl LuaMuiBuilder {
                     let spec = container.clone();
                     s.rel().container_self(move |target| *target = spec);
                 }
-                for (alias, panel_uuid) in entry.container_aliases.iter() {
-                    if !apply_container_alias(s.rel(), alias, panel_uuid) {
-                        eprintln!(
-                            "Lua container_with_alias failed: alias='{}', panel='{}'",
-                            alias, panel_uuid
-                        );
+                for link in entry.container_links.iter() {
+                    match link {
+                        LuaContainerLink::PanelUuid(panel_uuid) => {
+                            s.rel().container_with::<LuaPayload>(panel_uuid);
+                        }
+                        LuaContainerLink::DbIndex(idx) => {
+                            if let Some(target_uuid) = resolve_panel_uuid_by_db(*idx) {
+                                s.rel().container_with::<LuaPayload>(target_uuid);
+                            } else {
+                                eprintln!(
+                                    "[lua] container_with db_index={} unresolved for panel '{}'",
+                                    idx, panel_uuid
+                                );
+                            }
+                        }
                     }
-                }
-                for panel_uuid in entry.container_links.iter() {
-                    s.rel().container_with::<LuaPayload>(panel_uuid);
                 }
 
                 let mut events = s.events();
@@ -406,6 +492,9 @@ impl LuaMuiBuilder {
             .build()
             .map_err(|err| mlua::Error::external(format!("Mui.build failed: {err}")))?;
         track_panel_key(handle.key());
+        if let Some(idx) = self.payload.db_index() {
+            register_panel_db_link(idx, &handle.key().panel_uuid);
+        }
 
         Ok(())
     }
@@ -679,20 +768,11 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
-        methods.add_method_mut("container_with", |lua, this, panel_uuid: String| {
-            this.current_entry_mut().container_links.push(panel_uuid);
+        methods.add_method_mut("container_with", |lua, this, target: Value| {
+            let link = parse_container_link(target)?;
+            this.current_entry_mut().container_links.push(link);
             lua.create_userdata(this.clone())
         });
-
-        methods.add_method_mut(
-            "container_with_alias",
-            |lua, this, (alias, panel_uuid): (String, String)| {
-                this.current_entry_mut()
-                    .container_aliases
-                    .push((alias, panel_uuid));
-                lua.create_userdata(this.clone())
-            },
-        );
 
         // 事件回调：目前只支持 click（可按需扩展）
         methods.add_method_mut("on_event", |lua, this, (name, func): (String, Function)| {
@@ -768,30 +848,39 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
 
     let new_fn = {
         let lua_shared_handle = lua_shared.clone();
-        lua.create_function(move |lua, table: Value| {
-            let tbl = match table {
-                Value::Table(t) => t,
-                other => {
-                    return Err(mlua::Error::external(format!(
-                        "Mui.new expects table, got {}",
-                        other.type_name()
-                    )));
+        lua.create_function(move |lua, value: Value| match value {
+            Value::Table(tbl) => {
+                let id: String = tbl
+                    .get("id")
+                    .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
+
+                let data_value: Option<Value> = tbl.get("data").ok();
+                let payload_json: JsonValue = match data_value {
+                    Some(v) => lua_value_to_json(lua, v)?,
+                    None => JsonValue::Null,
+                };
+
+                let builder =
+                    LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
+                lua.create_userdata(builder)
+            }
+            Value::UserData(ud) => {
+                if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                    let id = format!("lua_db_panel_{}", db_ref.index);
+                    let payload_json = json!({ "db_index": db_ref.index });
+                    let builder =
+                        LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
+                    lua.create_userdata(builder)
+                } else {
+                    Err(mlua::Error::external(
+                        "Mui.new expects table or db() userdata value",
+                    ))
                 }
-            };
-
-            let id: String = tbl
-                .get("id")
-                .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
-
-            let data_value: Option<Value> = tbl.get("data").ok();
-            let payload_json: JsonValue = match data_value {
-                Some(v) => lua_value_to_json(lua, v)?,
-                None => JsonValue::Null,
-            };
-
-            let builder =
-                LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
-            lua.create_userdata(builder)
+            }
+            other => Err(mlua::Error::external(format!(
+                "Mui.new expects table or db() userdata, got {}",
+                other.type_name()
+            ))),
         })?
     };
 
