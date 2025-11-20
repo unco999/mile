@@ -261,12 +261,19 @@ impl App {
 
             runtime.ensure_render_pipeline(&ctx.device, &ctx.queue, ctx.config.format);
 
-            // Optionally link font runtime with UI panel buffers for position/offset/z-index
-            if let Some(font_cell) = &self.mile_font {
+            // Optionally link font runtime with UI panel buffers and the shared global uniform
+            // for position/offset/z-index and screen-size driven projection.
+            if let (Some(font_cell), Some(global_uniform)) = (&self.mile_font, &self.global_uniform)
+            {
                 let mut font = font_cell.borrow_mut();
                 let panels = &runtime.buffers.instance;
                 let deltas = &runtime.buffers.panel_anim_delta;
-                font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
+                font.adopt_ui_buffers(
+                    &ctx.device,
+                    &global_uniform.get_buffer(),
+                    panels,
+                    Some(deltas),
+                );
             }
         }
 

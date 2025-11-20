@@ -74,10 +74,16 @@ struct Instance {
     text_index: u32,
     self_index: u32,
     panel_index: u32,
-    pos_px: vec2<f32>,
-    // Pixel height requested by CPU; quad vertices and line height are derived from this value.
-    size_px: f32,
+    // pen_x in pixels and pre-counted newline index for explicit "\n"
+    pen_px: vec2<f32>,
+    // text origin in panel space
+    origin_px: vec2<f32>,
     color: vec4<f32>,
+    // Pixel height requested by CPU; quad size comes directly from this value.
+    size_px: f32,
+    // per-instance line height so GPU handles both explicit and wrapped lines
+    line_height_px: f32,
+    _pad: vec2<f32>,
 };
 
 @group(0) @binding(4)
@@ -166,33 +172,21 @@ fn vs_main(
     out.uv = tile_origin + uv * tile_scale;
 
     // Pixel-accurate layout with wrapping by panel.size:
-    // - Wrap X when exceeding panel.size.x
-    // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
     let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let container = panel.size;
-    // Estimate line height in pixels from font metrics and the CPU-provided size_px
-    let units = max(f32(des.units_per_em), 1.0);
-    let line_height_em = f32(des.ascent - des.descent + des.line_gap);
-    let glyph_width_px = f32(des.glyph_advance_width) / units * inst.size_px;
-    let glyph_height_px = line_height_em / units * inst.size_px;
-    let line_height_px = glyph_height_px;
-    // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
-    let local_x = inst.pos_px.x;
-    let wrap_width = max(container.x, 1.0);
-    let base_line = floor(local_x / wrap_width);
-    let x_in_line = local_x - base_line * wrap_width;
-    let overflow = (x_in_line + glyph_width_px) > wrap_width;
-    let line = base_line + select(0.0, 1.0, overflow);
-    let wrapped_x = select(x_in_line, 0.0, overflow);
-    let wrapped_y = inst.pos_px.y + line * line_height_px;
-    // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + glyph_height_px <= container.y);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y)
-        + vec2<f32>(position.x * glyph_width_px, position.y * glyph_height_px);
-    debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
+    let glyph_size = vec2<f32>(inst.size_px);
+    // wrap relative to panel width; explicit newlines encoded in pen_px.y
+    let effective_width = max(panel.size.x, glyph_size.x);
+    let next_x = inst.pen_px.x + glyph_size.x;
+    // only wrap when the glyph would exceed the panel width (strict pixel bound)
+    let wrap_count = select(0.0, floor((next_x - 0.001) / effective_width), next_x > effective_width);
+    let local_x = select(inst.pen_px.x - wrap_count * effective_width, 0.0, wrap_count > 0.0);
+    let local_y = (inst.pen_px.y + wrap_count) * inst.line_height_px;
+    let px = panel.position + delta.delta_position + inst.origin_px
+        + vec2<f32>(local_x + position.x * glyph_size.x, local_y + position.y * glyph_size.y);
+    debug_buffer.floats[min(inst_id, 31u)] = inst.line_height_px;
     out.color = inst.color;
 
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
@@ -200,7 +194,7 @@ fn vs_main(
     let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
-    out.vis = visible;
+    out.vis = 1.0;
     return out;
 }
 
