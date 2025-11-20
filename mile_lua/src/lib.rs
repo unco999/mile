@@ -1,26 +1,26 @@
 mod db;
 pub mod watch;
 
-use crate::db::{register_db_globals, LuaTableDb};
+use crate::db::{LuaTableDb, register_db_globals};
 use glam::{vec2, vec4};
 use mile_api::prelude::{_ty::PanelId, global_db, global_event_bus};
 use mile_font::event::{RemoveRenderFont, ResetFontRuntime};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
     mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
-    mui_rel::{apply_container_alias, RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace},
+    mui_rel::{RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace, apply_container_alias},
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
-    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData,
-    UserDataMethods, Value, Variadic,
+    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods,
+    Value, Variadic,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Value as JsonValue};
-use std::collections::HashMap;
+use serde_json::{Value as JsonValue, json};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 type SharedLua = Arc<Mutex<Lua>>;
@@ -110,9 +110,7 @@ fn lua_value_to_json(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
 fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
     if let JsonValue::Object(map) = &json {
         if let Some(idx) = map.get("db_index").and_then(|v| v.as_u64()) {
-            let ud = lua.create_userdata(LuaTableDb {
-                index: idx as u32,
-            })?;
+            let ud = lua.create_userdata(LuaTableDb { index: idx as u32 })?;
             return Ok(Value::UserData(ud));
         }
     }
@@ -344,7 +342,7 @@ impl LuaMuiBuilder {
                         eprintln!(
                             "Lua container_with_alias failed: alias='{}', panel='{}'",
                             alias, panel_uuid
-                        );    
+                        );
                     }
                 }
                 for panel_uuid in entry.container_links.iter() {
@@ -516,6 +514,57 @@ fn apply_flow_directives(
         flow.set_state(UiState(next_state));
     }
     Ok(())
+}
+
+fn format_lua_value(
+    lua: &Lua,
+    value: Value,
+    depth: usize,
+    visited: &mut HashSet<usize>,
+) -> LuaResult<String> {
+    const MAX_RECURSION_DEPTH: usize = 8;
+
+    match value {
+        Value::Nil => Ok("nil".to_string()),
+        Value::Boolean(b) => Ok(b.to_string()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::String(s) => Ok(s.to_string_lossy().to_string()),
+        Value::Table(table) => {
+            if depth >= MAX_RECURSION_DEPTH {
+                return Ok("<max depth reached>".to_string());
+            }
+
+            let ptr = table.to_pointer() as usize;
+            if !visited.insert(ptr) {
+                return Ok("<recursion>".to_string());
+            }
+
+            let indent = "  ".repeat(depth + 1);
+            let mut fields = Vec::new();
+            for pair in table.pairs::<Value, Value>() {
+                let (key, value) = pair?;
+                let key = format_lua_value(lua, key, depth + 1, visited)?;
+                let value = format_lua_value(lua, value, depth + 1, visited)?;
+                fields.push(format!("{indent}{key} = {value}"));
+            }
+            visited.remove(&ptr);
+
+            let closing_indent = "  ".repeat(depth);
+            if fields.is_empty() {
+                Ok("{}".to_string())
+            } else {
+                Ok(format!("{{\n{}\n{closing_indent}}}", fields.join(",\n")))
+            }
+        }
+        other => {
+            if let Some(text) = lua.coerce_string(other.clone())? {
+                Ok(text.to_string_lossy().to_string())
+            } else {
+                Ok(format!("{other:?}"))
+            }
+        }
+    }
 }
 
 fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> LuaResult<()> {
@@ -740,7 +789,8 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
                 None => JsonValue::Null,
             };
 
-            let builder = LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
+            let builder =
+                LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
             lua.create_userdata(builder)
         })?
     };
@@ -778,6 +828,23 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?;
     globals.set("print", print_fn)?;
+
+    let print_recursive_fn = lua.create_function(|lua, values: Variadic<Value>| {
+        if values.is_empty() {
+            println!("[lua][print_r]");
+            return Ok(());
+        }
+
+        let mut rendered = Vec::new();
+        for value in values {
+            let mut visited = HashSet::new();
+            rendered.push(format_lua_value(lua, value, 0, &mut visited)?);
+        }
+
+        println!("[lua][print_r] {}", rendered.join("\t"));
+        Ok(())
+    })?;
+    globals.set("print_r", print_recursive_fn)?;
     Ok(())
 }
 
