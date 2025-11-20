@@ -30,8 +30,8 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         "tf/STXIHEI.ttf".into(),
                         26,
                         [0.90, 0.60, 0.20, 1.0],
-                        700,
-                        28,
+                        0,
+                        1,
                     );
                 })
                 .finish()

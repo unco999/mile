@@ -128,8 +128,6 @@ pub struct GpuChar {
 pub struct GpuText {
     pub sdf_char_index_start_offset: u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
     pub sdf_char_index_end_offset: u32,   //这个实际上是 GpuChar这个gpu结构体的索引
-    /// Requested pixel height for this text run. Copied from `FontStyle::font_size` and
-    /// forwarded to GPU instances so WGSL can scale quads and compute per-line advance.
     pub font_size: f32,
     pub size: u32,
     pub color: [f32; 4],
