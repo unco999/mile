@@ -1,61 +1,63 @@
-print("[lua] Demo：最简容器挂载示例")
+print("[lua] Demo：单子面板容器挂载示例")
 
 local Demo = {}
 
-local parent_data = db({ tag = "demo_parent" })
+-- 准备父面板的数据句柄
+local parent_data = db({
+    tag = "single_parent",
+    title = "父容器",
+})
 
 local function build_parent()
     Mui.new(parent_data)
-        :default_state(1)
-        :state(1)
-            :position(120, 120)
-            :size(360, 200)
-            :color(0.15, 0.20, 0.28, 0.95)
+        :default_state(0)
+        :state(0)
+            :position(100, 100)
+            :size(320, 160)
+            :color(0.16, 0.20, 0.32, 0.95)
             :border({
-                color = { 0.9, 0.7, 0.3, 1.0 },
+                color = { 0.95, 0.75, 0.35, 1.0 },
                 width = 3.0,
-                radius = 8.0,
+                radius = 10.0,
             })
             :container({
                 space = "parent",
                 origin = { 0.0, 0.0 },
-                size = { 360, 200 },
-                slot_size = { 100, 60 },
-                padding = { 16, 16, 16, 16 },
+                size = { 320, 160 },
+                slot_size = { 140, 100 },
+                padding = { 20, 20, 20, 20 },
                 layout = {
                     kind = "grid",
-                    columns = 3,
+                    columns = 1,
                     rows = 1,
-                    spacing = { 12, 0 },
+                    spacing = { 0, 0 },
                 },
             })
         :build()
 end
 
-local function build_child(index, color)
+local function build_child()
     Mui.new({
-        id = string.format("lua_demo_child_%02d", index),
-        data = db({ tag = "demo_child", index = index }),
+        id = "lua_demo_child",
+        data = db({ tag = "single_child" }),
     })
-        :default_state(1)
-        :state(1)
-        :size(100, 60)
-        :z_index(5)
-        :color(color[1], color[2], color[3], 0.95)
-        :border({
-            color = { 1.0, 1.0, 1.0, 0.9 },
-            width = 2.0,
-            radius = 10.0,
-        })
-        :container_with(parent_data)
+        :default_state(0)
+        :state(0)
+            :z_index(5)
+            :size(140, 100)
+            :color(0.45, 0.70, 0.88, 0.95)
+            :border({
+                color = { 1.0, 1.0, 1.0, 0.9 },
+                width = 2.0,
+                radius = 12.0,
+            })
+            :container_with(parent_data)
         :build()
 end
 
 function Demo.run()
     build_parent()
-    build_child(1, { 0.45, 0.65, 0.85 })
-    build_child(2, { 0.75, 0.45, 0.65 })
-    build_child(3, { 0.55, 0.85, 0.55 })
+    build_child()
 end
 
 Demo.run()
