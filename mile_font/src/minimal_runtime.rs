@@ -547,6 +547,7 @@ impl MiniFontRuntime {
                         panel_index: ch.panel_index,
                         pos_px,
                         size_px,
+                        _pad_size: 0.0,
                         color: t.color,
                     });
                     pen_x_px += adv_px;
