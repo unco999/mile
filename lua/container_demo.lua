@@ -2,12 +2,13 @@ print("[lua] Demo：最简容器挂载示例")
 
 local Demo = {}
 
-local PARENT_ID = "lua_demo_container"
-
-local user_data = db({ tag = "demo_parent" });
+local parent_data = db({ tag = "demo_parent" })
 
 local function build_parent()
-    Mui.new(user_data)
+    Mui.new({
+        id = "lua_demo_container",
+        data = parent_data,
+    })
         :default_state(1)
         :state(1)
             :position(120, 120)
@@ -46,7 +47,7 @@ local function build_child(index, color)
             width = 2.0,
             radius = 10.0,
         })
-        :container_with(user_data)
+        :container_with(parent_data)
         :build()
 end
 
@@ -57,4 +58,4 @@ function Demo.run()
     build_child(3, { 0.55, 0.85, 0.55 })
 end
 
-Demo.run();
+return Demo
