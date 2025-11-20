@@ -16,8 +16,12 @@ use crate::{
     prelude::{GpuChar, GpuText},
 };
 
-type RegisterEvent =
-    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
+type RegisterEvent = ModEventStream<(
+    BatchFontEntry,
+    BatchRenderFont,
+    RemoveRenderFont,
+    ResetFontRuntime,
+)>;
 
 pub struct ComputeBufferCache {}
 

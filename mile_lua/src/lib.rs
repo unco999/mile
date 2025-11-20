@@ -1,25 +1,25 @@
 mod db;
 pub mod watch;
 
-use crate::db::{register_db_globals, LuaTableDb};
-use glam::{vec2, vec4};
+use crate::db::{LuaTableDb, register_db_globals};
+use glam::{vec2, vec3, vec4};
 use mile_api::prelude::{_ty::PanelId, global_db, global_event_bus};
 use mile_font::event::{RemoveRenderFont, ResetFontRuntime};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
     mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
-    mui_rel::{apply_container_alias, RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace},
+    mui_rel::{RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace, apply_container_alias},
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
-    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData,
-    UserDataMethods, Value, Variadic,
+    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods,
+    Value, Variadic,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -110,9 +110,7 @@ fn lua_value_to_json(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
 fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
     if let JsonValue::Object(map) = &json {
         if let Some(idx) = map.get("db_index").and_then(|v| v.as_u64()) {
-            let ud = lua.create_userdata(LuaTableDb {
-                index: idx as u32,
-            })?;
+            let ud = lua.create_userdata(LuaTableDb { index: idx as u32 })?;
             return Ok(Value::UserData(ud));
         }
     }
@@ -217,6 +215,8 @@ impl<'de> Deserialize<'de> for LuaPayload {
 struct StateSpec {
     position: Option<[f32; 2]>,
     size: Option<[f32; 2]>,
+    rotation: Option<[f32; 3]>,
+    scale: Option<[f32; 3]>,
     color: Option<[f32; 4]>,
     texture: Option<String>,
     size_with_image: bool,
@@ -314,6 +314,12 @@ impl LuaMuiBuilder {
                 if let Some(size) = entry.spec.size {
                     s = s.size(vec2(size[0], size[1]));
                 }
+                if let Some(rotation) = entry.spec.rotation {
+                    s = s.rotation(vec3(rotation[0], rotation[1], rotation[2]));
+                }
+                if let Some(scale) = entry.spec.scale {
+                    s = s.scale(vec3(scale[0], scale[1], scale[2]));
+                }
                 if let Some(color) = entry.spec.color {
                     s = s.color(vec4(color[0], color[1], color[2], color[3]));
                 }
@@ -344,7 +350,7 @@ impl LuaMuiBuilder {
                         eprintln!(
                             "Lua container_with_alias failed: alias='{}', panel='{}'",
                             alias, panel_uuid
-                        );    
+                        );
                     }
                 }
                 for panel_uuid in entry.container_links.iter() {
@@ -570,6 +576,16 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
+        methods.add_method_mut("rotation", |lua, this, (x, y, z): (f32, f32, f32)| {
+            this.current_entry_mut().spec.rotation = Some([x, y, z]);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("scale", |lua, this, (x, y, z): (f32, f32, f32)| {
+            this.current_entry_mut().spec.scale = Some([x, y, z]);
+            lua.create_userdata(this.clone())
+        });
+
         methods.add_method_mut("color", |lua, this, (r, g, b, a): (f32, f32, f32, f32)| {
             this.current_entry_mut().spec.color = Some([r, g, b, a]);
             lua.create_userdata(this.clone())
@@ -740,7 +756,8 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
                 None => JsonValue::Null,
             };
 
-            let builder = LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
+            let builder =
+                LuaMuiBuilder::new(lua_shared_handle.clone(), id, LuaPayload(payload_json));
             lua.create_userdata(builder)
         })?
     };

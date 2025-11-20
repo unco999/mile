@@ -15,7 +15,7 @@ use crate::{
     },
     structs::{PanelField, PanelInteraction},
 };
-use glam::{Vec2, Vec4, vec2, vec4};
+use glam::{Vec2, Vec3, Vec4, vec2, vec3, vec4};
 use mile_api::{
     global::{global_db, global_event_bus},
     prelude::_ty::PanelId,
@@ -404,6 +404,10 @@ pub struct PanelStateOverrides {
     #[serde(default)]
     pub border: Option<BorderStyle>,
     #[serde(default)]
+    pub rotation: Option<[f32; 3]>,
+    #[serde(default)]
+    pub scale: Option<[f32; 3]>,
+    #[serde(default)]
     pub z_index: Option<i32>,
     #[serde(default)]
     pub pass_through: Option<u32>,
@@ -448,6 +452,10 @@ pub struct PanelSnapshot {
     pub color: [f32; 4],
     #[serde(default)]
     pub border: Option<BorderStyle>,
+    #[serde(default = "panel_snapshot_rotation_default")]
+    pub rotation: [f32; 3],
+    #[serde(default = "panel_snapshot_scale_default")]
+    pub scale: [f32; 3],
     pub z_index: i32,
     #[serde(default)]
     pub fragment_shader_id: Option<u32>,
@@ -467,6 +475,8 @@ impl Default for PanelSnapshot {
             position: [0.0, 0.0],
             color: [1.0, 1.0, 1.0, 1.0],
             border: None,
+            rotation: [0.0, 0.0, 0.0],
+            scale: [1.0, 1.0, 1.0],
             z_index: 0,
             fragment_shader_id: None,
             vertex_shader_id: None,
@@ -489,6 +499,14 @@ pub enum InitialPosition {
 
 const fn panel_snapshot_visible_default() -> bool {
     true
+}
+
+const fn panel_snapshot_rotation_default() -> [f32; 3] {
+    [0.0, 0.0, 0.0]
+}
+
+const fn panel_snapshot_scale_default() -> [f32; 3] {
+    [1.0, 1.0, 1.0]
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -595,6 +613,12 @@ fn apply_initial_snapshot_from_overrides<TPayload: PanelPayload>(
     }
     if let Some(border) = overrides.border.clone() {
         record.snapshot.border = Some(border);
+    }
+    if let Some(rotation) = overrides.rotation {
+        record.snapshot.rotation = rotation;
+    }
+    if let Some(scale) = overrides.scale {
+        record.snapshot.scale = scale;
     }
     if let Some(z) = overrides.z_index {
         record.snapshot.z_index = z;
@@ -2136,6 +2160,16 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self.rel_position_in(RelSpace::Local, pos)
     }
 
+    pub fn rotation(mut self, angles: Vec3) -> Self {
+        self.definition.overrides.rotation = Some([angles.x, angles.y, angles.z]);
+        self
+    }
+
+    pub fn scale(mut self, scale: Vec3) -> Self {
+        self.definition.overrides.scale = Some([scale.x, scale.y, scale.z]);
+        self
+    }
+
     /// Initialize position from current mouse position once at spawn.
     /// This sets a flag on the overrides; runtime will translate it to a concrete position
     /// using the CPU copy of GlobalUniform.mouse_pos during the first GPU write, then clear the flag.
@@ -2480,6 +2514,12 @@ fn apply_style_patch(overrides: &mut PanelStateOverrides, patch: &PanelStylePatc
     }
     if let Some(position) = patch.position {
         overrides.position = Some(position);
+    }
+    if let Some(rotation) = patch.rotation {
+        overrides.rotation = Some(rotation);
+    }
+    if let Some(scale) = patch.scale {
+        overrides.scale = Some(scale);
     }
     if let Some(z) = patch.z_index {
         overrides.z_index = Some(z as i32);

@@ -21,10 +21,12 @@ struct VertexInput {
     @location(15) collection_state: u32,
     @location(16) fragment_shader_id: u32,
     @location(17) vertex_shader_id: u32,
-    @location(18) color: vec4<f32>,
-    @location(19) border_color: vec4<f32>,
-    @location(20) border: vec2<f32>,
-    @location(21) visible: u32,
+    @location(18) rotation: vec4<f32>,
+    @location(19) scale: vec4<f32>,
+    @location(20) color: vec4<f32>,
+    @location(21) border_color: vec4<f32>,
+    @location(22) border: vec2<f32>,
+    @location(23) visible: u32,
 };
 
 struct GlobalUniform {
@@ -432,6 +434,21 @@ fn smoothstep_official(edge0: f32, edge1: f32, value: f32) -> f32 {
     return smoothstep(edge0, edge1, value);
 }
 
+fn rotate_xyz(p: vec3<f32>, rot: vec3<f32>) -> vec3<f32> {
+    let cx = cos(rot.x);
+    let sx = sin(rot.x);
+    let cy = cos(rot.y);
+    let sy = sin(rot.y);
+    let cz = cos(rot.z);
+    let sz = sin(rot.z);
+
+    var v = p;
+    v = vec3<f32>(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
+    v = vec3<f32>(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+    v = vec3<f32>(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+    return v;
+}
+
 fn rounded_rect_sdf(p: vec2<f32>, half_extents: vec2<f32>, radius: f32) -> f32 {
     let r = min(radius, min(half_extents.x, half_extents.y));
     let inner = max(half_extents - vec2<f32>(r, r), vec2<f32>(0.0));
@@ -485,11 +502,15 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
         instance_size = max(instance_size + vertex_adjust.zw, vec2<f32>(0.0));
     }
-
-    let quad_pos = instance_pos + local_pos * instance_size ;
-
-
-    
+    let center = instance_pos + instance_size * 0.5;
+    let centered = (local_pos - vec2<f32>(0.5, 0.5)) * instance_size;
+    let scaled = centered * input.scale.xy;
+    let rotated = rotate_xyz(vec3<f32>(scaled, 0.0), input.rotation.xyz);
+    let screen_extent = max(f32(global_uniform.screen_size.x), f32(global_uniform.screen_size.y));
+    let perspective_scale = select(0.0, 2.0 / screen_extent, screen_extent > 0.0);
+    let depth = rotated.z * perspective_scale;
+    let perspective = 1.0 / max(0.2, 1.0 + depth);
+    let quad_pos = center + rotated.xy * perspective;
 
     out.clip_position = to_clip_space(quad_pos);
 
@@ -503,8 +524,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     out.border_color = input.border_color;
     out.border = input.border;
     out.local_pos = local_pos;
-    out.instance_size = instance_size;
-    out.instance_pos = vec2<f32>(0.0,0.0);
+    out.instance_size = instance_size * input.scale.xy;
+    out.instance_pos = instance_pos;
     out.fragment_shader_id = input.fragment_shader_id;
     out.vertex_shader_id = input.vertex_shader_id;
     return out;
