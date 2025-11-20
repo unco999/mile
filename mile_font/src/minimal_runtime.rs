@@ -16,8 +16,12 @@ use crate::{
     prelude::{GpuChar, GpuText},
 };
 
-type RegisterEvent =
-    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
+type RegisterEvent = ModEventStream<(
+    BatchFontEntry,
+    BatchRenderFont,
+    RemoveRenderFont,
+    ResetFontRuntime,
+)>;
 
 pub struct ComputeBufferCache {}
 
@@ -533,7 +537,7 @@ impl MiniFontRuntime {
                         panel_index: ch.panel_index,
                         pos_px,
                         size_px,
-                        _pad: 0,
+                        color: t.color,
                     });
                     pen_x_px += adv_px;
                 }
@@ -862,7 +866,7 @@ struct GpuInstance {
     // layout in pixels
     pos_px: [f32; 2],
     size_px: f32,
-    _pad: u32,
+    color: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]

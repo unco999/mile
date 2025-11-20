@@ -2,6 +2,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) vis: f32,
+    @location(2) color: vec4<f32>,
 };
 
 struct GlobalUniform {
@@ -75,7 +76,7 @@ struct Instance {
     panel_index: u32,
     pos_px: vec2<f32>,
     size_px: f32,
-    _pad: u32,
+    color: vec4<f32>,
 };
 
 @group(0) @binding(4)
@@ -188,7 +189,8 @@ fn vs_main(
     let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
     let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y) + position * inst.size_px;
     debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
-    
+    out.color = inst.color;
+
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
     let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
     let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
@@ -240,7 +242,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 或者使用阶梯函数获得完全锐利的边缘
     //let alpha = select(0.0, 1.0, sdf_value > 0.5);
-    
 
-    return vec4<f32>(1.0, 0.7, 0.5,alpha);
+    let base_color = in.color;
+    return vec4<f32>(base_color.rgb, base_color.a * alpha);
 }
