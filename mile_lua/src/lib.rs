@@ -228,6 +228,10 @@ fn register_key_event_bus(lua: &Lua) -> LuaResult<()> {
             Some(value) => lua_value_to_json(lua, value)?,
             None => JsonValue::Null,
         };
+        println!(
+            "[lua][event_bus] emit key={key}, payload={payload}",
+            payload = json
+        );
         global_key_event_bus().publish(key, json);
         Ok(())
     })?;
