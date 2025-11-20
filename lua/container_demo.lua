@@ -61,3 +61,4 @@ function Demo.run()
 end
 
 Demo.run()
+print("lua端构建")

@@ -424,6 +424,7 @@ impl LuaMuiBuilder {
                         }
                         LuaContainerLink::DbIndex(idx) => {
                             if let Some(target_uuid) = resolve_panel_uuid_by_db(*idx) {
+                                println!("target_uuid 最终挂载{}",target_uuid);
                                 s.rel().container_with::<LuaPayload>(target_uuid);
                             } else {
                                 eprintln!(
