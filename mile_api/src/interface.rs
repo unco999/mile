@@ -159,21 +159,21 @@ impl GpuDebug {
             return; // 太快就跳过
         }
 
-        let name = self.import_name;
-        DownloadBuffer::read_buffer(
-            device,
-            queue,
-            &self.buffer.as_ref().unwrap().slice(..),
-            move |e| {
-                if let Ok(downloadBuffer) = e {
-                    let bytes = downloadBuffer;
-                    let data: &[GpuDebugReadCallBack] = bytemuck::cast_slice(&bytes);
-                    for data in data {
-                        GpuDebugReadCallBack::print(name, data);
-                    }
-                }
-            },
-        );
+        // let name = self.import_name;
+        // DownloadBuffer::read_buffer(
+        //     device,
+        //     queue,
+        //     &self.buffer.as_ref().unwrap().slice(..),
+        //     move |e| {
+        //         if let Ok(downloadBuffer) = e {
+        //             let bytes = downloadBuffer;
+        //             let data: &[GpuDebugReadCallBack] = bytemuck::cast_slice(&bytes);
+        //             for data in data {
+        //                 GpuDebugReadCallBack::print(name, data);
+        //             }
+        //         }
+        //     },
+        // );
 
         self.last_print.set(Instant::now()); // 更新上次打印时间
     }

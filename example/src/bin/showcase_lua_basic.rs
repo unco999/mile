@@ -162,6 +162,7 @@ fn trigger_runtime_reset(lua: &Lua) -> mlua::Result<()> {
     let globals = lua.globals();
     if let Ok(reset_table) = globals.get::<Table>("mile_runtime_reset") {
         if let Ok(reset_fn) = reset_table.get::<Function>("all") {
+            println!("cache clear");
             let _: () = reset_fn.call(())?;
         }
     }

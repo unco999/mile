@@ -138,7 +138,6 @@ impl App {
                 (Some(ctx), Some(runtime), Some(mile_font)) => (ctx, runtime, mile_font),
                 _ => return,
             };
-
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
         runtime.flush_relation_work_if_needed(&ctx.queue);
