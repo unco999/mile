@@ -16,8 +16,12 @@ use crate::{
     prelude::{GpuChar, GpuText},
 };
 
-type RegisterEvent =
-    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
+type RegisterEvent = ModEventStream<(
+    BatchFontEntry,
+    BatchRenderFont,
+    RemoveRenderFont,
+    ResetFontRuntime,
+)>;
 
 pub struct ComputeBufferCache {}
 
@@ -498,6 +502,16 @@ impl MiniFontRuntime {
 
     fn build_instance_slice(&self) -> Vec<GpuInstance> {
         // Build instances by walking each GpuText; compute pen_x using glyph metrics scaled to pixels.
+        //
+        // Font-size responsibilities (CPU side):
+        // - `GpuText.font_size` already stores the requested pixel height from the event's FontStyle.
+        // - Each glyph advance is scaled by that `size_px` here before uploading to the GPU.
+        // - The shader receives `size_px` per instance and uses it to scale quad vertices and derive line height
+        //   from `FontGlyphDes` metrics (ascent/descent/line_gap vs. units_per_em).
+        //
+        // With this split, CPU performs only horizontal pen advance; vertical layout and wrapping stay in WGSL,
+        // keeping text flow deterministic relative to panel sizing without re-uploading instances when the
+        // container width changes.
         let mut out: Vec<GpuInstance> = Vec::new();
         for (t_idx, t) in self.out_gpu_texts.iter().enumerate() {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
@@ -533,7 +547,7 @@ impl MiniFontRuntime {
                         panel_index: ch.panel_index,
                         pos_px,
                         size_px,
-                        _pad: 0,
+                        color: t.color,
                     });
                     pen_x_px += adv_px;
                 }
@@ -862,7 +876,7 @@ struct GpuInstance {
     // layout in pixels
     pos_px: [f32; 2],
     size_px: f32,
-    _pad: u32,
+    color: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug)]
