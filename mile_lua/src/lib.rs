@@ -524,6 +524,57 @@ fn apply_flow_directives(
     Ok(())
 }
 
+fn format_lua_value(
+    lua: &Lua,
+    value: Value,
+    depth: usize,
+    visited: &mut HashSet<usize>,
+) -> LuaResult<String> {
+    const MAX_RECURSION_DEPTH: usize = 8;
+
+    match value {
+        Value::Nil => Ok("nil".to_string()),
+        Value::Boolean(b) => Ok(b.to_string()),
+        Value::Integer(i) => Ok(i.to_string()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::String(s) => Ok(s.to_string_lossy().to_string()),
+        Value::Table(table) => {
+            if depth >= MAX_RECURSION_DEPTH {
+                return Ok("<max depth reached>".to_string());
+            }
+
+            let ptr = table.to_pointer() as usize;
+            if !visited.insert(ptr) {
+                return Ok("<recursion>".to_string());
+            }
+
+            let indent = "  ".repeat(depth + 1);
+            let mut fields = Vec::new();
+            for pair in table.pairs::<Value, Value>() {
+                let (key, value) = pair?;
+                let key = format_lua_value(lua, key, depth + 1, visited)?;
+                let value = format_lua_value(lua, value, depth + 1, visited)?;
+                fields.push(format!("{indent}{key} = {value}"));
+            }
+            visited.remove(&ptr);
+
+            let closing_indent = "  ".repeat(depth);
+            if fields.is_empty() {
+                Ok("{}".to_string())
+            } else {
+                Ok(format!("{{\n{}\n{closing_indent}}}", fields.join(",\n")))
+            }
+        }
+        other => {
+            if let Some(text) = lua.coerce_string(other.clone())? {
+                Ok(text.to_string_lossy().to_string())
+            } else {
+                Ok(format!("{other:?}"))
+            }
+        }
+    }
+}
+
 fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> LuaResult<()> {
     let table = match value {
         Value::Table(t) => t.clone(),
@@ -795,6 +846,23 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?;
     globals.set("print", print_fn)?;
+
+    let print_recursive_fn = lua.create_function(|lua, values: Variadic<Value>| {
+        if values.is_empty() {
+            println!("[lua][print_r]");
+            return Ok(());
+        }
+
+        let mut rendered = Vec::new();
+        for value in values {
+            let mut visited = HashSet::new();
+            rendered.push(format_lua_value(lua, value, 0, &mut visited)?);
+        }
+
+        println!("[lua][print_r] {}", rendered.join("\t"));
+        Ok(())
+    })?;
+    globals.set("print_r", print_recursive_fn)?;
     Ok(())
 }
 

@@ -1,12 +1,12 @@
 # mile
 ![lua 热更新](./markdown/lua_reload.gif)
+
 现代化的 Rust UI/GPU 实验项目，提供实时渲染、UI 交互与 GPU DSL 示例。workspace 包含核心引擎（mile_core）、UI（mile_ui）、字体（mile_font）、API（mile_api）、图形（mile_graphics）、GPU DSL（mile_gpu_dsl）等 crate。
 
 A modern Rust UI/GPU playground with real-time rendering, UI interaction, and a small GPU DSL. Workspace includes core engine, UI, font, API, graphics, and GPU DSL crates.
 
 ## 快速开始 / Quick Start
 - 构建：`cargo build --workspace`
-- 运行主引擎：`cargo run -p mile_core`
 - 单独运行示例（example crate）：
   - 基础布局 Basic Layout: `cargo run -p example --bin showcase_basic_layout`
   - 动画 Animation: `cargo run -p example --bin showcase_animation`
@@ -48,6 +48,8 @@ A modern Rust UI/GPU playground with real-time rendering, UI interaction, and a 
 - 亮点：`state(UiState(x))` 状态轮换自动会在样式描述中插值。
 - 入口：`example/src/bin/showcase_state.rs`
 
+### 7) lua热更新
+showcase_lua_basic.rs
 
 ## 架构概览 / Architecture
 - `mile_core`: 事件循环、WGPU 上下文、UI/字体/DSL 运行时装配。
