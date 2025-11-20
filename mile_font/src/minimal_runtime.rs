@@ -506,12 +506,7 @@ impl MiniFontRuntime {
         // Font-size responsibilities (CPU side):
         // - `GpuText.font_size` already stores the requested pixel height from the event's FontStyle.
         // - Each glyph advance is scaled by that `size_px` here before uploading to the GPU.
-        // - The shader receives `size_px` per instance and uses it to scale quad vertices and derive line height
-        //   from `FontGlyphDes` metrics (ascent/descent/line_gap vs. units_per_em).
-        //
-        // With this split, CPU performs only horizontal pen advance; vertical layout and wrapping stay in WGSL,
-        // keeping text flow deterministic relative to panel sizing without re-uploading instances when the
-        // container width changes.
+        // - The shader uses `size_px` directly for quad size; no additional font-metric scaling occurs there.
         let mut out: Vec<GpuInstance> = Vec::new();
         for (t_idx, t) in self.out_gpu_texts.iter().enumerate() {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
@@ -521,8 +516,23 @@ impl MiniFontRuntime {
             let end = t.sdf_char_index_end_offset;
             let text_index_u32 = t_idx as u32;
             let mut pen_x_px: f32 = 0.0;
+            let mut pen_y_px: f32 = 0.0;
             let size_px: f32 = t.font_size;
+            let line_height_px: f32 = if t.line_height_px > 0.0 {
+                t.line_height_px
+            } else {
+                t.font_size
+            };
+            let mut line_iter = t.line_breaks.iter().copied().peekable();
             for i in start..end {
+                if let Some(next_break) = line_iter.peek().copied() {
+                    let glyph_idx_in_line = (i - start) as u32;
+                    if glyph_idx_in_line == next_break {
+                        pen_x_px = 0.0;
+                        pen_y_px += line_height_px;
+                        line_iter.next();
+                    }
+                }
                 if let Some(ch) = self.out_gpu_chars.get(i as usize) {
                     let desc = self.cpu_glyph_metrics.get(ch.char_index as usize);
                     let (units_per_em, advance_units, _lsb_units) = if let Some(m) = desc {
@@ -534,7 +544,7 @@ impl MiniFontRuntime {
                     } else {
                         (1.0_f32, 0.0_f32, 0.0_f32)
                     };
-                    let pos_px = [t.position[0] + pen_x_px, t.position[1]];
+                    let pos_px = [t.position[0] + pen_x_px, t.position[1] + pen_y_px];
                     let adv_px = if units_per_em > 0.0 {
                         advance_units * size_px / units_per_em
                     } else {
@@ -547,6 +557,7 @@ impl MiniFontRuntime {
                         panel_index: ch.panel_index,
                         pos_px,
                         size_px,
+                        _pad_size: 0.0,
                         color: t.color,
                     });
                     pen_x_px += adv_px;
@@ -581,11 +592,16 @@ impl MiniFontRuntime {
         }
     }
 
-    /// Optionally adopt UI runtime buffers for panels and panel_deltas.
-    /// Pass `Some(panel_deltas)` if available; otherwise a zero fallback is used.
-    pub fn set_panel_buffers_external(
+    /// Adopt UI runtime buffers so text quads align with panel transforms and the shared
+    /// GlobalUniform (screen size, time, mouse) values.
+    ///
+    /// - `global_uniform` should come from `CpuGlobalUniform::get_buffer()` in the UI runtime.
+    /// - `panels` points at the UI instance buffer.
+    /// - `panel_deltas` may be `None` if the UI runtime did not produce an animation delta buffer.
+    pub fn adopt_ui_buffers(
         &mut self,
         device: &wgpu::Device,
+        global_uniform: &wgpu::Buffer,
         panels: &wgpu::Buffer,
         panel_deltas: Option<&wgpu::Buffer>,
     ) {
@@ -594,23 +610,30 @@ impl MiniFontRuntime {
             Some(b) => (b.render_texture_view.clone(), b.descriptor_buffer.clone()),
             None => return,
         };
-        let (layout, sampler, global_uniform, instance, panel_delta_fallback) = match &self.render {
-            Some(r) => (
-                r.bgl.clone(),
-                r.sampler.clone(),
-                r.global_uniform.clone(),
-                r.instance.clone(),
-                r.panel_delta_buffer.clone(),
-            ),
-            None => return,
+        let Some(render) = &mut self.render else {
+            return;
         };
-        let delta_res = match panel_deltas {
-            Some(b) => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: b,
-                offset: 0,
-                size: None,
-            }),
-            None => panel_delta_fallback.as_entire_binding(),
+        let (layout, sampler, instance, panel_delta_fallback) = (
+            render.bgl.clone(),
+            render.sampler.clone(),
+            render.instance.clone(),
+            render.panel_delta_buffer.clone(),
+        );
+        // Keep a handle so resize() continues to write into the active uniform buffer.
+        render.global_uniform = global_uniform.clone();
+        let (delta_res, gu_res) = match panel_deltas {
+            Some(r) => (
+                wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: r,
+                    offset: 0,
+                    size: None,
+                }),
+                global_uniform.as_entire_binding(),
+            ),
+            None => (
+                panel_delta_fallback.as_entire_binding(),
+                global_uniform.as_entire_binding(),
+            ),
         };
         let new_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mini.render.bg0"),
@@ -630,7 +653,7 @@ impl MiniFontRuntime {
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: global_uniform.as_entire_binding(),
+                    resource: gu_res,
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
@@ -865,7 +888,7 @@ struct UiVertex {
     uv: [f32; 2],
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug, Default)]
 struct GpuInstance {
     // identity and indexing
@@ -876,6 +899,8 @@ struct GpuInstance {
     // layout in pixels
     pos_px: [f32; 2],
     size_px: f32,
+    // pad to 32 bytes so `color` matches WGSL std430 alignment (vec4<f32> @ offset 32)
+    _pad_size: f32,
     color: [f32; 4],
 }
 
@@ -1618,9 +1643,14 @@ impl MiniFontRuntime {
                     continue;
                 };
 
-                // gather glyph indices first
+                // gather glyph indices first (skip non-mapped chars) and record newline breakpoints
                 let mut indices: Vec<u32> = Vec::new();
+                let mut line_breaks: Vec<u32> = Vec::new();
                 for ch in e.text.chars() {
+                    if ch == '\n' {
+                        line_breaks.push(indices.len() as u32);
+                        continue;
+                    }
                     if let Some(&idx) = char_map.get(&ch) {
                         indices.push(idx);
                     }
@@ -1671,14 +1701,22 @@ impl MiniFontRuntime {
                 }
                 self.write_chars_into_slots(alloc.start, &chars);
 
+                let line_height_px = if e.font_style.font_line_height > 0 {
+                    e.font_style.font_line_height as f32
+                } else {
+                    e.font_style.font_size as f32
+                };
+
                 // default small container size; position kept at origin for now
                 let gpu_text = GpuText {
                     sdf_char_index_start_offset: alloc.start,
                     sdf_char_index_end_offset: alloc.start + needed,
                     font_size: e.font_style.font_size as f32,
+                    line_height_px,
                     size: 256,
                     color: e.font_style.font_color,
                     position: [0.0, 0.0],
+                    line_breaks,
                 };
                 // Debug print
                 println!(
