@@ -12,7 +12,7 @@ local function build_parent()
     Mui.new(parent_data)
         :default_state(0)
         :state(0)
-            :position(100, 100)
+            :position(100, 300)
             :size(320, 160)
             :color(0.16, 0.20, 0.32, 0.95)
             :border({
@@ -24,8 +24,8 @@ local function build_parent()
                 space = "parent",
                 origin = { 0.0, 0.0 },
                 size = { 320, 160 },
-                slot_size = { 140, 100 },
-                padding = { 20, 20, 20, 20 },
+                slot_size = { 30, 30 },
+                padding = { 0, 0, 0, 0 },
                 layout = {
                     kind = "grid",
                     columns = 1,
@@ -36,20 +36,21 @@ local function build_parent()
         :build()
 end
 
-local function build_child()
+local function build_child(id)
     Mui.new({
-        id = "lua_demo_child",
+        id = "lua_demo_child" .. id,
         data = db({ tag = "single_child" }),
     })
         :default_state(0)
         :state(0)
-            :z_index(5)
-            :size(140, 100)
+            :position(1000,300)
+            :z_index(10)
+            :size(30, 30)
             :color(0.45, 0.70, 0.88, 0.95)
             :border({
-                color = { 1.0, 1.0, 1.0, 0.9 },
+                color = { 0.0, 1.0, 1.0, 0.9 },
                 width = 2.0,
-                radius = 12.0,
+                radius = 1.0,
             })
             :container_with(parent_data)
         :build()
@@ -57,7 +58,9 @@ end
 
 function Demo.run()
     build_parent()
-    build_child()
+    for i=20,1,-1 do
+        build_child(i) 
+    end
 end
 
 Demo.run()

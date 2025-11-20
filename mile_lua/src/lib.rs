@@ -216,6 +216,21 @@ fn register_runtime_reset(lua: &Lua) -> LuaResult<()> {
         "kennel",
         lua.create_function(|_, ()| Ok(clear_kennel_state()))?,
     )?;
+    reset.set(
+        "all",
+        lua.create_function(|lua_ctx, ()| {
+            let db = clear_db_snapshots();
+            let ui = clear_ui_panels()?;
+            let font = clear_font_runtime_state();
+            let kennel = clear_kennel_state();
+            let summary = lua_ctx.create_table()?;
+            summary.set("db", db)?;
+            summary.set("ui", ui)?;
+            summary.set("font", font)?;
+            summary.set("kennel", kennel)?;
+            Ok(summary)
+        })?,
+    )?;
     let globals = lua.globals();
     globals.set("mile_runtime_reset", reset)?;
     Ok(())
@@ -424,7 +439,7 @@ impl LuaMuiBuilder {
                         }
                         LuaContainerLink::DbIndex(idx) => {
                             if let Some(target_uuid) = resolve_panel_uuid_by_db(*idx) {
-                                println!("target_uuid 最终挂载{}",target_uuid);
+                                println!("target_uuid 最终挂载{}", target_uuid);
                                 s.rel().container_with::<LuaPayload>(target_uuid);
                             } else {
                                 eprintln!(

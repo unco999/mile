@@ -145,6 +145,9 @@ impl App {
         // 始终刷新已注册的 payload；upload 会根据 dirty 标志决定是否重建实例
         runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
         runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+        //(待处理)这里暂时留着 因为lua的runtime 和主线程并不是同步的
+        //我们为了测试 先让他每帧刷新
+        runtime.schedule_relation_flush();
 
         // runtime.copy_interaction_swap_frame();
         runtime.tick_frame_update_data(&ctx.queue);
