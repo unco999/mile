@@ -17,10 +17,10 @@ pub fn register_text_demo() -> Result<(), DbError> {
                     flow.text(
                         "Mile UI — Text Demo 点击渲染文本",
                         "tf/STXIHEI.ttf".into(),
-                        24,
+                        72,
                         [0.95, 0.95, 0.95, 1.0],
                         400,
-                        28,
+                        90,
                     );
                 })
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
@@ -31,7 +31,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         26,
                         [0.90, 0.60, 0.20, 1.0],
                         700,
-                        28,
+                        100,
                     );
                 })
                 .finish()

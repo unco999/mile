@@ -19,7 +19,7 @@ use mlua::{
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
@@ -291,7 +291,7 @@ enum LuaContainerLink {
 
 fn parse_container_link(value: Value) -> LuaResult<LuaContainerLink> {
     match value {
-        Value::String(s) => Ok(LuaContainerLink::PanelUuid(s.to_string_lossy().into_owned())),
+        Value::String(s) => Ok(LuaContainerLink::PanelUuid(s.to_string_lossy())),
         Value::Integer(i) => {
             if i < 0 {
                 Err(mlua::Error::external(

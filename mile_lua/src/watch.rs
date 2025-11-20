@@ -1,7 +1,7 @@
 use mile_api::prelude::global_event_bus;
 use notify::{
-    recommended_watcher, Config, Event, RecommendedWatcher, RecursiveMode,
-    Result as NotifyResult, Watcher,
+    Config, Event, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
+    recommended_watcher,
 };
 use std::env;
 use std::fs;
