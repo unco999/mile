@@ -265,7 +265,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;
     let glyph_uv = in.uv + pixel_offset;
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
-    let edge_width = 0.5;
+
+    // Use screen-space derivatives to adapt the smooth edge width so small text stays crisp
+    // while large text avoids over-sharp edges. The minimum avoids aliasing when fwidth is
+    // extremely small (e.g., subpixel glyphs).
+    let derivative = fwidth(sdf_value);
+    let edge_width = max(derivative * 0.75, 0.002);
     let coverage = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
     let tint = in.color;
     let final_alpha = tint.a * coverage;

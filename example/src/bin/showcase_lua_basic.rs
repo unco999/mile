@@ -57,8 +57,8 @@ fn main() {
     bootstrap_lua_assets().expect("sync lua assets into deploy dir");
     spawn_lua_deploy_logger();
 
-    if let Err(lua_err) = run_lua_entry(){
-        println!("初始化lua失败 {:?}",lua_err);
+    if let Err(lua_err) = run_lua_entry() {
+        println!("初始化lua失败 {:?}", lua_err);
     }
 
     let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, move || {
