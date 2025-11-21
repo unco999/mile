@@ -851,6 +851,10 @@ fn attach_db_proxy_metatable(
     Ok(())
 }
 
+fn panel_uuid_from_db_index(idx: u32) -> String {
+    format!("lua_db_panel_{}", idx)
+}
+
 fn extract_db_index_from_value(lua: &Lua, value: Value) -> LuaResult<Option<u32>> {
     match value {
         Value::Nil => Ok(None),
@@ -873,6 +877,21 @@ fn extract_db_index_from_value(lua: &Lua, value: Value) -> LuaResult<Option<u32>
             "expected db userdata or table, got {}",
             other.type_name()
         ))),
+    }
+}
+
+fn lua_value_to_panel_uuid(lua: &Lua, value: Value) -> LuaResult<String> {
+    match value {
+        Value::String(s) => Ok(s.to_string_lossy().to_string()),
+        other => {
+            if let Some(idx) = extract_db_index_from_value(lua, other)? {
+                Ok(panel_uuid_from_db_index(idx))
+            } else {
+                Err(mlua::Error::external(
+                    "container_with expects db userdata/table with db_index or a panel uuid string",
+                ))
+            }
+        }
     }
 }
 
@@ -999,14 +1018,16 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
-        methods.add_method_mut("container_with", |lua, this, panel_uuid: String| {
+        methods.add_method_mut("container_with", |lua, this, target: Value| {
+            let panel_uuid = lua_value_to_panel_uuid(lua, target)?;
             this.current_entry_mut().container_links.push(panel_uuid);
             lua.create_userdata(this.clone())
         });
 
         methods.add_method_mut(
             "container_with_alias",
-            |lua, this, (alias, panel_uuid): (String, String)| {
+            |lua, this, (alias, target): (String, Value)| {
+                let panel_uuid = lua_value_to_panel_uuid(lua, target)?;
                 this.current_entry_mut()
                     .container_aliases
                     .push((alias, panel_uuid));
@@ -1110,7 +1131,7 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
                 }
                 Value::UserData(ud) => {
                     if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
-                        let id = format!("lua_db_panel_{}", db_ref.index);
+                        let id = panel_uuid_from_db_index(db_ref.index);
                         (id, db_payload_with_revision(db_ref.index))
                     } else {
                         return Err(mlua::Error::external(
