@@ -703,12 +703,15 @@ fn commit_db_table(lua: &Lua, table: &Table) -> LuaResult<Option<(u32, bool)>> {
             continue;
         }
         if matches!(value, Value::Nil) {
-            stored.remove(&key_str);
-            mutated = true;
+            if stored.remove(&key_str).is_some() {
+                mutated = true;
+            }
         } else {
             let json_value = lua_value_to_json(lua, value)?;
-            stored.insert(key_str, json_value);
-            mutated = true;
+            if stored.get(&key_str) != Some(&json_value) {
+                stored.insert(key_str, json_value);
+                mutated = true;
+            }
         }
     }
     if mutated {
