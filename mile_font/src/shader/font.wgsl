@@ -2,6 +2,7 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) vis: f32,
+    @location(2) color: vec4<f32>,
 };
 
 struct GlobalUniform {
@@ -68,14 +69,21 @@ struct FontGlyphDes {
     glyph_left_side_bearing: i32, // 特定字形的左侧支撑
 };
 
+
+
 struct Instance {
     char_index: u32,
     text_index: u32,
     self_index: u32,
     panel_index: u32,
-    pos_px: vec2<f32>,
+    origin_cursor: vec4<f32>,
     size_px: f32,
-    _pad: u32,
+    line_height_px: f32,
+    advance_px: f32,
+    line_break_acc: u32,
+    color: vec4<f32>,
+    flags: u32,
+    _pad: array<u32, 3>,
 };
 
 @group(0) @binding(4)
@@ -99,6 +107,8 @@ struct Panel {
     collection_state: u32,
     fragment_shader_id: u32,
     vertex_shader_id: u32,
+    rotation: vec4<f32>,
+    scale: vec4<f32>,
     color: vec4<f32>,
     border_color: vec4<f32>,
     border_width: f32,
@@ -171,23 +181,57 @@ fn vs_main(
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
     let container = panel.size;
-    // Estimate line height in pixels from font metrics
-    let units = max(f32(des.units_per_em), 1.0);
-    let line_height_em = f32(des.ascent - des.descent + des.line_gap);
-    let line_height_px = line_height_em / units * inst.size_px;
-    // Compute wrap with strict fit: if remaining width cannot include this glyph (even by 1px), force next line.
-    let local_x = inst.pos_px.x;
+    // CPU provides baseline origin + cursor offset; fall back to glyph metrics if runtime data is invalid.
+    let origin = inst.origin_cursor.xy;
+    let cursor_x = inst.origin_cursor.z;
+    var line_height_px = inst.line_height_px;
+    if (line_height_px <= 0.0) {
+        let units = max(f32(des.units_per_em), 1.0);
+        let line_height_em = f32(des.ascent - des.descent + des.line_gap);
+        line_height_px = line_height_em / units * inst.size_px;
+    }
+    debug_buffer.floats[pidx] = line_height_px;
     let wrap_width = max(container.x, 1.0);
-    let base_line = floor(local_x / wrap_width);
-    let x_in_line = local_x - base_line * wrap_width;
-    let overflow = (x_in_line + inst.size_px) > wrap_width;
-    let line = base_line + select(0.0, 1.0, overflow);
-    let wrapped_x = select(x_in_line, 0.0, overflow);
-    let wrapped_y = inst.pos_px.y + line * line_height_px;
+    let base_line = floor(cursor_x / wrap_width);
+    let x_in_line = cursor_x - base_line * wrap_width;
+    let overflow = (x_in_line + inst.advance_px) > wrap_width;
+    var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
+    var wrapped_x = select(x_in_line, 0.0, overflow);
+
+    // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
+    var carry = 0.0;
+    var scan_idx = inst_id;
+    var scans: u32 = 0u;
+    loop {
+        if (scan_idx == 0u || scans >= 64u) {
+            break;
+        }
+        scan_idx -= 1u;
+        scans += 1u;
+        let prev = instances[scan_idx];
+        if (prev.text_index != inst.text_index) {
+            break;
+        }
+        let prev_cursor = prev.origin_cursor.z;
+        let prev_base_line = floor(prev_cursor / wrap_width);
+        let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
+        let prev_overflow = (prev_x_in_line + prev.advance_px) > wrap_width;
+        var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
+        if (prev_line != line) {
+            break;
+        }
+        if (prev_overflow) {
+            carry += wrap_width - prev_x_in_line;
+        }
+    }
+    wrapped_x += carry;
+    let local_y = origin.y + line * line_height_px;
+    let wrapped_y = local_y;
+    let wrapped_x_with_origin = origin.x + wrapped_x;
     // Visibility in container Y
     let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x, wrapped_y) + position * inst.size_px;
-    debug_buffer.floats[min(inst_id, 31u)] = inst.size_px;
+    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin, wrapped_y) + position * inst.size_px;
+    debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
     let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
@@ -195,12 +239,9 @@ fn vs_main(
     let z = 0.99 - z_norm;
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
     out.vis = visible;
+    out.color = inst.color;
     return out;
 }
-
-struct FragmentInput {
-    @location(0) tex_coords: vec2<f32>,
-};
 
 @group(0) @binding(0)
 var font_distance_texture: texture_2d<f32>;
@@ -215,6 +256,7 @@ var<storage, read> glyph_descs: array<FontGlyphDes>;
 
 const GLYPH_SIZE: u32 = 64u;
 const ATLAS_SIZE: vec2<f32> = vec2<f32>(4096.0, 4096.0);
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (in.vis < 0.5) {
@@ -222,25 +264,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;
     let glyph_uv = in.uv + pixel_offset;
-
-
-    // 调试：可视化SDF值
-    // return vec4<f32>(sdf_value, sdf_value, sdf_value, 1.0);
-    
-    // 正确的逻辑：
-    // sdf_value 接近 1.0 -> 字体内部 -> 不透明
-    // sdf_value 接近 0.0 -> 字体外部 -> 透明  
-    // sdf_value 在 0.5 附近 -> 边缘 -> 平滑过渡
-    
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
-
-    // 更锐利的边缘
-    let edge_width = 0.5; // 更小的边缘宽度
-    let alpha = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
-
-    // 或者使用阶梯函数获得完全锐利的边缘
-    //let alpha = select(0.0, 1.0, sdf_value > 0.5);
-    
-
-    return vec4<f32>(1.0, 0.7, 0.5,alpha);
+    let edge_width = 0.5;
+    let coverage = smoothstep(0.5 - edge_width, 0.5 + edge_width, sdf_value);
+    let tint = in.color;
+    let final_alpha = tint.a * coverage;
+    let rgb = tint.rgb * coverage;
+    return vec4<f32>(rgb, final_alpha);
 }

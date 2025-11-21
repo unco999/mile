@@ -13,11 +13,19 @@ use winit::dpi::PhysicalSize;
 
 use crate::{
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime},
-    prelude::{GpuChar, GpuText},
+    prelude::{
+        GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK,
+        GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT, GpuChar,
+        GpuText,
+    },
 };
 
-type RegisterEvent =
-    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
+type RegisterEvent = ModEventStream<(
+    BatchFontEntry,
+    BatchRenderFont,
+    RemoveRenderFont,
+    ResetFontRuntime,
+)>;
 
 pub struct ComputeBufferCache {}
 
@@ -93,6 +101,7 @@ impl MiniFontRuntime {
             glyph_left_side_bearing: 0,
             glyph_ver_advance: 0,
             glyph_ver_side_bearing: 0,
+            layout_flags: 0,
         }
     }
 
@@ -505,37 +514,60 @@ impl MiniFontRuntime {
             }
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
-            let text_index_u32 = t_idx as u32;
             let mut pen_x_px: f32 = 0.0;
+            let mut line_break_acc: u32 = 0;
             let size_px: f32 = t.font_size;
+            let origin = [t.position[0], t.position[1]];
+            let color = t.color;
             for i in start..end {
                 if let Some(ch) = self.out_gpu_chars.get(i as usize) {
                     let desc = self.cpu_glyph_metrics.get(ch.char_index as usize);
-                    let (units_per_em, advance_units, _lsb_units) = if let Some(m) = desc {
+                    let (units_per_em, advance_units, line_units) = if let Some(m) = desc {
                         (
-                            m.units_per_em as f32,
+                            m.units_per_em.max(1) as f32,
                             m.glyph_advance_width as f32,
-                            m.glyph_left_side_bearing as f32,
+                            (m.ascent - m.descent + m.line_gap) as f32,
                         )
                     } else {
-                        (1.0_f32, 0.0_f32, 0.0_f32)
+                        (1.0_f32, 0.0_f32, size_px)
                     };
-                    let pos_px = [t.position[0] + pen_x_px, t.position[1]];
-                    let adv_px = if units_per_em > 0.0 {
+                    let break_count = (ch.layout_flags & GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK)
+                        >> GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT;
+                    if break_count > 0 {
+                        pen_x_px = 0.0;
+                        line_break_acc = line_break_acc.saturating_add(break_count);
+                    }
+                    let cursor_x = pen_x_px;
+                    let advance_px = if units_per_em > 0.0 {
                         advance_units * size_px / units_per_em
                     } else {
-                        0.0
+                        size_px
                     };
+                    let mut line_height_px = if t.line_height > 0.0 {
+                        t.line_height
+                    } else if units_per_em > 0.0 {
+                        line_units / units_per_em * size_px
+                    } else {
+                        size_px
+                    };
+                    if !line_height_px.is_finite() || line_height_px <= 0.0 {
+                        line_height_px = size_px;
+                    }
                     out.push(GpuInstance {
                         char_index: ch.char_index,
                         text_index: ch.gpu_text_index,
                         self_index: ch.self_index,
                         panel_index: ch.panel_index,
-                        pos_px,
+                        origin_cursor: [origin[0], origin[1], cursor_x, 0.0],
                         size_px,
-                        _pad: 0,
+                        line_height_px,
+                        advance_px,
+                        line_break_acc,
+                        color,
+                        flags: ch.layout_flags,
+                        _pad: [0; 3],
                     });
-                    pen_x_px += adv_px;
+                    pen_x_px += advance_px;
                 }
             }
         }
@@ -859,10 +891,15 @@ struct GpuInstance {
     text_index: u32,
     self_index: u32,
     panel_index: u32,
-    // layout in pixels
-    pos_px: [f32; 2],
+    // origin.xy + cursor_x + reserved slot
+    origin_cursor: [f32; 4],
     size_px: f32,
-    _pad: u32,
+    line_height_px: f32,
+    advance_px: f32,
+    line_break_acc: u32,
+    color: [f32; 4],
+    flags: u32,
+    _pad: [u32; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1604,14 +1641,35 @@ impl MiniFontRuntime {
                     continue;
                 };
 
-                // gather glyph indices first
-                let mut indices: Vec<u32> = Vec::new();
-                for ch in e.text.chars() {
+                // gather glyph indices + newline markers first
+                let mut glyph_entries: Vec<(u32, u32)> = Vec::new();
+                let mut pending_line_breaks: u32 = 0;
+                let mut chars = e.text.chars().peekable();
+                while let Some(ch) = chars.next() {
+                    if ch == '\r' {
+                        if matches!(chars.peek(), Some('\n')) {
+                            chars.next();
+                        }
+                        pending_line_breaks = pending_line_breaks.saturating_add(1);
+                        continue;
+                    }
+                    if ch == '\n' {
+                        pending_line_breaks = pending_line_breaks.saturating_add(1);
+                        continue;
+                    }
                     if let Some(&idx) = char_map.get(&ch) {
-                        indices.push(idx);
+                        let mut flags = 0u32;
+                        if pending_line_breaks > 0 {
+                            let encodeable =
+                                pending_line_breaks.min(GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX);
+                            flags |= GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE;
+                            flags |= encodeable << GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT;
+                            pending_line_breaks = pending_line_breaks.saturating_sub(encodeable);
+                        }
+                        glyph_entries.push((idx, flags));
                     }
                 }
-                let needed = indices.len() as u32;
+                let needed = glyph_entries.len() as u32;
                 if needed == 0 {
                     continue;
                 }
@@ -1622,8 +1680,8 @@ impl MiniFontRuntime {
 
                 // build chars for the reserved slot range
                 let this_text_index = self.out_gpu_texts.len() as u32;
-                let mut chars: Vec<GpuChar> = Vec::with_capacity(indices.len());
-                for (i, &ci) in indices.iter().enumerate() {
+                let mut chars: Vec<GpuChar> = Vec::with_capacity(glyph_entries.len());
+                for (i, &(ci, flags)) in glyph_entries.iter().enumerate() {
                     let metrics =
                         self.cpu_glyph_metrics
                             .get(ci as usize)
@@ -1653,6 +1711,7 @@ impl MiniFontRuntime {
                         glyph_left_side_bearing: metrics.glyph_left_side_bearing,
                         glyph_ver_advance: metrics.glyph_ver_advance,
                         glyph_ver_side_bearing: metrics.glyph_ver_side_bearing,
+                        layout_flags: flags,
                     });
                 }
                 self.write_chars_into_slots(alloc.start, &chars);
@@ -1665,6 +1724,11 @@ impl MiniFontRuntime {
                     size: 256,
                     color: e.font_style.font_color,
                     position: [0.0, 0.0],
+                    line_height: if e.font_style.font_line_height > 0 {
+                        e.font_style.font_line_height as f32
+                    } else {
+                        0.0
+                    },
                 };
                 // Debug print
                 println!(

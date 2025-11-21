@@ -111,6 +111,13 @@ pub struct FontStyle {
     pub font_line_height: u32,
 }
 
+/// Layout directives that accompany each glyph instance.
+pub const GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE: u32 = 0x1;
+pub const GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT: u32 = 8;
+pub const GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK: u32 = 0x00ff_ff00;
+pub const GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX: u32 =
+    GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK >> GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
 pub struct GpuChar {
@@ -124,6 +131,8 @@ pub struct GpuChar {
     pub glyph_left_side_bearing: i32,
     pub glyph_ver_advance: u32,
     pub glyph_ver_side_bearing: i32,
+    /// Bitmask of `GPU_CHAR_LAYOUT_FLAG_*`.
+    pub layout_flags: u32,
 }
 pub struct GpuText {
     pub sdf_char_index_start_offset: u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
@@ -133,4 +142,6 @@ pub struct GpuText {
     pub color: [f32; 4],
     // text origin (pixels or logical units depending on pipeline)
     pub position: [f32; 2],
+    /// Optional line height in pixels (0 = derive from glyph metrics)
+    pub line_height: f32,
 }

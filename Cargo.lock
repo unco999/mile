@@ -1380,6 +1380,8 @@ dependencies = [
  "flume",
  "lazy_static",
  "mile_db",
+ "serde",
+ "serde_json",
  "wgpu",
  "winit",
 ]
@@ -1464,6 +1466,7 @@ dependencies = [
 name = "mile_lua"
 version = "0.1.0"
 dependencies = [
+ "flume",
  "glam",
  "mile_api",
  "mile_db",
