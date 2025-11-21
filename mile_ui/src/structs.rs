@@ -156,7 +156,13 @@ bitflags::bitflags! {
         const COLOR_G        = 0b0010_0000_0000_0000; // index 13
         const COLOR_B        = 0b0100_0000_0000_0000; // index 14
         const COLOR_A        = 0b1000_0000_0000_0000; // index 15
-        const ALL            = 0b1111_1111_1111_1111;
+        const ROTATION_X     = 1 << 16;
+        const ROTATION_Y     = 1 << 17;
+        const ROTATION_Z     = 1 << 18;
+        const SCALE_X        = 1 << 19;
+        const SCALE_Y        = 1 << 20;
+        const SCALE_Z        = 1 << 21;
+        const ALL            = 0xffff_ffff;
         const Not            = 0b0000_0000_0000; // index 14
     }
 }

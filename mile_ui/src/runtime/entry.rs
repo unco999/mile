@@ -1019,6 +1019,8 @@ impl MuiRuntime {
         let off_state_mask = offset_of!(Panel, state_mask) as wgpu::BufferAddress;
         let off_transparent = offset_of!(Panel, transparent) as wgpu::BufferAddress;
         let off_tex = offset_of!(Panel, texture_id) as wgpu::BufferAddress;
+        let off_rotation = offset_of!(Panel, rotation) as wgpu::BufferAddress;
+        let off_scale = offset_of!(Panel, scale) as wgpu::BufferAddress;
         // Mapping based on PanelField bitflags
         use crate::structs::PanelField;
         let mut inst = panel;
@@ -1170,6 +1172,48 @@ impl MuiRuntime {
             write_field(self, off, bytes_of(&color));
             if !add {
                 write_snapshot(self, off, bytes_of(&color));
+            }
+        }
+        if bits
+            & (PanelField::ROTATION_X.bits()
+                | PanelField::ROTATION_Y.bits()
+                | PanelField::ROTATION_Z.bits())
+            != 0
+        {
+            let mut rotation = inst.rotation;
+            if bits & PanelField::ROTATION_X.bits() != 0 {
+                rotation[0] = if add { rotation[0] + v[0] } else { v[0] };
+            }
+            if bits & PanelField::ROTATION_Y.bits() != 0 {
+                rotation[1] = if add { rotation[1] + v[1] } else { v[1] };
+            }
+            if bits & PanelField::ROTATION_Z.bits() != 0 {
+                rotation[2] = if add { rotation[2] + v[2] } else { v[2] };
+            }
+            write_field(self, off_rotation, bytes_of(&rotation));
+            if !add {
+                write_snapshot(self, off_rotation, bytes_of(&rotation));
+            }
+        }
+        if bits
+            & (PanelField::SCALE_X.bits()
+                | PanelField::SCALE_Y.bits()
+                | PanelField::SCALE_Z.bits())
+            != 0
+        {
+            let mut scale = inst.scale;
+            if bits & PanelField::SCALE_X.bits() != 0 {
+                scale[0] = if add { scale[0] + v[0] } else { v[0] };
+            }
+            if bits & PanelField::SCALE_Y.bits() != 0 {
+                scale[1] = if add { scale[1] + v[1] } else { v[1] };
+            }
+            if bits & PanelField::SCALE_Z.bits() != 0 {
+                scale[2] = if add { scale[2] + v[2] } else { v[2] };
+            }
+            write_field(self, off_scale, bytes_of(&scale));
+            if !add {
+                write_snapshot(self, off_scale, bytes_of(&scale));
             }
         }
     }

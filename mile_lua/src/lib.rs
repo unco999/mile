@@ -14,6 +14,7 @@ use mile_ui::{
     mui_rel::{RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace, apply_container_alias},
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
+    structs::PanelField,
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
@@ -651,10 +652,56 @@ fn apply_flow_directives(
             apply_text_from_lua(flow, &value)?;
         }
     }
+    if let Some(rotation) = extract_vec3_directive(table, "rotation")? {
+        let bits = (PanelField::ROTATION_X
+            | PanelField::ROTATION_Y
+            | PanelField::ROTATION_Z)
+            .bits();
+        flow.style_set(bits, [rotation[0], rotation[1], rotation[2], 0.0]);
+    }
+    if let Some(scale) = extract_vec3_directive(table, "scale")? {
+        let bits =
+            (PanelField::SCALE_X | PanelField::SCALE_Y | PanelField::SCALE_Z).bits();
+        flow.style_set(bits, [scale[0], scale[1], scale[2], 0.0]);
+    }
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
     Ok(())
+}
+
+fn extract_vec3_directive(table: &Table, field: &str) -> LuaResult<Option<[f32; 3]>> {
+    let value: Value = table.get(field)?;
+    match value {
+        Value::Nil => Ok(None),
+        Value::Table(tbl) => {
+            let mut result = [0.0; 3];
+            let mut assigned = [false; 3];
+            for idx in 1..=3 {
+                if let Some(val) = tbl.get::<Option<f32>>(idx)? {
+                    result[idx - 1] = val;
+                    assigned[idx - 1] = true;
+                }
+            }
+            for (idx, key) in ["x", "y", "z"].iter().enumerate() {
+                if let Some(val) = tbl.get::<Option<f32>>(*key)? {
+                    result[idx] = val;
+                    assigned[idx] = true;
+                }
+            }
+            if assigned.iter().any(|flag| *flag) {
+                Ok(Some(result))
+            } else {
+                Err(mlua::Error::external(format!(
+                    "{field} expects numeric entries (1-3 or x/y/z)"
+                )))
+            }
+        }
+        other => Err(mlua::Error::external(format!(
+            "{field} expects table, got {}",
+            other.type_name()
+        ))),
+    }
 }
 
 fn format_lua_value(

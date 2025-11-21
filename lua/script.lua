@@ -70,7 +70,7 @@ local display = Mui.new({
         end)
         :size(460, 320)
         :position(380, 60)
-        :rotation(0,180,90)
+        :rotation(0,90,0)
     :build()
 
 
