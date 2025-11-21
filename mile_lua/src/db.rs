@@ -19,6 +19,10 @@ pub fn store_json(json: JsonValue) -> u32 {
     idx
 }
 
+pub fn update_json(idx: u32, json: JsonValue) {
+    registry().lock().unwrap().insert(idx, json);
+}
+
 pub fn load_json(idx: u32) -> Option<JsonValue> {
     registry().lock().unwrap().get(&idx).cloned()
 }
