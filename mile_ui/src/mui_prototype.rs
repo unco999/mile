@@ -386,6 +386,20 @@ impl DragContext {
     }
 }
 
+static GLOBAL_DRAG_CONTEXT: OnceLock<Mutex<Option<DragContext>>> = OnceLock::new();
+
+fn drag_context_store() -> &'static Mutex<Option<DragContext>> {
+    GLOBAL_DRAG_CONTEXT.get_or_init(|| Mutex::new(None))
+}
+
+fn current_drag_context() -> Option<DragContext> {
+    drag_context_store().lock().unwrap().clone()
+}
+
+fn set_global_drag_context(ctx: Option<DragContext>) {
+    *drag_context_store().lock().unwrap() = ctx;
+}
+
 /// Visual/Layout overrides persisted for each state.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PanelStateOverrides {
@@ -1119,7 +1133,7 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
                 &args,
                 current_state_ref,
                 transitions,
-                runtime.active_drag.clone(),
+                current_drag_context(),
             );
             for entry in list {
                 if entry.ty == env.payload_type {
@@ -1136,6 +1150,7 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
             eprintln!("data change mutation failed: {err:?}");
         }
         if let Some(ctx) = updated_drag {
+            set_global_drag_context(Some(ctx.clone()));
             runtime.active_drag = Some(ctx);
         }
     }
@@ -1212,29 +1227,19 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     pub fn text(
         &self,
         text: &str,
-        font_path: Arc<str>,
-        font_size: u32,
-        color: [f32; 4],
-        weight: u32,
-        line_height: u32,
+        style:FontStyle
     ) {
         let pid = PanelId(self.args.panel_key.panel_id);
         // Always clear previous texts for this panel before queuing new one
         global_event_bus().publish(RemoveRenderFont { parent: pid });
-        let style = FontStyle {
-            font_size,
-            font_file_path: font_path.clone(),
-            font_color: color,
-            font_weight: weight,
-            font_line_height: line_height,
-        };
+
         global_event_bus().publish(BatchFontEntry {
             text: Arc::from(text.to_string()),
-            font_file_path: font_path.clone(),
+            font_file_path: style.font_file_path.clone(),
         });
         global_event_bus().publish(BatchRenderFont {
             text: Arc::from(text.to_string()),
-            font_file_path: font_path.clone(),
+            font_file_path: style.font_file_path.clone(),
             parent: pid,
             font_style: Arc::new(style),
         });
@@ -1773,7 +1778,7 @@ fn trigger_event_internal<TPayload: PanelPayload>(
                 &args,
                 current_state_ref,
                 transitions,
-                runtime.active_drag.clone(),
+                current_drag_context(),
             );
             handler(&mut flow);
             applied_override = flow.take_override().is_some();
@@ -1782,6 +1787,7 @@ fn trigger_event_internal<TPayload: PanelPayload>(
             eprintln!("event mutation failed: {err:?}");
         }
         if let Some(ctx) = updated_drag {
+            set_global_drag_context(Some(ctx.clone()));
             runtime.active_drag = Some(ctx);
         }
     }
@@ -1850,7 +1856,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
                     &args,
                     current_state_ref,
                     transitions,
-                    runtime.active_drag.clone(),
+                    current_drag_context(),
                 );
                 handler(&mut flow, data);
                 updated_drag = flow.take_drag_context();
@@ -1858,6 +1864,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
                 eprintln!("event mutation failed: {err:?}");
             }
             if let Some(ctx) = updated_drag {
+                set_global_drag_context(Some(ctx.clone()));
                 runtime.active_drag = Some(ctx);
             } else if matches!(
                 event,
@@ -1865,6 +1872,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
             ) {
                 // 清理拖拽上下文
                 runtime.active_drag = None;
+                set_global_drag_context(None);
             }
             return;
         }
