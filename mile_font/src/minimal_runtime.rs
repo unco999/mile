@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -208,10 +208,7 @@ impl MiniFontRuntime {
             let new_idx = kept_texts.len();
             kept_texts.push(text.clone());
             kept_flags.push(false);
-            rebuilt_indices
-                .entry(text.panel)
-                .or_default()
-                .push(new_idx);
+            rebuilt_indices.entry(text.panel).or_default().push(new_idx);
         }
         self.out_gpu_texts = kept_texts;
         self.text_removed = kept_flags;
@@ -556,7 +553,7 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
-            println!("当前需要渲染的gpu text {:?}",t);
+            println!("当前需要渲染的gpu text {:?}", t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let mut pen_x_px: f32 = 0.0;
@@ -1827,5 +1824,3 @@ impl MiniFontRuntime {
         touched
     }
 }
-
-
