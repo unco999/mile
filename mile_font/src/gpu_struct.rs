@@ -140,6 +140,8 @@ pub struct GpuText {
     pub font_size: f32,
     pub size: u32,
     pub color: [f32; 4],
+    /// Owning panel id to allow removal even if bookkeeping maps are missing
+    pub panel: u32,
     // text origin (pixels or logical units depending on pipeline)
     pub position: [f32; 2],
     /// Optional line height in pixels (0 = derive from glyph metrics)

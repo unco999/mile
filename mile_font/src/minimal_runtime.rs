@@ -1718,6 +1718,7 @@ impl MiniFontRuntime {
                     font_size: e.font_style.font_size as f32,
                     size: 256,
                     color: e.font_style.font_color,
+                    panel: panel_id,
                     position: [0.0, 0.0],
                     line_height: if e.font_style.font_line_height > 0 {
                         e.font_style.font_line_height as f32
@@ -1759,6 +1760,17 @@ impl MiniFontRuntime {
                 if let Some(flag) = self.text_removed.get_mut(idx) {
                     *flag = true;
                     touched = true;
+                }
+            }
+        } else {
+            for (idx, text) in self.out_gpu_texts.iter().enumerate() {
+                if text.panel == panel_id {
+                    if let Some(flag) = self.text_removed.get_mut(idx) {
+                        if !*flag {
+                            *flag = true;
+                            touched = true;
+                        }
+                    }
                 }
             }
         }
