@@ -22,8 +22,8 @@ use mile_ui::{
 };
 use mlua::prelude::LuaSerdeExt;
 use mlua::{
-    AnyUserData, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData, UserDataMethods,
-    Value, Variadic,
+    AnyUserData, Error, Function, Lua, RegistryKey, Result as LuaResult, Table, UserData,
+    UserDataMethods, Value, Variadic,
 };
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -712,16 +712,46 @@ fn apply_flow_directives(
     Ok(())
 }
 
+fn parse_state_argument(args: &Variadic<Value>) -> LuaResult<u32> {
+    for value in args.iter() {
+        match value {
+            Value::Integer(i) => {
+                if let Ok(state) = u32::try_from(*i) {
+                    return Ok(state);
+                }
+            }
+            Value::Number(n) if *n >= 0.0 && n.fract() == 0.0 => {
+                return Ok(*n as u32);
+            }
+            Value::String(s) => {
+                if let Ok(state) = s.to_str()?.parse::<u32>() {
+                    return Ok(state);
+                }
+            }
+            Value::Nil | Value::Table(_) => {}
+            _ => {}
+        }
+    }
+
+    Err(Error::FromLuaConversionError {
+        from: "Value",
+        to: "u32",
+        message: Some("state argument expects a number or numeric string".to_string()),
+    })
+}
+
 fn attach_flow_table_shortcuts(lua: &Lua, table: &Table) -> LuaResult<()> {
     let table_ref = table.clone();
-    let set_state_fn = lua.create_function(move |_, next_state: u32| {
+    let set_state_fn = lua.create_function(move |_, args: Variadic<Value>| {
+        let next_state = parse_state_argument(&args)?;
         table_ref.set("next_state", next_state)?;
         Ok(())
     })?;
     table.set("set_state", set_state_fn)?;
 
     let table_ref = table.clone();
-    let set_drag_state_fn = lua.create_function(move |_, next_state: u32| {
+    let set_drag_state_fn = lua.create_function(move |_, args: Variadic<Value>| {
+        let next_state = parse_state_argument(&args)?;
         table_ref.set("drag_source_state", next_state)?;
         Ok(())
     })?;
