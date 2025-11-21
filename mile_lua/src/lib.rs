@@ -26,6 +26,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Value as JsonValue, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 type SharedLua = Arc<Mutex<Lua>>;
 static LUA_PANEL_REGISTRY: OnceCell<Mutex<Vec<PanelKey>>> = OnceCell::new();
@@ -950,6 +951,15 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
     register_runtime_reset(lua)?;
     register_key_event_bus(lua)?;
     thread::register_thread_api(lua)?;
+
+    let globals = lua.globals();
+    let sleep_fn = lua.create_function(|_, seconds: f64| {
+        if seconds > 0.0 {
+            std::thread::sleep(Duration::from_secs_f64(seconds));
+        }
+        Ok(())
+    })?;
+    globals.set("mile_sleep", sleep_fn)?;
 
     {
         let make_struct = lua.create_function(|lua, (ty, value): (String, Value)| {
