@@ -22,7 +22,6 @@ pub fn register_text_demo() -> Result<(), DbError> {
                             font_line_height:50,
                             ..Default::default()
                        }
-                        
                     );
                 })
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
