@@ -1,6 +1,6 @@
 mod db;
 pub mod watch;
-
+pub mod thread;
 use crate::db::{LuaTableDb, register_db_globals};
 use flume::TryRecvError;
 use glam::{vec2, vec3, vec4};
@@ -949,6 +949,7 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
     register_db_globals(lua)?;
     register_runtime_reset(lua)?;
     register_key_event_bus(lua)?;
+    thread::register_thread_api(lua)?;
 
     {
         let make_struct = lua.create_function(|lua, (ty, value): (String, Value)| {

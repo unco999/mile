@@ -1,5 +1,7 @@
-use mlua::{Lua, Result as LuaResult};
+use mlua::{Lua, Result as LuaResult, Table};
 use std::thread;
+
+use crate::register_lua_api;
 
 /// Register a minimal threading helper for Lua scripts.
 ///
@@ -16,12 +18,14 @@ pub fn register_thread_api(lua: &Lua) -> LuaResult<()> {
     let globals = lua.globals();
     let thread_api = lua.create_table()?;
 
-    let spawn = lua.create_function(|_, source: String| {
+    let spawn = lua.create_function(move |lua, source: String| {
+        let package: Table = lua.globals().get("package")?;
+        let package_path: String = package.get("path")?;
+        let package_cpath: Option<String> = package.get("cpath").ok();
+        let package_path = package_path.clone();
+        let package_cpath = package_cpath.clone();
         thread::spawn(move || {
-            let lua = Lua::new();
-
-            let chunk = lua.load(&source).set_name("mile_thread_spawn");
-            if let Err(err) = chunk.and_then(|code| code.exec()) {
+            if let Err(err) = spawn_worker_runtime(source, package_path, package_cpath) {
                 eprintln!("[mile_thread] worker failed: {err}");
             }
         });
@@ -30,5 +34,28 @@ pub fn register_thread_api(lua: &Lua) -> LuaResult<()> {
 
     thread_api.set("spawn", spawn)?;
     globals.set("mile_thread", thread_api)?;
+    Ok(())
+}
+
+fn spawn_worker_runtime(
+    source: String,
+    package_path: String,
+    package_cpath: Option<String>,
+) -> LuaResult<()> {
+    let lua = Lua::new();
+    register_lua_api(&lua)?;
+    configure_package_paths(&lua, &package_path, package_cpath.as_deref())?;
+    lua.load(&source)
+        .set_name("mile_thread_spawn")
+        .exec()
+}
+
+fn configure_package_paths(lua: &Lua, path: &str, cpath: Option<&str>) -> LuaResult<()> {
+    let globals = lua.globals();
+    let package: Table = globals.get("package")?;
+    package.set("path", path)?;
+    if let Some(cpath_value) = cpath {
+        package.set("cpath", cpath_value)?;
+    }
     Ok(())
 }
