@@ -606,6 +606,7 @@ fn dispatch_lua_event(
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
     tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
+    attach_flow_table_shortcuts(lua, &tbl)?;
     if let Some(drag_payload) = flow.drag_payload::<LuaPayload>() {
         tbl.set(
             "drag_payload",
@@ -639,6 +640,7 @@ fn dispatch_lua_on_data(
         "payload",
         materialize_payload_value(lua, flow.payload_ref())?,
     )?;
+    attach_flow_table_shortcuts(lua, &tbl)?;
     if let Some(idx) = source_db_index {
         tbl.set("source_db_index", idx)?;
     }
@@ -696,6 +698,16 @@ fn apply_flow_directives(
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
+    Ok(())
+}
+
+fn attach_flow_table_shortcuts(lua: &Lua, table: &Table) -> LuaResult<()> {
+    let table_ref = table.clone();
+    let set_state_fn = lua.create_function(move |_, next_state: u32| {
+        table_ref.set("next_state", next_state)?;
+        Ok(())
+    })?;
+    table.set("set_state", set_state_fn)?;
     Ok(())
 }
 
