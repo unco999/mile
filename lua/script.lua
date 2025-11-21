@@ -44,7 +44,6 @@ Mui.new(global_bind)
                 font_size = 24,
                 color = { 0.95, 0.95, 0.95, 1.0 },
             }
-            return ctx
         end)
     :build()
 
@@ -62,12 +61,12 @@ Mui.new(diaplay)
         })
         :on_target_data(global_bind,function(ctx)
             local target = ctx.source_payload;
+            print("最新的绑定数据发生变更",target.value)
             ctx.text = {
-                text = target.value,
+                text = tostring(target.value) .. "你好",
                 font_path = "tf/STXIHEI.ttf",
                 font_size = 36,
                 color = { 0.95, 0.95, 0.95, 1.0 },
             }
-        print("当前检测到数据有更改")
         end)
     :build()

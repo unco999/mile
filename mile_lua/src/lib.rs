@@ -627,8 +627,7 @@ fn dispatch_lua_on_data(
     tbl.set("panel_id", flow.args().panel_key.panel_uuid.clone())?;
     tbl.set("state", flow.state().0)?;
     tbl.set("event", "on_target_data")?;
-    // 对于数据联动事件，优先把最新的来源数据暴露给 Lua，避免读取到目标面板旧的 payload。
-    tbl.set("payload", materialize_payload_value(lua, &source_payload)?)?;
+    tbl.set("payload", materialize_payload_value(lua, flow.payload_ref())?)?;
     if let Some(idx) = source_db_index {
         tbl.set("source_db_index", idx)?;
     }
@@ -672,7 +671,9 @@ fn apply_flow_directives(
     }
     if let Ok(value) = table.get::<Value>("text") {
         if !matches!(value, Value::Nil) {
+            flow.clear_texts();
             apply_text_from_lua(flow, &value)?;
+            flow.mark_changed();
         }
     }
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
@@ -907,7 +908,7 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
 
     let path = font_path
         .map(|p| p.into())
-        .unwrap_or_else(|| "tf/Alibaba-PuHuiTi-Regular.ttf".into());
+        .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
     flow.text(&text, path, font_size, final_color, weight, line_height);
     Ok(())
 }

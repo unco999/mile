@@ -175,14 +175,17 @@ impl MiniFontRuntime {
         Self::coalesce_free_list(&mut self.free_list);
     }
 
-    fn reserve_for_text(&mut self, key: (u32, Arc<str>), needed: u32) -> TextAlloc {
+
+
+    fn reserve_for_text(&mut self, key: (u32, Arc<str>), needed: u32) -> (TextAlloc, u32) {
         // needed can be 0; treat as 1 for allocation accounting but set len later
         let want = Self::round_pow2(needed.max(1));
         if let Some(mut a) = self.text_allocs.get(&key).copied() {
+            let prev_len = a.len;
             if want <= a.cap {
                 a.len = needed;
                 self.text_allocs.insert(key, a);
-                return a;
+                return (a, prev_len);
             }
             // grow: alloc new, free old
             let new_start = self.alloc_range(want);
@@ -193,7 +196,7 @@ impl MiniFontRuntime {
                 cap: want,
             };
             self.text_allocs.insert(key, a);
-            return a;
+            return (a, prev_len);
         }
         let start = self.alloc_range(want);
         let a = TextAlloc {
@@ -202,7 +205,7 @@ impl MiniFontRuntime {
             cap: want,
         };
         self.text_allocs.insert(key, a);
-        a
+        (a, 0)
     }
 
     fn write_chars_into_slots(&mut self, start: u32, chars: &[GpuChar]) {
@@ -1637,9 +1640,12 @@ impl MiniFontRuntime {
             }
 
             for e in &batch_render {
-                let Some(char_map) = self.glyph_index.get(&e.font_file_path) else {
-                    continue;
-                };
+                let Some(char_map) =
+                    self.glyph_index.get(&e.font_file_path).cloned() else {
+                        continue;
+                    };
+                let panel_id = e.parent.0;
+                self.mark_panel_text_removed(panel_id);
 
                 // gather glyph indices + newline markers first
                 let mut glyph_entries: Vec<(u32, u32)> = Vec::new();
@@ -1676,7 +1682,7 @@ impl MiniFontRuntime {
 
                 // key by (panel_id, font_path) so the same panel updates in place when possible
                 let key = (e.parent.0, e.font_file_path.clone());
-                let alloc = self.reserve_for_text(key, needed);
+                let (alloc, prev_len) = self.reserve_for_text(key, needed);
 
                 // build chars for the reserved slot range
                 let this_text_index = self.out_gpu_texts.len() as u32;
@@ -1715,6 +1721,14 @@ impl MiniFontRuntime {
                     });
                 }
                 self.write_chars_into_slots(alloc.start, &chars);
+                let prev_len = prev_len as usize;
+                if prev_len > chars.len() {
+                    let start_zero = alloc.start as usize + chars.len();
+                    let end_zero = alloc.start as usize + prev_len;
+                    for slot in &mut self.out_gpu_chars[start_zero..end_zero] {
+                        *slot = Self::zero_char();
+                    }
+                }
 
                 // default small container size; position kept at origin for now
                 let gpu_text = GpuText {
@@ -1755,4 +1769,15 @@ impl MiniFontRuntime {
             self.upload_instances_to_gpu(queue);
         } // end fn poll_once
     }
-} // end impl MiniFontRuntime
+
+
+    fn mark_panel_text_removed(&mut self, panel_id: u32) {
+        if let Some(indices) = self.panel_text_indices.remove(&panel_id) {
+            for idx in indices {
+                if let Some(flag) = self.text_removed.get_mut(idx) {
+                    *flag = true;
+                }
+            }
+        }
+    }
+}
