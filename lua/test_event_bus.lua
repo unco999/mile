@@ -6,6 +6,9 @@ local stream = mile_event.on("lua_event_test", "hook")
 mile_event.emit("lua_event_test", { source = "lua", message = "hello from lua" })
 mile_event.emit("hook", { game_event = "game_init" })
 
+
+mile_event.emit("hook",{ game_event = "game_init"});
+
 local drained = stream:drain()
 print("[lua][test_event_bus] drained events:", #drained)
 for idx, event in ipairs(drained) do

@@ -69,6 +69,8 @@ struct FontGlyphDes {
     glyph_left_side_bearing: i32, // 特定字形的左侧支撑
 };
 
+
+
 struct Instance {
     char_index: u32,
     text_index: u32,
@@ -81,6 +83,7 @@ struct Instance {
     line_break_acc: u32,
     color: vec4<f32>,
     flags: u32,
+    _pad: array<u32, 3>,
 };
 
 @group(0) @binding(4)

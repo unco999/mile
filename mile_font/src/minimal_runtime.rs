@@ -543,7 +543,9 @@ impl MiniFontRuntime {
                     } else {
                         size_px
                     };
-                    let mut line_height_px = if units_per_em > 0.0 {
+                    let mut line_height_px = if t.line_height > 0.0 {
+                        t.line_height
+                    } else if units_per_em > 0.0 {
                         line_units / units_per_em * size_px
                     } else {
                         size_px
@@ -563,6 +565,7 @@ impl MiniFontRuntime {
                         line_break_acc,
                         color,
                         flags: ch.layout_flags,
+                        _pad: [0; 3],
                     });
                     pen_x_px += advance_px;
                 }
@@ -896,6 +899,7 @@ struct GpuInstance {
     line_break_acc: u32,
     color: [f32; 4],
     flags: u32,
+    _pad: [u32; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1720,6 +1724,11 @@ impl MiniFontRuntime {
                     size: 256,
                     color: e.font_style.font_color,
                     position: [0.0, 0.0],
+                    line_height: if e.font_style.font_line_height > 0 {
+                        e.font_style.font_line_height as f32
+                    } else {
+                        0.0
+                    },
                 };
                 // Debug print
                 println!(
