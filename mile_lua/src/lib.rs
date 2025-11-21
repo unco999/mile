@@ -186,13 +186,13 @@ fn keyed_delivery_to_json(
 
     match payload {
         JsonValue::Object(mut map) => {
-            map.entry("__key")
+            map.entry("key")
                 .or_insert_with(|| JsonValue::String(key.to_string()));
             JsonValue::Object(map)
         }
         other => {
             let mut map = serde_json::Map::new();
-            map.insert("__key".into(), JsonValue::String(key.to_string()));
+            map.insert("key".into(), JsonValue::String(key.to_string()));
             map.insert("value".into(), other);
             JsonValue::Object(map)
         }

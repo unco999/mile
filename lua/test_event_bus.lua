@@ -13,10 +13,7 @@ local drained = stream:drain()
 print("[lua][test_event_bus] drained events:", #drained)
 for idx, event in ipairs(drained) do
     -- Each event is converted back into a Lua table; print a summary.
-    local key = event.__key or "unknown"
-    local from = event.source or "unknown"
-    local message = event.message or event.game_event or event.value or "(missing payload)"
-    print(string.format("[lua][test_event_bus] #%d key=%s from=%s message=%s", idx, key, from, message))
+    print("当前的lua侧打印",event.key)
 end
 
 return drained

@@ -195,8 +195,36 @@ fn vs_main(
     let base_line = floor(cursor_x / wrap_width);
     let x_in_line = cursor_x - base_line * wrap_width;
     let overflow = (x_in_line + inst.advance_px) > wrap_width;
-    let line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
-    let wrapped_x = select(x_in_line, 0.0, overflow);
+    var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
+    var wrapped_x = select(x_in_line, 0.0, overflow);
+
+    // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
+    var carry = 0.0;
+    var scan_idx = inst_id;
+    var scans: u32 = 0u;
+    loop {
+        if (scan_idx == 0u || scans >= 64u) {
+            break;
+        }
+        scan_idx -= 1u;
+        scans += 1u;
+        let prev = instances[scan_idx];
+        if (prev.text_index != inst.text_index) {
+            break;
+        }
+        let prev_cursor = prev.origin_cursor.z;
+        let prev_base_line = floor(prev_cursor / wrap_width);
+        let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
+        let prev_overflow = (prev_x_in_line + prev.advance_px) > wrap_width;
+        var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
+        if (prev_line != line) {
+            break;
+        }
+        if (prev_overflow) {
+            carry += wrap_width - prev_x_in_line;
+        }
+    }
+    wrapped_x += carry;
     let local_y = origin.y + line * line_height_px;
     let wrapped_y = local_y;
     let wrapped_x_with_origin = origin.x + wrapped_x;
