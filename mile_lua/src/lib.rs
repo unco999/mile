@@ -40,6 +40,10 @@ fn track_panel_key(key: &PanelKey) {
     if registry.iter().any(|existing| existing == key) {
         return;
     }
+    println!(
+        "[lua_panel] register {} (id={}) scope={}",
+        key.panel_uuid, key.panel_id, key.scope
+    );
     registry.push(key.clone());
 }
 
@@ -397,7 +401,7 @@ struct StateSpec {
 struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
-    data_handlers: Vec<LuaDataHandler>,
+    data_handlers: HashMap<u32, Arc<RegistryKey>>,
     container_links: Vec<String>,
     container_aliases: Vec<(String, String)>,
 }
@@ -407,17 +411,11 @@ impl Default for StateEntry {
         Self {
             spec: StateSpec::default(),
             handlers: HashMap::new(),
-            data_handlers: Vec::new(),
+            data_handlers: HashMap::new(),
             container_links: Vec::new(),
             container_aliases: Vec::new(),
         }
     }
-}
-
-#[derive(Clone)]
-struct LuaDataHandler {
-    source_db: u32,
-    callback: Arc<RegistryKey>,
 }
 
 #[derive(Clone)]
@@ -542,10 +540,9 @@ impl LuaMuiBuilder {
                     });
                 }
 
-                for handler in entry.data_handlers.iter() {
+                for (&source_db, key) in entry.data_handlers.iter() {
                     let lua = lua.clone();
-                    let key = handler.callback.clone();
-                    let source_db = handler.source_db;
+                    let key = key.clone();
                     events =
                         events.on_data_change::<LuaPayload, _>(None, move |src_payload, flow| {
                             if payload_db_index(src_payload) != Some(source_db) {
@@ -610,6 +607,7 @@ fn dispatch_lua_event(
     let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
+        return Ok(())
     }
     apply_flow_directives(lua_ref, &tbl, flow)?;
     Ok(())
@@ -912,6 +910,7 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
     let path = font_path
         .map(|p| p.into())
         .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
+    flow.clear_texts();
     flow.text(&text, path, font_size, final_color, weight, line_height);
     Ok(())
 }
@@ -1016,7 +1015,7 @@ impl UserData for LuaMuiBuilder {
         );
 
         // 事件回调：目前只支持 click（可按需扩展）
-        methods.add_method_mut("on_event", |lua, this, (name, func): (String, Function)| {
+        methods.add_method_mut("on_event", |lua: &Lua, this, (name, func): (String, Function)| {
             let kind = match name.to_lowercase().as_str() {
                 "click" => UiEventKind::Click,
                 other => {
@@ -1056,10 +1055,9 @@ impl UserData for LuaMuiBuilder {
                     }
                 };
                 let key = Arc::new(lua.create_registry_value(func)?);
-                this.current_entry_mut().data_handlers.push(LuaDataHandler {
-                    source_db,
-                    callback: key,
-                });
+                this.current_entry_mut()
+                    .data_handlers
+                    .insert(source_db, key);
                 lua.create_userdata(this.clone())
             },
         );

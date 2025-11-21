@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -173,6 +173,49 @@ impl MiniFontRuntime {
         }
         self.free_list.push(FreeRange { start, len });
         Self::coalesce_free_list(&mut self.free_list);
+    }
+
+    /// Flag all tracked text slices for this panel as removed so stale strings disappear.
+    fn retire_panel_text_indices(&mut self, panel_id: u32) -> bool {
+        if let Some(indices) = self.panel_text_indices.remove(&panel_id) {
+            let mut touched = false;
+            for idx in indices {
+                if let Some(flag) = self.text_removed.get_mut(idx) {
+                    if !*flag {
+                        *flag = true;
+                        touched = true;
+                    }
+                }
+            }
+            touched
+        } else {
+            false
+        }
+    }
+
+    /// Compact `out_gpu_texts` / `text_removed` by dropping flagged entries and rebuilding indices.
+    fn compact_gpu_texts(&mut self) {
+        if self.out_gpu_texts.is_empty() {
+            return;
+        }
+        let mut kept_texts = Vec::with_capacity(self.out_gpu_texts.len());
+        let mut kept_flags = Vec::with_capacity(self.text_removed.len());
+        let mut rebuilt_indices: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (idx, text) in self.out_gpu_texts.iter().enumerate() {
+            if self.text_removed.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let new_idx = kept_texts.len();
+            kept_texts.push(text.clone());
+            kept_flags.push(false);
+            rebuilt_indices
+                .entry(text.panel)
+                .or_default()
+                .push(new_idx);
+        }
+        self.out_gpu_texts = kept_texts;
+        self.text_removed = kept_flags;
+        self.panel_text_indices = rebuilt_indices;
     }
 
     fn reserve_for_text(&mut self, key: (u32, Arc<str>), needed: u32) -> (TextAlloc, u32) {
@@ -479,7 +522,7 @@ impl MiniFontRuntime {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                format: wgpu::TextureFormat::Depth32Float, // ? 必须与 render pass 的 depth_view 格式一致
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -938,7 +981,7 @@ pub struct MiniFontRuntime {
     // logical output buffers; in a full integration these would be uploaded to GPU buffers
     pub out_gpu_chars: Vec<GpuChar>,
     pub out_gpu_texts: Vec<GpuText>,
-    // track which texts belong to which panel to support O(k) removals
+    // track active text indices per panel (multiple layouts per panel supported)
     panel_text_indices: HashMap<u32, Vec<usize>>,
     // logical deletion flags for out_gpu_texts (keeps indices stable)
     text_removed: Vec<bool>,
@@ -1522,6 +1565,7 @@ impl MiniFontRuntime {
                 did_remove |= self.remove_panel_texts(e.parent.0);
             }
             if did_remove {
+                self.compact_gpu_texts();
                 // 3) 实例缓冲重建
                 self.upload_instances_to_gpu(queue);
             }
@@ -1627,7 +1671,8 @@ impl MiniFontRuntime {
                     continue;
                 };
                 let panel_id = e.parent.0;
-                // 清除旧文本，保证动态绑定场景下不会叠加陈旧实例
+                // Ensure stale slices are removed even if RemoveRenderFont hasn't been handled yet
+                self.retire_panel_text_indices(panel_id);
 
                 // gather glyph indices + newline markers first
                 let mut glyph_entries: Vec<(u32, u32)> = Vec::new();
@@ -1743,10 +1788,9 @@ impl MiniFontRuntime {
                 let new_index = self.out_gpu_texts.len();
                 self.out_gpu_texts.push(gpu_text);
                 self.text_removed.push(false);
-                self.panel_text_indices
-                    .entry(e.parent.0)
-                    .or_default()
-                    .push(new_index);
+                let entry = self.panel_text_indices.entry(e.parent.0).or_default();
+                entry.clear();
+                entry.push(new_index);
             }
             // After texts/chars updated, upload instance data for rendering
             self.upload_instances_to_gpu(queue);
@@ -1755,15 +1799,8 @@ impl MiniFontRuntime {
 
     /// 清理指定 panel 的文本实例与动态分配，返回是否有修改
     fn remove_panel_texts(&mut self, panel_id: u32) -> bool {
-        let mut touched = false;
-        if let Some(indices) = self.panel_text_indices.remove(&panel_id) {
-            for idx in indices {
-                if let Some(flag) = self.text_removed.get_mut(idx) {
-                    *flag = true;
-                    touched = true;
-                }
-            }
-        } else {
+        let mut touched = self.retire_panel_text_indices(panel_id);
+        if !touched {
             for (idx, text) in self.out_gpu_texts.iter().enumerate() {
                 if text.panel == panel_id {
                     if let Some(flag) = self.text_removed.get_mut(idx) {
@@ -1790,3 +1827,5 @@ impl MiniFontRuntime {
         touched
     }
 }
+
+
