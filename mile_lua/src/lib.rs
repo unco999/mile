@@ -599,6 +599,9 @@ fn dispatch_lua_event(
     let state_id = flow.state().0;
     let event_name = format!("{:#?}", flow.args().event);
     let payload = flow.payload_ref().clone();
+    let drag_source_panel = flow
+        .drag_source_panel()
+        .map(|panel| panel.panel_uuid.clone());
 
     let func: Function = lua.registry_value(key)?;
     let tbl = lua.create_table()?;
@@ -607,6 +610,9 @@ fn dispatch_lua_event(
     tbl.set("event", event_name)?;
     tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
     attach_flow_table_shortcuts(lua, &tbl)?;
+    if let Some(source_panel) = drag_source_panel {
+        tbl.set("drag_source_panel", source_panel)?;
+    }
     if let Some(drag_payload) = flow.drag_payload::<LuaPayload>() {
         tbl.set(
             "drag_payload",
@@ -698,6 +704,11 @@ fn apply_flow_directives(
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
+    if let Ok(Some(drag_state)) = table.get::<Option<u32>>("drag_source_state") {
+        if flow.set_drag_source_state(UiState(drag_state)) {
+            flow.mark_changed();
+        }
+    }
     Ok(())
 }
 
@@ -708,6 +719,13 @@ fn attach_flow_table_shortcuts(lua: &Lua, table: &Table) -> LuaResult<()> {
         Ok(())
     })?;
     table.set("set_state", set_state_fn)?;
+
+    let table_ref = table.clone();
+    let set_drag_state_fn = lua.create_function(move |_, next_state: u32| {
+        table_ref.set("drag_source_state", next_state)?;
+        Ok(())
+    })?;
+    table.set("set_drag_source_state", set_drag_state_fn)?;
     Ok(())
 }
 
