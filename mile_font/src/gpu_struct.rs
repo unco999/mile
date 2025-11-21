@@ -134,12 +134,15 @@ pub struct GpuChar {
     /// Bitmask of `GPU_CHAR_LAYOUT_FLAG_*`.
     pub layout_flags: u32,
 }
+#[derive(Clone, Debug)]
 pub struct GpuText {
     pub sdf_char_index_start_offset: u32, //gpu sdf_index offset 描述了怎么在统一buffer里面取gpu char
     pub sdf_char_index_end_offset: u32,   //这个实际上是 GpuChar这个gpu结构体的索引
     pub font_size: f32,
     pub size: u32,
     pub color: [f32; 4],
+    /// Owning panel id to allow removal even if bookkeeping maps are missing
+    pub panel: u32,
     // text origin (pixels or logical units depending on pipeline)
     pub position: [f32; 2],
     /// Optional line height in pixels (0 = derive from glyph metrics)

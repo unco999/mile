@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -175,14 +175,58 @@ impl MiniFontRuntime {
         Self::coalesce_free_list(&mut self.free_list);
     }
 
-    fn reserve_for_text(&mut self, key: (u32, Arc<str>), needed: u32) -> TextAlloc {
+    /// Flag all tracked text slices for this panel as removed so stale strings disappear.
+    fn retire_panel_text_indices(&mut self, panel_id: u32) -> bool {
+        if let Some(indices) = self.panel_text_indices.remove(&panel_id) {
+            let mut touched = false;
+            for idx in indices {
+                if let Some(flag) = self.text_removed.get_mut(idx) {
+                    if !*flag {
+                        *flag = true;
+                        touched = true;
+                    }
+                }
+            }
+            touched
+        } else {
+            false
+        }
+    }
+
+    /// Compact `out_gpu_texts` / `text_removed` by dropping flagged entries and rebuilding indices.
+    fn compact_gpu_texts(&mut self) {
+        if self.out_gpu_texts.is_empty() {
+            return;
+        }
+        let mut kept_texts = Vec::with_capacity(self.out_gpu_texts.len());
+        let mut kept_flags = Vec::with_capacity(self.text_removed.len());
+        let mut rebuilt_indices: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (idx, text) in self.out_gpu_texts.iter().enumerate() {
+            if self.text_removed.get(idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let new_idx = kept_texts.len();
+            kept_texts.push(text.clone());
+            kept_flags.push(false);
+            rebuilt_indices
+                .entry(text.panel)
+                .or_default()
+                .push(new_idx);
+        }
+        self.out_gpu_texts = kept_texts;
+        self.text_removed = kept_flags;
+        self.panel_text_indices = rebuilt_indices;
+    }
+
+    fn reserve_for_text(&mut self, key: (u32, Arc<str>), needed: u32) -> (TextAlloc, u32) {
         // needed can be 0; treat as 1 for allocation accounting but set len later
         let want = Self::round_pow2(needed.max(1));
         if let Some(mut a) = self.text_allocs.get(&key).copied() {
+            let prev_len = a.len;
             if want <= a.cap {
                 a.len = needed;
                 self.text_allocs.insert(key, a);
-                return a;
+                return (a, prev_len);
             }
             // grow: alloc new, free old
             let new_start = self.alloc_range(want);
@@ -193,7 +237,7 @@ impl MiniFontRuntime {
                 cap: want,
             };
             self.text_allocs.insert(key, a);
-            return a;
+            return (a, prev_len);
         }
         let start = self.alloc_range(want);
         let a = TextAlloc {
@@ -202,7 +246,7 @@ impl MiniFontRuntime {
             cap: want,
         };
         self.text_allocs.insert(key, a);
-        a
+        (a, 0)
     }
 
     fn write_chars_into_slots(&mut self, start: u32, chars: &[GpuChar]) {
@@ -478,7 +522,7 @@ impl MiniFontRuntime {
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float, // ✅ 必须与 render pass 的 depth_view 格式一致
+                format: wgpu::TextureFormat::Depth32Float, // ? 必须与 render pass 的 depth_view 格式一致
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
@@ -512,6 +556,7 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
+            println!("当前需要渲染的gpu text {:?}",t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let mut pen_x_px: f32 = 0.0;
@@ -553,6 +598,7 @@ impl MiniFontRuntime {
                     if !line_height_px.is_finite() || line_height_px <= 0.0 {
                         line_height_px = size_px;
                     }
+
                     out.push(GpuInstance {
                         char_index: ch.char_index,
                         text_index: ch.gpu_text_index,
@@ -935,7 +981,7 @@ pub struct MiniFontRuntime {
     // logical output buffers; in a full integration these would be uploaded to GPU buffers
     pub out_gpu_chars: Vec<GpuChar>,
     pub out_gpu_texts: Vec<GpuText>,
-    // track which texts belong to which panel to support O(k) removals
+    // track active text indices per panel (multiple layouts per panel supported)
     panel_text_indices: HashMap<u32, Vec<usize>>,
     // logical deletion flags for out_gpu_texts (keeps indices stable)
     text_removed: Vec<bool>,
@@ -1514,31 +1560,15 @@ impl MiniFontRuntime {
 
         // 0) Handle RemoveRenderFont first: clear per-panel texts/allocations (keep SDF/desc)
         if !batch_remove.is_empty() {
+            let mut did_remove = false;
             for e in &batch_remove {
-                let pid = e.parent.0;
-                // 1) Mark texts owned by this panel as removed (O(k)), indices保持稳定
-                if let Some(list) = self.panel_text_indices.remove(&pid) {
-                    for idx in list {
-                        if idx < self.text_removed.len() {
-                            self.text_removed[idx] = true;
-                        }
-                    }
-                }
-                // 2) 释放该 panel 的动态分配（不影响 SDF 纹理）
-                let keys_to_remove: Vec<(u32, Arc<str>)> = self
-                    .text_allocs
-                    .keys()
-                    .filter(|(panel_id, _)| *panel_id == pid)
-                    .cloned()
-                    .collect();
-                for key in keys_to_remove {
-                    if let Some(alloc) = self.text_allocs.remove(&key) {
-                        self.free_range(alloc.start, alloc.cap);
-                    }
-                }
+                did_remove |= self.remove_panel_texts(e.parent.0);
             }
-            // 3) 实例缓冲重建
-            self.upload_instances_to_gpu(queue);
+            if did_remove {
+                self.compact_gpu_texts();
+                // 3) 实例缓冲重建
+                self.upload_instances_to_gpu(queue);
+            }
         }
 
         // 1) Handle BatchFontEntry
@@ -1637,9 +1667,12 @@ impl MiniFontRuntime {
             }
 
             for e in &batch_render {
-                let Some(char_map) = self.glyph_index.get(&e.font_file_path) else {
+                let Some(char_map) = self.glyph_index.get(&e.font_file_path).cloned() else {
                     continue;
                 };
+                let panel_id = e.parent.0;
+                // Ensure stale slices are removed even if RemoveRenderFont hasn't been handled yet
+                self.retire_panel_text_indices(panel_id);
 
                 // gather glyph indices + newline markers first
                 let mut glyph_entries: Vec<(u32, u32)> = Vec::new();
@@ -1676,7 +1709,7 @@ impl MiniFontRuntime {
 
                 // key by (panel_id, font_path) so the same panel updates in place when possible
                 let key = (e.parent.0, e.font_file_path.clone());
-                let alloc = self.reserve_for_text(key, needed);
+                let (alloc, prev_len) = self.reserve_for_text(key, needed);
 
                 // build chars for the reserved slot range
                 let this_text_index = self.out_gpu_texts.len() as u32;
@@ -1715,6 +1748,14 @@ impl MiniFontRuntime {
                     });
                 }
                 self.write_chars_into_slots(alloc.start, &chars);
+                let prev_len = prev_len as usize;
+                if prev_len > chars.len() {
+                    let start_zero = alloc.start as usize + chars.len();
+                    let end_zero = alloc.start as usize + prev_len;
+                    for slot in &mut self.out_gpu_chars[start_zero..end_zero] {
+                        *slot = Self::zero_char();
+                    }
+                }
 
                 // default small container size; position kept at origin for now
                 let gpu_text = GpuText {
@@ -1723,6 +1764,7 @@ impl MiniFontRuntime {
                     font_size: e.font_style.font_size as f32,
                     size: 256,
                     color: e.font_style.font_color,
+                    panel: panel_id,
                     position: [0.0, 0.0],
                     line_height: if e.font_style.font_line_height > 0 {
                         e.font_style.font_line_height as f32
@@ -1746,13 +1788,44 @@ impl MiniFontRuntime {
                 let new_index = self.out_gpu_texts.len();
                 self.out_gpu_texts.push(gpu_text);
                 self.text_removed.push(false);
-                self.panel_text_indices
-                    .entry(e.parent.0)
-                    .or_default()
-                    .push(new_index);
+                let entry = self.panel_text_indices.entry(e.parent.0).or_default();
+                entry.clear();
+                entry.push(new_index);
             }
             // After texts/chars updated, upload instance data for rendering
             self.upload_instances_to_gpu(queue);
         } // end fn poll_once
     }
-} // end impl MiniFontRuntime
+
+    /// 清理指定 panel 的文本实例与动态分配，返回是否有修改
+    fn remove_panel_texts(&mut self, panel_id: u32) -> bool {
+        let mut touched = self.retire_panel_text_indices(panel_id);
+        if !touched {
+            for (idx, text) in self.out_gpu_texts.iter().enumerate() {
+                if text.panel == panel_id {
+                    if let Some(flag) = self.text_removed.get_mut(idx) {
+                        if !*flag {
+                            *flag = true;
+                            touched = true;
+                        }
+                    }
+                }
+            }
+        }
+        let keys_to_remove: Vec<(u32, Arc<str>)> = self
+            .text_allocs
+            .keys()
+            .filter(|(pid, _)| *pid == panel_id)
+            .cloned()
+            .collect();
+        for key in keys_to_remove {
+            if let Some(alloc) = self.text_allocs.remove(&key) {
+                self.free_range(alloc.start, alloc.cap);
+                touched = true;
+            }
+        }
+        touched
+    }
+}
+
+

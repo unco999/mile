@@ -1,7 +1,9 @@
 mod db;
 pub mod watch;
 
-use crate::db::{LuaTableDb, register_db_globals};
+use crate::db::{
+    LuaTableDb, db_payload_with_revision, load_json, register_db_globals, store_json, update_json,
+};
 use flume::TryRecvError;
 use glam::{vec2, vec3, vec4};
 use mile_api::prelude::{
@@ -38,6 +40,10 @@ fn track_panel_key(key: &PanelKey) {
     if registry.iter().any(|existing| existing == key) {
         return;
     }
+    println!(
+        "[lua_panel] register {} (id={}) scope={}",
+        key.panel_uuid, key.panel_id, key.scope
+    );
     registry.push(key.clone());
 }
 
@@ -152,12 +158,18 @@ fn inject_data_ty(mut json: JsonValue, ty: &str) -> JsonValue {
 
 fn lua_value_to_json(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
     match value {
+        Value::Table(tbl) => {
+            if let Ok(Some(idx)) = tbl.get::<Option<u32>>("db_index") {
+                return Ok(db_payload_with_revision(idx));
+            }
+            lua.from_value(Value::Table(tbl))
+        }
         Value::UserData(ud) => {
             if let Ok(ls) = ud.borrow::<LuaStruct>() {
                 let ty = ls.type_name.clone();
                 Ok(inject_data_ty(ls.json.clone(), &ty))
             } else if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
-                Ok(json!({ "db_index": db_ref.index }))
+                Ok(db_payload_with_revision(db_ref.index))
             } else {
                 lua.from_value(Value::UserData(ud))
             }
@@ -166,11 +178,36 @@ fn lua_value_to_json(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
     }
 }
 
+fn ensure_db_payload(lua: &Lua, value: Value) -> LuaResult<JsonValue> {
+    let json = lua_value_to_json(lua, value)?;
+    let has_index = json
+        .as_object()
+        .and_then(|map| map.get("db_index"))
+        .and_then(|idx| idx.as_u64())
+        .is_some();
+    if has_index {
+        Ok(json)
+    } else {
+        let idx = store_json(json);
+        Ok(db_payload_with_revision(idx))
+    }
+}
+
 fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
     if let JsonValue::Object(map) = &json {
         if let Some(idx) = map.get("db_index").and_then(|v| v.as_u64()) {
-            let ud = lua.create_userdata(LuaTableDb { index: idx as u32 })?;
-            return Ok(Value::UserData(ud));
+            let idx_u32 = idx as u32;
+            if let Some(stored) = load_json(idx_u32) {
+                let value = lua.to_value(&stored)?;
+                if let Value::Table(table) = value {
+                    table.set("db_index", idx_u32)?;
+                    return Ok(Value::Table(table));
+                }
+                return Ok(value);
+            }
+            let tbl = lua.create_table()?;
+            tbl.set("db_index", idx_u32)?;
+            return Ok(Value::Table(tbl));
         }
     }
     lua.to_value(&json)
@@ -364,7 +401,7 @@ struct StateSpec {
 struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
-    data_handlers: Vec<LuaDataHandler>,
+    data_handlers: HashMap<u32, Arc<RegistryKey>>,
     container_links: Vec<String>,
     container_aliases: Vec<(String, String)>,
 }
@@ -374,18 +411,11 @@ impl Default for StateEntry {
         Self {
             spec: StateSpec::default(),
             handlers: HashMap::new(),
-            data_handlers: Vec::new(),
+            data_handlers: HashMap::new(),
             container_links: Vec::new(),
             container_aliases: Vec::new(),
         }
     }
-}
-
-#[derive(Clone)]
-struct LuaDataHandler {
-    ty: Option<String>,
-    source: Option<String>,
-    callback: Arc<RegistryKey>,
 }
 
 #[derive(Clone)]
@@ -510,24 +540,19 @@ impl LuaMuiBuilder {
                     });
                 }
 
-                for handler in entry.data_handlers.iter() {
+                for (&source_db, key) in entry.data_handlers.iter() {
                     let lua = lua.clone();
-                    let key = handler.callback.clone();
-                    let source_owned = handler.source.clone();
-                    let source_for_reg = source_owned.clone();
-                    let ty_filter = handler.ty.clone();
-                    let ty_filter_closure = ty_filter.clone();
-                    events = events.on_data_change::<LuaPayload, _>(
-                        source_for_reg.as_deref(),
-                        move |src_payload, flow| {
-                            if !payload_matches_ty(src_payload, ty_filter_closure.as_deref()) {
+                    let key = key.clone();
+                    events =
+                        events.on_data_change::<LuaPayload, _>(None, move |src_payload, flow| {
+                            if payload_db_index(src_payload) != Some(source_db) {
                                 return;
                             }
                             let call_result = with_lua(&lua, |lua_ctx| {
                                 dispatch_lua_on_data(
                                     lua_ctx,
                                     &key,
-                                    source_owned.clone(),
+                                    Some(source_db),
                                     src_payload.clone(),
                                     flow,
                                 )
@@ -535,8 +560,7 @@ impl LuaMuiBuilder {
                             if let Err(err) = call_result {
                                 eprintln!("lua on_target_data error: {err}");
                             }
-                        },
-                    );
+                        });
                 }
 
                 events.finish()
@@ -577,12 +601,13 @@ fn dispatch_lua_event(
     tbl.set("panel_id", panel_id)?;
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
-    tbl.set("payload", json_to_lua_value(lua, payload.0.clone())?)?;
+    tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
     let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
+        return Ok(())
     }
     apply_flow_directives(lua_ref, &tbl, flow)?;
     Ok(())
@@ -591,7 +616,7 @@ fn dispatch_lua_event(
 fn dispatch_lua_on_data(
     lua: &Lua,
     key: &RegistryKey,
-    source_uuid: Option<String>,
+    source_db_index: Option<u32>,
     source_payload: LuaPayload,
     flow: &mut EventFlow<'_, LuaPayload>,
 ) -> LuaResult<()> {
@@ -602,14 +627,14 @@ fn dispatch_lua_on_data(
     tbl.set("event", "on_target_data")?;
     tbl.set(
         "payload",
-        json_to_lua_value(lua, flow.payload_ref().0.clone())?,
+        materialize_payload_value(lua, flow.payload_ref())?,
     )?;
-    if let Some(src) = source_uuid.as_ref() {
-        tbl.set("source_uuid", src.clone())?;
+    if let Some(idx) = source_db_index {
+        tbl.set("source_db_index", idx)?;
     }
     tbl.set(
         "source_payload",
-        json_to_lua_value(lua, source_payload.0.clone())?,
+        materialize_payload_value(lua, &source_payload)?,
     )?;
 
     let ret: Option<Value> = func.call(tbl.clone())?;
@@ -621,40 +646,80 @@ fn dispatch_lua_on_data(
     Ok(())
 }
 
-fn payload_matches_ty(payload: &LuaPayload, ty: Option<&str>) -> bool {
-    let Some(expected) = ty else {
-        return true;
-    };
-    if expected.is_empty() {
-        return true;
-    }
-    match &payload.0 {
-        JsonValue::Object(map) => map
-            .get("data_ty")
-            .and_then(|value| value.as_str())
-            .map_or(false, |value| value == expected),
-        _ => false,
-    }
-}
-
 fn apply_flow_directives(
     lua: &Lua,
     table: &Table,
     flow: &mut EventFlow<'_, LuaPayload>,
 ) -> LuaResult<()> {
     if let Ok(value) = table.get::<Value>("payload") {
-        let new_payload = lua_value_to_json(lua, value)?;
-        *flow.payload() = LuaPayload(new_payload);
+        match value {
+            Value::Table(tbl) => {
+                if let Some((idx, mutated)) = commit_db_table(lua, &tbl)? {
+                    *flow.payload() = LuaPayload(db_payload_with_revision(idx));
+                    if mutated {
+                        flow.mark_changed();
+                    }
+                } else {
+                    let new_payload = lua_value_to_json(lua, Value::Table(tbl.clone()))?;
+                    *flow.payload() = LuaPayload(new_payload);
+                }
+            }
+            other => {
+                let new_payload = lua_value_to_json(lua, other)?;
+                *flow.payload() = LuaPayload(new_payload);
+            }
+        }
     }
     if let Ok(value) = table.get::<Value>("text") {
         if !matches!(value, Value::Nil) {
+            flow.clear_texts();
             apply_text_from_lua(flow, &value)?;
+            flow.mark_changed();
         }
     }
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
     Ok(())
+}
+
+fn commit_db_table(lua: &Lua, table: &Table) -> LuaResult<Option<(u32, bool)>> {
+    let Some(idx) = table.get::<Option<u32>>("db_index")? else {
+        return Ok(None);
+    };
+    let Some(JsonValue::Object(mut stored)) = load_json(idx) else {
+        return Ok(Some((idx, false)));
+    };
+    let mut mutated = false;
+    for pair in table.clone().pairs::<Value, Value>() {
+        let (key, value) = pair?;
+        let key_str = match key {
+            Value::String(s) => s.to_string_lossy().to_string(),
+            Value::Integer(i) => i.to_string(),
+            _ => continue,
+        };
+        if key_str == "db_index" {
+            continue;
+        }
+        if !stored.contains_key(&key_str) {
+            continue;
+        }
+        if matches!(value, Value::Nil) {
+            if stored.remove(&key_str).is_some() {
+                mutated = true;
+            }
+        } else {
+            let json_value = lua_value_to_json(lua, value)?;
+            if stored.get(&key_str) != Some(&json_value) {
+                stored.insert(key_str, json_value);
+                mutated = true;
+            }
+        }
+    }
+    if mutated {
+        update_json(idx, JsonValue::Object(stored));
+    }
+    Ok(Some((idx, mutated)))
 }
 
 fn format_lua_value(
@@ -708,6 +773,109 @@ fn format_lua_value(
     }
 }
 
+fn payload_db_index(payload: &LuaPayload) -> Option<u32> {
+    if let JsonValue::Object(map) = &payload.0 {
+        map.get("db_index")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+    } else {
+        None
+    }
+}
+
+fn materialize_payload_value(lua: &Lua, payload: &LuaPayload) -> LuaResult<Value> {
+    if let Some(idx) = payload_db_index(payload) {
+        if let Some(stored) = load_json(idx) {
+            if let JsonValue::Object(map) = stored.clone() {
+                let value = lua.to_value(&JsonValue::Object(map.clone()))?;
+                if let Value::Table(table) = value {
+                    if table.get::<Option<u32>>("db_index")?.is_none() {
+                        table.set("db_index", idx)?;
+                    }
+                    attach_db_proxy_metatable(lua, &table, idx, map)?;
+                    return Ok(Value::Table(table));
+                }
+            }
+            return Ok(lua.to_value(&stored)?);
+        }
+    }
+    json_to_lua_value(lua, payload.0.clone())
+}
+
+fn attach_db_proxy_metatable(
+    lua: &Lua,
+    table: &Table,
+    idx: u32,
+    keys_map: serde_json::Map<String, JsonValue>,
+) -> LuaResult<()> {
+    use std::collections::HashSet;
+    let allowed: HashSet<String> = keys_map.keys().cloned().collect();
+    if allowed.is_empty() {
+        return Ok(());
+    }
+    let allowed_arc = Arc::new(allowed);
+    let setter = {
+        let allowed = allowed_arc.clone();
+        lua.create_function(move |lua_ctx, (tbl, key, value): (Table, Value, Value)| {
+            let key_clone = key.clone();
+            let value_clone = value.clone();
+            tbl.raw_set(key_clone, value)?;
+            let key_str = match key {
+                Value::String(s) => s.to_string_lossy().to_string(),
+                Value::Integer(i) => i.to_string(),
+                _ => return Ok(()),
+            };
+            if !allowed.contains(&key_str) {
+                return Ok(());
+            }
+            let mut current = match load_json(idx) {
+                Some(JsonValue::Object(obj)) => obj,
+                _ => serde_json::Map::new(),
+            };
+            if matches!(value_clone, Value::Nil) {
+                current.remove(&key_str);
+            } else {
+                let json_value = lua_value_to_json(lua_ctx, value_clone)?;
+                current.insert(key_str, json_value);
+            }
+            update_json(idx, JsonValue::Object(current));
+            Ok(())
+        })?
+    };
+    let mt = match table.metatable() {
+        Some(mt) => mt,
+        None => lua.create_table()?,
+    };
+    mt.set("__newindex", setter)?;
+    table.set_metatable(Some(mt));
+    Ok(())
+}
+
+fn extract_db_index_from_value(lua: &Lua, value: Value) -> LuaResult<Option<u32>> {
+    match value {
+        Value::Nil => Ok(None),
+        Value::UserData(ud) => {
+            if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                Ok(Some(db_ref.index))
+            } else {
+                Err(mlua::Error::external(
+                    "expected db userdata for on_target_data",
+                ))
+            }
+        }
+        Value::Table(tbl) => {
+            let idx: Option<u32> = tbl.get("db_index").ok().flatten();
+            Ok(idx)
+        }
+        Value::Integer(i) => Ok(Some(i as u32)),
+        Value::Number(n) => Ok(Some(n as u32)),
+        other => Err(mlua::Error::external(format!(
+            "expected db userdata or table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
 fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> LuaResult<()> {
     let table = match value {
         Value::Table(t) => t.clone(),
@@ -741,7 +909,8 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
 
     let path = font_path
         .map(|p| p.into())
-        .unwrap_or_else(|| "tf/Alibaba-PuHuiTi-Regular.ttf".into());
+        .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
+    flow.clear_texts();
     flow.text(&text, path, font_size, final_color, weight, line_height);
     Ok(())
 }
@@ -846,7 +1015,7 @@ impl UserData for LuaMuiBuilder {
         );
 
         // 事件回调：目前只支持 click（可按需扩展）
-        methods.add_method_mut("on_event", |lua, this, (name, func): (String, Function)| {
+        methods.add_method_mut("on_event", |lua: &Lua, this, (name, func): (String, Function)| {
             let kind = match name.to_lowercase().as_str() {
                 "click" => UiEventKind::Click,
                 other => {
@@ -876,13 +1045,19 @@ impl UserData for LuaMuiBuilder {
 
         methods.add_method_mut(
             "on_target_data",
-            |lua, this, (ty, source, func): (Option<String>, Option<String>, Function)| {
+            |lua, this, (source, func): (Value, Function)| {
+                let source_db = match extract_db_index_from_value(lua, source)? {
+                    Some(idx) => idx,
+                    None => {
+                        return Err(mlua::Error::external(
+                            "on_target_data expects db userdata or table with db_index",
+                        ));
+                    }
+                };
                 let key = Arc::new(lua.create_registry_value(func)?);
-                this.current_entry_mut().data_handlers.push(LuaDataHandler {
-                    ty,
-                    source,
-                    callback: key,
-                });
+                this.current_entry_mut()
+                    .data_handlers
+                    .insert(source_db, key);
                 lua.create_userdata(this.clone())
             },
         );
@@ -920,25 +1095,35 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
 
     let new_fn = {
         let lua_shared_handle = lua_shared.clone();
-        lua.create_function(move |lua, table: Value| {
-            let tbl = match table {
-                Value::Table(t) => t,
+        lua.create_function(move |lua, value: Value| {
+            let (id, payload_json) = match value {
+                Value::Table(tbl) => {
+                    let id: String = tbl
+                        .get("id")
+                        .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
+                    let data_value: Option<Value> = tbl.get("data").ok();
+                    let payload = match data_value {
+                        Some(v) => ensure_db_payload(lua, v)?,
+                        None => JsonValue::Null,
+                    };
+                    (id, payload)
+                }
+                Value::UserData(ud) => {
+                    if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
+                        let id = format!("lua_db_panel_{}", db_ref.index);
+                        (id, db_payload_with_revision(db_ref.index))
+                    } else {
+                        return Err(mlua::Error::external(
+                            "Mui.new expects table or db userdata",
+                        ));
+                    }
+                }
                 other => {
                     return Err(mlua::Error::external(format!(
-                        "Mui.new expects table, got {}",
+                        "Mui.new expects table or db userdata, got {}",
                         other.type_name()
                     )));
                 }
-            };
-
-            let id: String = tbl
-                .get("id")
-                .map_err(|_| mlua::Error::external("Mui.new requires field 'id'"))?;
-
-            let data_value: Option<Value> = tbl.get("data").ok();
-            let payload_json: JsonValue = match data_value {
-                Some(v) => lua_value_to_json(lua, v)?,
-                None => JsonValue::Null,
             };
 
             let builder =

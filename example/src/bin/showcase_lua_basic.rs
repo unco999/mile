@@ -57,8 +57,6 @@ fn main() {
     bootstrap_lua_assets().expect("sync lua assets into deploy dir");
     spawn_lua_deploy_logger();
 
-    run_lua_entry().expect("initial lua launch");
-
     let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, move || {
         println!("[lua_watch] change detected -> reloading scripts");
         if let Err(err) = run_lua_entry() {

@@ -577,6 +577,8 @@ pub struct PanelRecord<TPayload: PanelPayload> {
     pub snapshot: PanelSnapshot,
     #[serde(default)]
     pub pending_animations: Vec<AnimationSpec>,
+    #[serde(default)]
+    pub change_epoch: u64,
     pub data: TPayload,
 }
 
@@ -588,6 +590,7 @@ impl<TPayload: PanelPayload> Default for PanelRecord<TPayload> {
             current_state: UiState(0),
             snapshot: PanelSnapshot::default(),
             pending_animations: Vec::new(),
+            change_epoch: 0,
             data: TPayload::default(),
         }
     }
@@ -1351,6 +1354,12 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         self.override_state = Some(state);
         let transition = build_state_transition_event(self.record, self.args, state);
         enqueue_state_transition(transition);
+    }
+
+    /// Force this flow to be treated as changed even if payload comparisons are equal.
+    /// Useful when external DB mutations need to trigger data change observers.
+    pub fn mark_changed(&mut self) {
+        self.record.change_epoch = self.record.change_epoch.wrapping_add(1);
     }
 
     pub fn request_fragment_shader<F>(&self, shader: F)
