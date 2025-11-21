@@ -627,7 +627,10 @@ fn dispatch_lua_on_data(
     tbl.set("panel_id", flow.args().panel_key.panel_uuid.clone())?;
     tbl.set("state", flow.state().0)?;
     tbl.set("event", "on_target_data")?;
-    tbl.set("payload", materialize_payload_value(lua, flow.payload_ref())?)?;
+    tbl.set(
+        "payload",
+        materialize_payload_value(lua, flow.payload_ref())?,
+    )?;
     if let Some(idx) = source_db_index {
         tbl.set("source_db_index", idx)?;
     }
