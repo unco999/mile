@@ -83,7 +83,10 @@ struct Instance {
     line_break_acc: u32,
     color: vec4<f32>,
     flags: u32,
-    _pad: array<u32, 3>,
+    align: u32,
+    panel_size: vec2<f32>,
+    first_line_indent_px: f32,
+    _pad: array<u32, 2>,
 };
 
 @group(0) @binding(4)
@@ -151,6 +154,22 @@ struct GpuUiDebugReadCallBack {
 @group(0) @binding(7)
 var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 
+struct LineInfo {
+    line: f32,
+    wrapped_x: f32,
+    overflow: bool,
+};
+
+fn resolve_line_info(inst: Instance, wrap_width: f32) -> LineInfo {
+    let cursor_x = inst.origin_cursor.z;
+    let base_line = floor(cursor_x / wrap_width);
+    let x_in_line = cursor_x - base_line * wrap_width;
+    let overflow = (x_in_line + inst.advance_px) > wrap_width;
+    let line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
+    let wrapped_x = select(x_in_line, 0.0, overflow);
+    return LineInfo(line, wrapped_x, overflow);
+}
+
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
@@ -180,7 +199,10 @@ fn vs_main(
     let pidx = inst.panel_index - 1u;
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let container = panel.size;
+    var container = panel.size;
+    if (inst.panel_size.x > 0.0 && inst.panel_size.y > 0.0) {
+        container = inst.panel_size;
+    }
     // CPU provides baseline origin + cursor offset; fall back to glyph metrics if runtime data is invalid.
     let origin = inst.origin_cursor.xy;
     let cursor_x = inst.origin_cursor.z;
@@ -192,14 +214,15 @@ fn vs_main(
     }
     debug_buffer.floats[pidx] = line_height_px;
     let wrap_width = max(container.x, 1.0);
-    let base_line = floor(cursor_x / wrap_width);
-    let x_in_line = cursor_x - base_line * wrap_width;
-    let overflow = (x_in_line + inst.advance_px) > wrap_width;
-    var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
-    var wrapped_x = select(x_in_line, 0.0, overflow);
+    let info = resolve_line_info(inst, wrap_width);
+    var line = info.line;
+    var wrapped_x = info.wrapped_x;
 
     // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
+    let inst_cap = arrayLength(&instances);
     var carry = 0.0;
+    var line_min = wrapped_x;
+    var line_max = wrapped_x + inst.advance_px;
     var scan_idx = inst_id;
     var scans: u32 = 0u;
     loop {
@@ -212,19 +235,42 @@ fn vs_main(
         if (prev.text_index != inst.text_index) {
             break;
         }
-        let prev_cursor = prev.origin_cursor.z;
-        let prev_base_line = floor(prev_cursor / wrap_width);
-        let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
-        let prev_overflow = (prev_x_in_line + prev.advance_px) > wrap_width;
-        var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
-        if (prev_line != line) {
+        let prev_info = resolve_line_info(prev, wrap_width);
+        if (prev_info.line != line) {
             break;
         }
-        if (prev_overflow) {
-            carry += wrap_width - prev_x_in_line;
+        if (prev_info.overflow) {
+            carry += wrap_width - prev_info.wrapped_x;
         }
+        line_min = min(line_min, prev_info.wrapped_x);
+        line_max = max(line_max, prev_info.wrapped_x + prev.advance_px);
+    }
+    // Forward scan to cover remainder of this line for centering calculations.
+    var forward_idx = inst_id + 1u;
+    scans = 0u;
+    loop {
+        if (forward_idx >= inst_cap || scans >= 64u) {
+            break;
+        }
+        let next = instances[forward_idx];
+        if (next.text_index != inst.text_index) {
+            break;
+        }
+        let next_info = resolve_line_info(next, wrap_width);
+        if (next_info.line != line) {
+            break;
+        }
+        line_min = min(line_min, next_info.wrapped_x);
+        line_max = max(line_max, next_info.wrapped_x + next.advance_px);
+        forward_idx += 1u;
+        scans += 1u;
     }
     wrapped_x += carry;
+    if (inst.align == 1u) {
+        let line_width = max(line_max - line_min, 0.0);
+        let start_x = line_min + max(container.x - line_width, 0.0) * 0.5;
+        wrapped_x = start_x + (wrapped_x - line_min);
+    }
     let local_y = origin.y + line * line_height_px;
     let wrapped_y = local_y;
     let wrapped_x_with_origin = origin.x + wrapped_x;

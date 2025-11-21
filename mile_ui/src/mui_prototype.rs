@@ -23,7 +23,7 @@ use mile_api::{
 use mile_db::{DbError, TableBinding, TableHandle};
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont},
-    prelude::FontStyle,
+    prelude::{FontStyle, TextAlign},
 };
 use mile_gpu_dsl::{
     core::{
@@ -1227,6 +1227,9 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             font_color: color,
             font_weight: weight,
             font_line_height: line_height,
+            first_line_indent: 0.0,
+            text_align: TextAlign::Left,
+            panel_size: [0.0, 0.0],
         };
         global_event_bus().publish(BatchFontEntry {
             text: Arc::from(text.to_string()),

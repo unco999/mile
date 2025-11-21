@@ -607,7 +607,7 @@ fn dispatch_lua_event(
     let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
-        return Ok(())
+        return Ok(());
     }
     apply_flow_directives(lua_ref, &tbl, flow)?;
     Ok(())
@@ -1036,20 +1036,23 @@ impl UserData for LuaMuiBuilder {
         );
 
         // 事件回调：目前只支持 click（可按需扩展）
-        methods.add_method_mut("on_event", |lua: &Lua, this, (name, func): (String, Function)| {
-            let kind = match name.to_lowercase().as_str() {
-                "click" => UiEventKind::Click,
-                other => {
-                    return Err(mlua::Error::external(format!(
-                        "unsupported event '{}' (only click)",
-                        other
-                    )));
-                }
-            };
-            let key = Arc::new(lua.create_registry_value(func)?);
-            this.current_entry_mut().handlers.insert(kind, key);
-            lua.create_userdata(this.clone())
-        });
+        methods.add_method_mut(
+            "on_event",
+            |lua: &Lua, this, (name, func): (String, Function)| {
+                let kind = match name.to_lowercase().as_str() {
+                    "click" => UiEventKind::Click,
+                    other => {
+                        return Err(mlua::Error::external(format!(
+                            "unsupported event '{}' (only click)",
+                            other
+                        )));
+                    }
+                };
+                let key = Arc::new(lua.create_registry_value(func)?);
+                this.current_entry_mut().handlers.insert(kind, key);
+                lua.create_userdata(this.clone())
+            },
+        );
 
         methods.add_method_mut("state", |lua, this, state_id: u32| {
             this.current_state = state_id;

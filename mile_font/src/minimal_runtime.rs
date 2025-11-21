@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -208,10 +208,7 @@ impl MiniFontRuntime {
             let new_idx = kept_texts.len();
             kept_texts.push(text.clone());
             kept_flags.push(false);
-            rebuilt_indices
-                .entry(text.panel)
-                .or_default()
-                .push(new_idx);
+            rebuilt_indices.entry(text.panel).or_default().push(new_idx);
         }
         self.out_gpu_texts = kept_texts;
         self.text_removed = kept_flags;
@@ -556,14 +553,15 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
-            println!("当前需要渲染的gpu text {:?}",t);
+            println!("当前需要渲染的gpu text {:?}", t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
-            let mut pen_x_px: f32 = 0.0;
+            let mut pen_x_px: f32 = t.first_line_indent;
             let mut line_break_acc: u32 = 0;
             let size_px: f32 = t.font_size;
             let origin = [t.position[0], t.position[1]];
             let color = t.color;
+            let mut is_first_line = true;
             for i in start..end {
                 if let Some(ch) = self.out_gpu_chars.get(i as usize) {
                     let desc = self.cpu_glyph_metrics.get(ch.char_index as usize);
@@ -579,8 +577,13 @@ impl MiniFontRuntime {
                     let break_count = (ch.layout_flags & GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK)
                         >> GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT;
                     if break_count > 0 {
-                        pen_x_px = 0.0;
+                        pen_x_px = if is_first_line {
+                            t.first_line_indent
+                        } else {
+                            0.0
+                        };
                         line_break_acc = line_break_acc.saturating_add(break_count);
+                        is_first_line = false;
                     }
                     let cursor_x = pen_x_px;
                     let advance_px = if units_per_em > 0.0 {
@@ -611,9 +614,13 @@ impl MiniFontRuntime {
                         line_break_acc,
                         color,
                         flags: ch.layout_flags,
-                        _pad: [0; 3],
+                        align: t.text_align as u32,
+                        panel_size: t.panel_size,
+                        first_line_indent_px: t.first_line_indent,
+                        _pad: [0; 2],
                     });
                     pen_x_px += advance_px;
+                    is_first_line = false;
                 }
             }
         }
@@ -945,7 +952,10 @@ struct GpuInstance {
     line_break_acc: u32,
     color: [f32; 4],
     flags: u32,
-    _pad: [u32; 3],
+    align: u32,
+    panel_size: [f32; 2],
+    first_line_indent_px: f32,
+    _pad: [u32; 2],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1771,6 +1781,9 @@ impl MiniFontRuntime {
                     } else {
                         0.0
                     },
+                    first_line_indent: e.font_style.first_line_indent,
+                    text_align: e.font_style.text_align,
+                    panel_size: e.font_style.panel_size,
                 };
                 // Debug print
                 println!(
@@ -1827,5 +1840,3 @@ impl MiniFontRuntime {
         touched
     }
 }
-
-
