@@ -14,14 +14,18 @@ use winit::dpi::PhysicalSize;
 use crate::{
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime},
     prelude::{
-        GpuChar, GpuText, GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE,
-        GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT,
-        GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX,
+        GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK,
+        GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT, GpuChar,
+        GpuText,
     },
 };
 
-type RegisterEvent =
-    ModEventStream<(BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime)>;
+type RegisterEvent = ModEventStream<(
+    BatchFontEntry,
+    BatchRenderFont,
+    RemoveRenderFont,
+    ResetFontRuntime,
+)>;
 
 pub struct ComputeBufferCache {}
 
@@ -1656,8 +1660,8 @@ impl MiniFontRuntime {
                     if let Some(&idx) = char_map.get(&ch) {
                         let mut flags = 0u32;
                         if pending_line_breaks > 0 {
-                            let encodeable = pending_line_breaks
-                                .min(GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX);
+                            let encodeable =
+                                pending_line_breaks.min(GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX);
                             flags |= GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE;
                             flags |= encodeable << GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT;
                             pending_line_breaks = pending_line_breaks.saturating_sub(encodeable);

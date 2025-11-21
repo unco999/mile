@@ -77,13 +77,19 @@ impl UserData for LuaStruct {}
 
 #[derive(Clone)]
 struct LuaKeyEventStream {
+    key: String,
     stream: Arc<KeyedEventStream>,
+}
+
+#[derive(Clone)]
+struct LuaMultiKeyEventStream {
+    streams: Vec<LuaKeyEventStream>,
 }
 
 impl UserData for LuaKeyEventStream {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_method("try_recv", |lua, this, ()| match this.stream.try_recv() {
-            Ok(event) => json_to_lua_value(lua, keyed_delivery_to_json(event)),
+            Ok(event) => json_to_lua_value(lua, keyed_delivery_to_json(event, &this.key)),
             Err(TryRecvError::Empty) => Ok(Value::Nil),
             Err(TryRecvError::Disconnected) => {
                 Err(mlua::Error::external("keyed event channel closed"))
@@ -91,15 +97,36 @@ impl UserData for LuaKeyEventStream {
         });
 
         methods.add_method("drain", |lua, this, ()| {
-            let events = this.stream.drain();
             let table = lua.create_table()?;
-            for (idx, event) in events.into_iter().enumerate() {
-                table.set(
-                    idx + 1,
-                    json_to_lua_value(lua, keyed_delivery_to_json(event))?,
-                )?;
+            for (idx, event) in drain_keyed_stream(lua, this)?.into_iter().enumerate() {
+                table.set(idx + 1, event)?;
             }
             Ok(table)
+        });
+    }
+}
+
+impl UserData for LuaMultiKeyEventStream {
+    fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("drain", |lua, this, ()| {
+            let table = lua.create_table()?;
+            let mut idx = 1;
+            for stream in &this.streams {
+                for event in drain_keyed_stream(lua, stream)? {
+                    table.set(idx, event)?;
+                    idx += 1;
+                }
+            }
+            Ok(table)
+        });
+
+        methods.add_method("try_recv", |lua, this, ()| {
+            for stream in &this.streams {
+                if let Ok(event) = stream.stream.try_recv() {
+                    return json_to_lua_value(lua, keyed_delivery_to_json(event, &stream.key));
+                }
+            }
+            Ok(Value::Nil)
         });
     }
 }
@@ -149,10 +176,35 @@ fn json_to_lua_value(lua: &Lua, json: JsonValue) -> LuaResult<Value> {
     lua.to_value(&json)
 }
 
-fn keyed_delivery_to_json(delivery: mile_api::event_bus::KeyedEventDelivery) -> JsonValue {
-    delivery
+fn keyed_delivery_to_json(
+    delivery: mile_api::event_bus::KeyedEventDelivery,
+    key: &str,
+) -> JsonValue {
+    let payload = delivery
         .into_owned()
-        .unwrap_or_else(|shared| (*shared).clone())
+        .unwrap_or_else(|shared| (*shared).clone());
+
+    match payload {
+        JsonValue::Object(mut map) => {
+            map.entry("__key")
+                .or_insert_with(|| JsonValue::String(key.to_string()));
+            JsonValue::Object(map)
+        }
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("__key".into(), JsonValue::String(key.to_string()));
+            map.insert("value".into(), other);
+            JsonValue::Object(map)
+        }
+    }
+}
+
+fn drain_keyed_stream(lua: &Lua, stream: &LuaKeyEventStream) -> LuaResult<Vec<Value>> {
+    let events = stream.stream.drain();
+    events
+        .into_iter()
+        .map(|event| json_to_lua_value(lua, keyed_delivery_to_json(event, &stream.key)))
+        .collect()
 }
 
 fn clear_db_snapshots() -> u32 {
@@ -236,11 +288,26 @@ fn register_key_event_bus(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?;
 
-    let subscribe = lua.create_function(|lua, key: String| {
-        let stream = global_key_event_bus().subscribe(key);
-        lua.create_userdata(LuaKeyEventStream {
-            stream: Arc::new(stream),
-        })
+    let subscribe = lua.create_function(|lua, keys: Variadic<String>| {
+        if keys.is_empty() {
+            return Err(mlua::Error::external(
+                "mile_event.on requires at least one key",
+            ));
+        }
+
+        let streams: Vec<LuaKeyEventStream> = keys
+            .into_iter()
+            .map(|key| LuaKeyEventStream {
+                key: key.clone(),
+                stream: Arc::new(global_key_event_bus().subscribe(key)),
+            })
+            .collect();
+
+        if streams.len() == 1 {
+            lua.create_userdata(streams.into_iter().next().unwrap())
+        } else {
+            lua.create_userdata(LuaMultiKeyEventStream { streams })
+        }
     })?;
 
     let events = lua.create_table()?;
