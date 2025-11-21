@@ -142,4 +142,6 @@ pub struct GpuText {
     pub color: [f32; 4],
     // text origin (pixels or logical units depending on pipeline)
     pub position: [f32; 2],
+    /// Optional line height in pixels (0 = derive from glyph metrics)
+    pub line_height: f32,
 }
