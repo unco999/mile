@@ -9,7 +9,7 @@ use glam::{vec2, vec3, vec4};
 use mile_api::prelude::{
     _ty::PanelId, KeyedEventStream, global_db, global_event_bus, global_key_event_bus,
 };
-use mile_font::event::{RemoveRenderFont, ResetFontRuntime};
+use mile_font::{event::{RemoveRenderFont, ResetFontRuntime}, prelude::FontStyle};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
     mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
@@ -506,6 +506,7 @@ impl LuaMuiBuilder {
                 }
                 if let Some(container) = entry.spec.container.as_ref() {
                     let spec = container.clone();
+                    println!("有个单位执行了容器设定 {:?}",spec);
                     s.rel().container_self(move |target| *target = spec);
                 }
                 for (alias, panel_uuid) in entry.container_aliases.iter() {
@@ -851,6 +852,45 @@ fn attach_db_proxy_metatable(
     Ok(())
 }
 
+fn panel_uuid_from_db_index(idx: u32) -> String {
+    format!("lua_db_panel_{}", idx)
+}
+
+fn lua_value_to_panel_uuid(lua: &Lua, value: Value) -> LuaResult<String> {
+    match value {
+        Value::String(s) => Ok(s.to_string_lossy().to_string()),
+        other => {
+            if let Some(idx) = extract_db_index_from_value(lua, other)? {
+                Ok(panel_uuid_from_db_index(idx))
+            } else {
+                Err(mlua::Error::external(
+                    "container_with expects userdata/table with db_index or a panel uuid string",
+                ))
+            }
+        }
+    }
+}
+
+fn parse_event_kind(name: &str) -> Option<UiEventKind> {
+    let normalized = name.trim().to_lowercase().replace('-', "_");
+    match normalized.as_str() {
+        "init" => Some(UiEventKind::Init),
+        "click" => Some(UiEventKind::Click),
+        "drag" => Some(UiEventKind::Drag),
+        "drag_start" | "source_drag_start" => Some(UiEventKind::SourceDragStart),
+        "drag_over" | "source_drag_over" => Some(UiEventKind::SourceDragOver),
+        "drag_leave" | "source_drag_leave" => Some(UiEventKind::SourceDragLeave),
+        "drag_drop" | "source_drag_drop" => Some(UiEventKind::SourceDragDrop),
+        "target_drag_enter" | "drag_enter" => Some(UiEventKind::TargetDragEnter),
+        "target_drag_over" => Some(UiEventKind::TargetDragOver),
+        "target_drag_leave" | "drag_exit" => Some(UiEventKind::TargetDragLeave),
+        "target_drag_drop" => Some(UiEventKind::TargetDragDrop),
+        "hover" => Some(UiEventKind::Hover),
+        "out" | "leave" => Some(UiEventKind::Out),
+        _ => None,
+    }
+}
+
 fn extract_db_index_from_value(lua: &Lua, value: Value) -> LuaResult<Option<u32>> {
     match value {
         Value::Nil => Ok(None),
@@ -894,9 +934,11 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
     let font_path: Option<String> = table.get("font_path").ok();
     let font_size: u32 = table.get("font_size").unwrap_or(16);
     let color: Option<Vec<f32>> = table.get("color").ok();
+    let panel_size: Option<Vec<f32>> = table.get("panel_size").ok();
     let weight: u32 = table.get("weight").unwrap_or(400);
     let line_height: u32 = table.get("line_height").unwrap_or(0);
-
+    let first_weight:f32 =  table.get("first_weight").unwrap_or(0.0);
+    let text_align:u32 =  table.get("text_align").unwrap_or(0);
     let final_color = if let Some(c) = color {
         let mut arr = [1.0, 1.0, 1.0, 1.0];
         for (i, v) in c.iter().copied().take(4).enumerate() {
@@ -907,11 +949,33 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
         [1.0, 1.0, 1.0, 1.0]
     };
 
+    let panel_size = if let Some(c) = panel_size {
+        let mut arr = [1.0, 1.0];
+        for (i, v) in c.iter().copied().take(2).enumerate() {
+            arr[i] = v;
+        }
+        arr
+    } else {
+        [1.0, 1.0]
+    };
+
     let path = font_path
         .map(|p| p.into())
         .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
+
+    let style = FontStyle{
+        font_size,
+        font_file_path:path,
+        font_color: final_color,
+        font_weight:weight,
+        font_line_height: line_height,
+        first_weight,
+        panel_size,
+        text_align:text_align.into(),
+    };
+
     flow.clear_texts();
-    flow.text(&text, path, font_size, final_color, weight, line_height);
+    flow.text(&text, style);
     Ok(())
 }
 
@@ -999,14 +1063,16 @@ impl UserData for LuaMuiBuilder {
             lua.create_userdata(this.clone())
         });
 
-        methods.add_method_mut("container_with", |lua, this, panel_uuid: String| {
+        methods.add_method_mut("container_with", |lua, this, target: Value| {
+            let panel_uuid = lua_value_to_panel_uuid(lua, target)?;
             this.current_entry_mut().container_links.push(panel_uuid);
             lua.create_userdata(this.clone())
         });
 
         methods.add_method_mut(
             "container_with_alias",
-            |lua, this, (alias, panel_uuid): (String, String)| {
+            |lua, this, (alias, target): (String, Value)| {
+                let panel_uuid = lua_value_to_panel_uuid(lua, target)?;
                 this.current_entry_mut()
                     .container_aliases
                     .push((alias, panel_uuid));
@@ -1016,15 +1082,12 @@ impl UserData for LuaMuiBuilder {
 
         // 事件回调：目前只支持 click（可按需扩展）
         methods.add_method_mut("on_event", |lua: &Lua, this, (name, func): (String, Function)| {
-            let kind = match name.to_lowercase().as_str() {
-                "click" => UiEventKind::Click,
-                other => {
-                    return Err(mlua::Error::external(format!(
-                        "unsupported event '{}' (only click)",
-                        other
-                    )));
-                }
-            };
+            let kind = parse_event_kind(&name).ok_or_else(|| {
+                mlua::Error::external(format!(
+                    "unsupported event '{}'; expected click/drag/source_/target_ drag variants/hover/out",
+                    name
+                ))
+            })?;
             let key = Arc::new(lua.create_registry_value(func)?);
             this.current_entry_mut().handlers.insert(kind, key);
             lua.create_userdata(this.clone())
@@ -1110,7 +1173,7 @@ pub fn register_lua_api(lua: &Lua) -> LuaResult<()> {
                 }
                 Value::UserData(ud) => {
                     if let Ok(db_ref) = ud.borrow::<LuaTableDb>() {
-                        let id = format!("lua_db_panel_{}", db_ref.index);
+                        let id = panel_uuid_from_db_index(db_ref.index);
                         (id, db_payload_with_revision(db_ref.index))
                     } else {
                         return Err(mlua::Error::external(

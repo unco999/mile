@@ -1212,29 +1212,19 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     pub fn text(
         &self,
         text: &str,
-        font_path: Arc<str>,
-        font_size: u32,
-        color: [f32; 4],
-        weight: u32,
-        line_height: u32,
+        style:FontStyle
     ) {
         let pid = PanelId(self.args.panel_key.panel_id);
         // Always clear previous texts for this panel before queuing new one
         global_event_bus().publish(RemoveRenderFont { parent: pid });
-        let style = FontStyle {
-            font_size,
-            font_file_path: font_path.clone(),
-            font_color: color,
-            font_weight: weight,
-            font_line_height: line_height,
-        };
+
         global_event_bus().publish(BatchFontEntry {
             text: Arc::from(text.to_string()),
-            font_file_path: font_path.clone(),
+            font_file_path: style.font_file_path.clone(),
         });
         global_event_bus().publish(BatchRenderFont {
             text: Arc::from(text.to_string()),
-            font_file_path: font_path.clone(),
+            font_file_path: style.font_file_path.clone(),
             parent: pid,
             font_style: Arc::new(style),
         });

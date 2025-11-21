@@ -1,6 +1,11 @@
 // Cargo.toml: bytemuck = "1", bitflags = "2", ahash = "0.8"
 
-use std::{collections::HashMap, fmt::Error, marker::PhantomData, sync::Arc};
+use std::{
+    collections::{HashMap, btree_map::Range},
+    fmt::Error,
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
@@ -20,6 +25,18 @@ pub enum TextAlign {
     Center = 1,
     Right = 2,
     Justify = 3,
+}
+
+impl Into<TextAlign> for u32 {
+    fn into(self) -> TextAlign {
+        match self {
+            0 => TextAlign::Left,
+            1 => TextAlign::Center,
+            2 => TextAlign::Right,
+            3 => TextAlign::Justify,
+            _ => TextAlign::Center,
+        }
+    }
 }
 
 bitflags! {
@@ -109,6 +126,24 @@ pub struct FontStyle {
     pub font_color: [f32; 4],
     pub font_weight: u32,
     pub font_line_height: u32,
+    pub first_weight: f32,
+    pub panel_size: [f32; 2], // 0~1
+    pub text_align: TextAlign,
+}
+
+impl Default for FontStyle {
+    fn default() -> Self {
+        Self {
+            font_size: 24,
+            font_file_path: Arc::from("STXIHEI.ttf"),
+            font_color: [1.0, 1.0, 1.0, 1.0],
+            font_weight: 0,
+            font_line_height: 0,
+            first_weight: 0.0,
+            panel_size: [1.0, 1.0],
+            text_align: TextAlign::Center,
+        }
+    }
 }
 
 /// Layout directives that accompany each glyph instance.
