@@ -603,6 +603,12 @@ fn dispatch_lua_event(
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
     tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
+    if let Some(drag_payload) = flow.drag_payload::<LuaPayload>() {
+        tbl.set(
+            "drag_payload",
+            materialize_payload_value(lua, drag_payload)?,
+        )?;
+    }
 
     let ret: Option<Value> = func.call(tbl.clone())?;
     let lua_ref = lua;
@@ -669,6 +675,12 @@ fn apply_flow_directives(
                 let new_payload = lua_value_to_json(lua, other)?;
                 *flow.payload() = LuaPayload(new_payload);
             }
+        }
+    }
+    if let Ok(value) = table.get::<Value>("drag_payload") {
+        if !matches!(value, Value::Nil) {
+            let payload_json = ensure_db_payload(lua, value)?;
+            flow.set_drag_payload(LuaPayload(payload_json));
         }
     }
     if let Ok(value) = table.get::<Value>("text") {

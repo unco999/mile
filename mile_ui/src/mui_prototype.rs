@@ -386,6 +386,20 @@ impl DragContext {
     }
 }
 
+static GLOBAL_DRAG_CONTEXT: OnceLock<Mutex<Option<DragContext>>> = OnceLock::new();
+
+fn drag_context_store() -> &'static Mutex<Option<DragContext>> {
+    GLOBAL_DRAG_CONTEXT.get_or_init(|| Mutex::new(None))
+}
+
+fn current_drag_context() -> Option<DragContext> {
+    drag_context_store().lock().unwrap().clone()
+}
+
+fn set_global_drag_context(ctx: Option<DragContext>) {
+    *drag_context_store().lock().unwrap() = ctx;
+}
+
 /// Visual/Layout overrides persisted for each state.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PanelStateOverrides {
@@ -1119,7 +1133,7 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
                 &args,
                 current_state_ref,
                 transitions,
-                runtime.active_drag.clone(),
+                current_drag_context(),
             );
             for entry in list {
                 if entry.ty == env.payload_type {
@@ -1136,6 +1150,7 @@ fn trigger_data_change_for<TPayload: PanelPayload>(
             eprintln!("data change mutation failed: {err:?}");
         }
         if let Some(ctx) = updated_drag {
+            set_global_drag_context(Some(ctx.clone()));
             runtime.active_drag = Some(ctx);
         }
     }
@@ -1763,7 +1778,7 @@ fn trigger_event_internal<TPayload: PanelPayload>(
                 &args,
                 current_state_ref,
                 transitions,
-                runtime.active_drag.clone(),
+                current_drag_context(),
             );
             handler(&mut flow);
             applied_override = flow.take_override().is_some();
@@ -1772,6 +1787,7 @@ fn trigger_event_internal<TPayload: PanelPayload>(
             eprintln!("event mutation failed: {err:?}");
         }
         if let Some(ctx) = updated_drag {
+            set_global_drag_context(Some(ctx.clone()));
             runtime.active_drag = Some(ctx);
         }
     }
@@ -1840,7 +1856,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
                     &args,
                     current_state_ref,
                     transitions,
-                    runtime.active_drag.clone(),
+                    current_drag_context(),
                 );
                 handler(&mut flow, data);
                 updated_drag = flow.take_drag_context();
@@ -1848,6 +1864,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
                 eprintln!("event mutation failed: {err:?}");
             }
             if let Some(ctx) = updated_drag {
+                set_global_drag_context(Some(ctx.clone()));
                 runtime.active_drag = Some(ctx);
             } else if matches!(
                 event,
@@ -1855,6 +1872,7 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
             ) {
                 // 清理拖拽上下文
                 runtime.active_drag = None;
+                set_global_drag_context(None);
             }
             return;
         }
