@@ -39,7 +39,7 @@ Mui.new(global_bind)
             ctx.payload.value = payload.value + 15;
             print("lua触发了点击",payload.value)
             ctx.text = {
-                text = payload.value,
+                text = tostring(payload.value),
                 font_path = "tf/STXIHEI.ttf",
                 font_size = 24,
                 color = { 0.95, 0.95, 0.95, 1.0 },
