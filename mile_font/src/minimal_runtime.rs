@@ -513,6 +513,7 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
+            println!("当前需要渲染的gpu text {:?}",t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let mut pen_x_px: f32 = 0.0;
@@ -554,6 +555,7 @@ impl MiniFontRuntime {
                     if !line_height_px.is_finite() || line_height_px <= 0.0 {
                         line_height_px = size_px;
                     }
+
                     out.push(GpuInstance {
                         char_index: ch.char_index,
                         text_index: ch.gpu_text_index,
@@ -1626,7 +1628,6 @@ impl MiniFontRuntime {
                 };
                 let panel_id = e.parent.0;
                 // 清除旧文本，保证动态绑定场景下不会叠加陈旧实例
-                self.remove_panel_texts(panel_id);
 
                 // gather glyph indices + newline markers first
                 let mut glyph_entries: Vec<(u32, u32)> = Vec::new();

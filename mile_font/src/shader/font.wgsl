@@ -177,7 +177,7 @@ fn vs_main(
     // - Wrap X when exceeding panel.size.x
     // - Drop rendering when exceeding panel.size.y
     // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
-    let pidx = select(inst.panel_index - 1u, 0u, inst.panel_index == 0u);
+    let pidx = inst.panel_index - 1u;
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
     let container = panel.size;
