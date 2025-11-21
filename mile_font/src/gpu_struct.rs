@@ -109,6 +109,12 @@ pub struct FontStyle {
     pub font_color: [f32; 4],
     pub font_weight: u32,
     pub font_line_height: u32,
+    /// 首行缩进像素值（0 表示不缩进）
+    pub first_line_indent: f32,
+    /// 文本对齐方式，默认左对齐
+    pub text_align: TextAlign,
+    /// 文本可用的面板范围；为 [0,0] 时回退到面板自身尺寸
+    pub panel_size: [f32; 2],
 }
 
 /// Layout directives that accompany each glyph instance.
@@ -147,4 +153,10 @@ pub struct GpuText {
     pub position: [f32; 2],
     /// Optional line height in pixels (0 = derive from glyph metrics)
     pub line_height: f32,
+    /// 首行缩进
+    pub first_line_indent: f32,
+    /// 文本对齐方式
+    pub text_align: TextAlign,
+    /// 可用面板尺寸（0 表示使用 UI 面板尺寸）
+    pub panel_size: [f32; 2],
 }
