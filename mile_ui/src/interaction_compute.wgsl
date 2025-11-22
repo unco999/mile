@@ -109,12 +109,11 @@ struct GpuInteractionFrame {
     hover_id: u32,
     click_id: u32,
     mouse_pos: vec2<f32>,
-    trigger_panel_state: u32,
-    _pad1: u32,
+    hover_state: u32,
+    click_state: u32,
+    drag_state: u32,
     mouse_state: u32,
-    _pad2_0: u32,
-    _pad2_1: u32,
-    _pad2_2: u32,
+    _pad1: vec2<u32>,
     drag_delta: vec2<f32>,
     pre_event_mouse_pos: vec2<f32>,
     pinch_delta: f32,
@@ -310,6 +309,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (global_id.x == 0u) {
         frame_cache[1].hover_id = INVALID_ID;
         frame_cache[1].click_id = INVALID_ID;
+        frame_cache[1].hover_state = 0u;
+        frame_cache[1].click_state = 0u;
+        frame_cache[1].drag_state = 0u;
         let prev_drag = frame_cache[0].drag_id;
         if (prev_drag == INVALID_ID) {
             atomicStore(&global_uniform.pad_atomic1, DRAG_LOCK_INVALID);
@@ -325,6 +327,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             atomicStore(&global_uniform.drag_layout_id, INVALID_ID);
         } else {
             frame_cache[1].drag_id = lock;
+            frame_cache[1].drag_state = frame_cache[0].drag_state;
         }
     }
     storageBarrier();
@@ -361,7 +364,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {
         if (claim_hover(panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].hover_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].hover_state = panel.state;
         }
     }
 
@@ -369,7 +372,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
         if (claim_click(panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].click_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].click_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
         }
     }
@@ -379,9 +382,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let can_request_drag = was_dragging || prev_drag_id == INVALID_ID;
         if (can_request_drag && claim_drag(panel.z_index, panel.id, panel.pass_through)) {
             if (try_lock_drag(panel.id)) {
-                
+
                 frame_cache[1].drag_id = panel.id;
-                frame_cache[1].trigger_panel_state = panel.state;
+                frame_cache[1].drag_state = panel.state;
 
                 //记录响应差距
 

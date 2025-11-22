@@ -483,7 +483,7 @@ impl InteractionComputeStage {
                         new_frame.frame,
                         UiInteractionScope {
                             panel_id: new_frame.click_id,
-                            state: new_frame.trigger_panel_state,
+                            state: new_frame.click_state,
                         },
                     )));
                 }
@@ -493,7 +493,7 @@ impl InteractionComputeStage {
                         new_frame.frame,
                         UiInteractionScope {
                             panel_id: new_frame.drag_id,
-                            state: new_frame.trigger_panel_state,
+                            state: new_frame.drag_state,
                         },
                     )));
                 }
@@ -503,7 +503,7 @@ impl InteractionComputeStage {
                         Vec2::from_array(new_frame.drag_delta),
                         UiInteractionScope {
                             panel_id: new_frame.drag_id,
-                            state: new_frame.trigger_panel_state,
+                            state: new_frame.drag_state,
                         },
                     )));
                     if new_frame.hover_id != u32::MAX {
@@ -511,7 +511,7 @@ impl InteractionComputeStage {
                             Vec2::from_array(new_frame.drag_delta),
                             UiInteractionScope {
                                 panel_id: new_frame.hover_id,
-                                state: new_frame.trigger_panel_state,
+                                state: new_frame.hover_state,
                             },
                         )));
                     }
@@ -522,7 +522,7 @@ impl InteractionComputeStage {
                         new_frame.frame,
                         UiInteractionScope {
                             panel_id: new_frame.hover_id,
-                            state: new_frame.trigger_panel_state,
+                            state: new_frame.hover_state,
                         },
                     )));
                 }
@@ -534,18 +534,18 @@ impl InteractionComputeStage {
                             new_frame.frame,
                             UiInteractionScope {
                                 panel_id: old_frame.hover_id,
-                                state: old_frame.trigger_panel_state,
+                                state: old_frame.hover_state,
                             },
                         )));
                     }
                     if new_frame.hover_id != u32::MAX {
                         println!("拖拽进入了某个面板");
-                        
+
                         hub.push(CpuPanelEvent::TargetDragEnter((
                             new_frame.frame,
                             UiInteractionScope {
                                 panel_id: new_frame.hover_id,
-                                state: new_frame.trigger_panel_state,
+                                state: new_frame.hover_state,
                             },
                         )));
                     }
@@ -556,17 +556,20 @@ impl InteractionComputeStage {
                         new_frame.frame,
                         UiInteractionScope {
                             panel_id: old_frame.drag_id,
-                            state: old_frame.trigger_panel_state,
+                            state: old_frame.drag_state,
                         },
                     )));
 
                     if old_frame.hover_id != u32::MAX {
-                        println!("拖拽并且落到了某个面板上 hover_id:{} : trigger_panel_state:{}",old_frame.hover_id,old_frame.trigger_panel_state);
+                        println!(
+                            "拖拽并且落到了某个面板上 hover_id:{} : hover_state:{}",
+                            old_frame.hover_id, old_frame.hover_state
+                        );
                         hub.push(CpuPanelEvent::TargetDragDrop((
                             new_frame.frame,
                             UiInteractionScope {
                                 panel_id: old_frame.hover_id,
-                                state: old_frame.trigger_panel_state,
+                                state: old_frame.hover_state,
                             },
                         )));
                     }
@@ -577,7 +580,7 @@ impl InteractionComputeStage {
                         new_frame.frame,
                         UiInteractionScope {
                             panel_id: old_frame.hover_id,
-                            state: old_frame.trigger_panel_state,
+                            state: old_frame.hover_state,
                         },
                     )));
                 }

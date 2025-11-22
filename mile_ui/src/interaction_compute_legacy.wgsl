@@ -144,11 +144,11 @@ struct GpuInteractionFrame {
     click_id: atomic<u32>,
 
     mouse_pos: vec2<f32>,
-    trigger_panel_state:u32,
-    _pad1:u32,
-
+    hover_state:u32,
+    click_state:u32,
+    drag_state:u32,
     mouse_state: u32,
-    _pad2: vec3<u32>,
+    _pad1: vec2<u32>,
 
     drag_delta: vec2<f32>,
     _pad3: vec2<f32>,
@@ -370,12 +370,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             
         let try_hover = try_set_hover_layout(inst.id,z_index,pass_through);
         // drag
-        if(  
-            ((panel_interaction & 2u) != 0u) && 
+        if(
+            ((panel_interaction & 2u) != 0u) &&
             try_hover
         ){
             frame_cache_array[1].hover_id = atomicLoad(&global_uniform.hover_layout_id); // 直接写入 click
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].hover_id].state;
+            frame_cache_array[1].hover_state = panels[frame_cache_array[1].hover_id].state;
         }
         
         let try_drag = try_set_click_layout(inst.id,z_index,pass_through);
@@ -388,9 +388,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             && try_drag
             ) {
             frame_cache_array[1].click_id = atomicLoad(&global_uniform.click_layout_id); // 直接写入 click
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].click_id].state;
+            frame_cache_array[1].click_state = panels[frame_cache_array[1].click_id].state;
             global_uniform.event_point = pixel_pos - panels[frame_cache_array[1].click_id].position;
-            
+
         }
 
         // drag
@@ -398,13 +398,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
         if(  
             ((panel_interaction & 4u) != 0u) && 
-            mouse_pressed && 
+            mouse_pressed &&
             mouse_released == false &&
             mouse_pressed_time > 0.113 &&
             try_click
         ){
             frame_cache_array[1].drag_id = atomicLoad(&global_uniform.drag_layout_id); // 直接写入 drag
-            frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].drag_id].state;
+            frame_cache_array[1].drag_state = panels[frame_cache_array[1].drag_id].state;
             global_uniform.event_point = pixel_pos - panels[frame_cache_array[1].drag_id].position;
             return;
         }

@@ -110,10 +110,11 @@ struct GpuInteractionFrame {
     hover_id: u32,
     click_id: u32,
     mouse_pos: vec2<f32>,
-    trigger_panel_state: u32,
-    _pad1: u32,
+    hover_state: u32,
+    click_state: u32,
+    drag_state: u32,
     mouse_state: u32,
-    _pad2: vec3<u32>,
+    _pad1: vec2<u32>,
     drag_delta: vec2<f32>,
     _pad3: vec2<f32>,
     pinch_delta: f32,
@@ -168,6 +169,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    if (idx == 0u) {
+        frame_cache[1].hover_state = 0u;
+        frame_cache[1].click_state = 0u;
+        frame_cache[1].drag_state = 0u;
+    }
+
     let panel = panels[idx];
     if (panel.visible == 0u) {
         return;
@@ -187,7 +194,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {
         if (try_claim(&global_uniform.hover_layout_z, &global_uniform.hover_layout_id, panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].hover_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].hover_state = panel.state;
         }
     }
 
@@ -195,7 +202,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
         if (try_claim(&global_uniform.click_layout_z, &global_uniform.click_layout_id, panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].click_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].click_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
         }
     }
@@ -204,7 +211,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed) {
         if (try_claim(&global_uniform.drag_layout_z, &global_uniform.drag_layout_id, panel.z_index, panel.id, panel.pass_through)) {
             frame_cache[1].drag_id = panel.id;
-            frame_cache[1].trigger_panel_state = panel.state;
+            frame_cache[1].drag_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
         }
     }
