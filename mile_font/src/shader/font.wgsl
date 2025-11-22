@@ -194,7 +194,8 @@ fn vs_main(
         line_height_px = line_height_em / units * inst.size_px;
     }
     debug_buffer.floats[pidx] = line_height_px;
-    let wrap_width = max(container.x, 1.0);
+    let padding = 5.0;
+    let wrap_width = max(container.x - padding * 2.0, 1.0);
     let units = max(f32(des.units_per_em), 1.0);
     let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
     let layout_width_px = max(inst.advance_px, glyph_width_px);
@@ -235,11 +236,13 @@ fn vs_main(
         }
     }
     wrapped_x += carry;
-    let local_y = origin.y + line * line_height_px;
+    // Clamp to the padded wrap width so long lines do not spill beyond the right edge.
+    wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
+    let local_y = origin.y + padding + line * line_height_px;
     let wrapped_y = local_y;
-    let wrapped_x_with_origin = origin.x + wrapped_x;
+    let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
+    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
     let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin, wrapped_y) + position * inst.size_px;
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
