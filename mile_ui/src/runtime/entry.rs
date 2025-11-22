@@ -848,7 +848,6 @@ impl MuiRuntime {
     pub fn upload_panel_instances(&mut self, device: &Device, queue: &Queue) {
         self.flush_pending_transition_instances(queue);
         if !self.panel_instances_dirty {
-            println!("没有新更新");
             return;
         }
         if self.texture_bindings.is_none() {

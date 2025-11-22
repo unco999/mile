@@ -1,6 +1,6 @@
-use mile_api::prelude::{
+use mile_api::{global::get_lua_runtime, prelude::{
     _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
-};
+}};
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont},
     minimal_runtime::MiniFontRuntime,
@@ -49,6 +49,7 @@ pub struct Mile {
     App: App,
     runtime: Option<EventLoop<AppEvent>>,
     pub user_event: EventLoopProxy<AppEvent>,
+    pub lua_runtime:Arc<Lua>
 }
 
 impl Mile {
@@ -67,12 +68,13 @@ impl Mile {
 
         let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
         let _proxy = event_loop_main.create_proxy();
-
+        
         // GlobalState keeps GPU/device handles shared across threads.
 
         // App bundles hubs, fonts, rendering context, and timing info.
         let mut app = App::new();
         Mile {
+            lua_runtime:Arc::from(Lua::new()),
             App: app,
             runtime: Some(event_loop_main),
             user_event: _proxy,
@@ -121,10 +123,8 @@ pub struct App {
 pub const LUA_SOURCE_DIR: &str = "lua";
 pub const LUA_DEPLOY_DIR: &str = "target/lua_runtime";
 
-pub fn run_lua_entry() -> mlua::Result<()> {
-    let lua = Lua::new();
+pub fn run_lua_entry(lua: Arc<Lua>) -> mlua::Result<()> {
     register_lua_api(&lua)?;
-    trigger_runtime_reset(&lua)?;
 
     let deploy_root = resolved_deploy_root();
     configure_package_path(&lua, &deploy_root)?;
@@ -160,25 +160,7 @@ fn configure_package_path(lua: &Lua, deploy_root: &Path) -> mlua::Result<()> {
     Ok(())
 }
 
-fn main() {
-    bootstrap_lua_assets().expect("sync lua assets into deploy dir");
-    spawn_lua_deploy_logger();
 
-    let mut binding = Mile::new();
-    let mile = binding.add_demo(move || {
-        if let Err(err) = run_lua_entry() {
-            eprintln!("[lua] launch failed: {err}");
-        }
-    });
-
-    let event_arc = mile.user_event.clone();
-    let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, move || {
-        println!("[lua_watch] change detected -> reloading scripts");
-        _ = event_arc.send_event(AppEvent::Reset);
-    })
-    .expect("start lua file watcher");
-    mile.run();
-}
 
 pub fn spawn_lua_deploy_logger() {
     let bus = global_event_bus().clone();
@@ -262,7 +244,7 @@ fn path_to_lua_str(path: &Path) -> String {
     }
 }
 
-fn trigger_runtime_reset(lua: &Lua) -> mlua::Result<()> {
+pub fn trigger_runtime_reset(lua: Arc<Lua>) -> mlua::Result<()> {
     let globals = lua.globals();
     if let Ok(reset_table) = globals.get::<Table>("mile_runtime_reset") {
         for key in ["kennel", "font", "ui", "db"] {
@@ -276,7 +258,8 @@ fn trigger_runtime_reset(lua: &Lua) -> mlua::Result<()> {
 
 impl App {
     pub fn reset(&mut self) {
-        if let Err(err) = run_lua_entry() {
+        println!("触发了更新");
+        if let Err(err) = run_lua_entry(get_lua_runtime()) {
             eprintln!("[lua_watch] reload failed: {err}");
         }
         if let Some(runtime_cell) = &self.mui_runtime {

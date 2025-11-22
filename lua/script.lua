@@ -17,7 +17,7 @@ Mui.new(parent_bind2)
     :default_state(0)
     :state(0)
         :text({
-            text = "什么1",
+            text = "什么2",
             font_size = 48
         })
         :size(560, 500)
@@ -51,7 +51,7 @@ Mui.new(parent_bind)
     :state(0)
         :size(560, 500)
         :position(120, 120)
-        :color(1, 0.10, 0.16, 0.95)
+        :color(1, 1, 0.16, 0.95)
         :border({
             color = { 0.15, 0.45, 0.85, 0.8 },
             width = 3.0,
@@ -98,3 +98,5 @@ for i = 1, 10 do
             :container_with(parent_bind)
         :build()
 end
+
+print("构建了所有面板1")

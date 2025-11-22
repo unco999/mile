@@ -1380,6 +1380,7 @@ dependencies = [
  "flume",
  "lazy_static",
  "mile_db",
+ "mlua",
  "serde",
  "serde_json",
  "wgpu",

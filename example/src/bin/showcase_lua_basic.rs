@@ -4,9 +4,9 @@ use std::{
     thread,
 };
 
-use mile_api::prelude::global_event_bus;
+use mile_api::{global::{get_lua_runtime, update_lua_runtime}, prelude::global_event_bus};
 use mile_core::{
-    LUA_DEPLOY_DIR, LUA_SOURCE_DIR, Mile, bootstrap_lua_assets, log_deploy_event, run_lua_entry,
+    LUA_DEPLOY_DIR, LUA_SOURCE_DIR, Mile, bootstrap_lua_assets, log_deploy_event, run_lua_entry, trigger_runtime_reset,
 };
 use mile_lua::{
     register_lua_api,
@@ -19,14 +19,18 @@ fn main() {
     spawn_lua_deploy_logger();
 
     let mut binding = Mile::new();
+    
     let mile = binding.add_demo(move || {
-        if let Err(err) = run_lua_entry() {
+        println!("运行了一次demo");
+        if let Err(err) = run_lua_entry(get_lua_runtime()) {
             eprintln!("[lua] launch failed: {err}");
         }
     });
-
     let event_arc = mile.user_event.clone();
     let _lua_watch = spawn_lua_watch(LUA_SOURCE_DIR, LUA_DEPLOY_DIR, move || {
+        println!("更新了几次");
+        _ = trigger_runtime_reset(get_lua_runtime());
+        update_lua_runtime();
         println!("[lua_watch] change detected -> reloading scripts");
         _ = event_arc.send_event(mile_core::AppEvent::Reset);
     })
