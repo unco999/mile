@@ -195,9 +195,12 @@ fn vs_main(
     }
     debug_buffer.floats[pidx] = line_height_px;
     let wrap_width = max(container.x, 1.0);
+    let units = max(f32(des.units_per_em), 1.0);
+    let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
+    let layout_width_px = max(inst.advance_px, glyph_width_px);
     let base_line = floor(cursor_x / wrap_width);
     let x_in_line = cursor_x - base_line * wrap_width;
-    let overflow = (x_in_line + inst.advance_px) > wrap_width;
+    let overflow = (x_in_line + layout_width_px) > wrap_width;
     var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
     var wrapped_x = select(x_in_line, 0.0, overflow);
 
@@ -216,9 +219,13 @@ fn vs_main(
             break;
         }
         let prev_cursor = prev.origin_cursor.z;
+        let prev_des = glyph_descs[prev.char_index];
+        let prev_units = max(f32(prev_des.units_per_em), 1.0);
+        let prev_glyph_width_px = f32(prev_des.x_max - prev_des.x_min) / prev_units * prev.size_px;
+        let prev_layout_width_px = max(prev.advance_px, prev_glyph_width_px);
         let prev_base_line = floor(prev_cursor / wrap_width);
         let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
-        let prev_overflow = (prev_x_in_line + prev.advance_px) > wrap_width;
+        let prev_overflow = (prev_x_in_line + prev_layout_width_px) > wrap_width;
         var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
         if (prev_line != line) {
             break;
