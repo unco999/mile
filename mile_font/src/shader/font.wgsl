@@ -236,6 +236,8 @@ fn vs_main(
         }
     }
     wrapped_x += carry;
+    // Clamp to the padded wrap width so long lines do not spill beyond the right edge.
+    wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
     let local_y = origin.y + padding + line * line_height_px;
     let wrapped_y = local_y;
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
