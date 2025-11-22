@@ -693,6 +693,12 @@ fn apply_flow_directives(
             flow.mark_changed();
         }
     }
+    if let Ok(Some(state)) = table.get::<Option<u32>>("state") {
+        let state = UiState(state);
+        if flow.state() != state {
+            flow.set_state(state);
+        }
+    }
     if let Ok(Some(next_state)) = table.get::<Option<u32>>("next_state") {
         flow.set_state(UiState(next_state));
     }
