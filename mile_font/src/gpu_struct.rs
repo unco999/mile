@@ -7,9 +7,9 @@ use std::{
     sync::Arc,
 };
 
+use crate::DEFAULT_FONT_PATH;
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
-use crate::DEFAULT_FONT_PATH;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -183,4 +183,8 @@ pub struct GpuText {
     pub position: [f32; 2],
     /// Optional line height in pixels (0 = derive from glyph metrics)
     pub line_height: f32,
+    /// First-line indentation in pixels/em as provided by runtime
+    pub first_line_indent: f32,
+    /// Horizontal alignment hint from layout
+    pub text_align: TextAlign,
 }

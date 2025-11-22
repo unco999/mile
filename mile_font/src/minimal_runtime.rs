@@ -12,13 +12,13 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 
 use crate::{
+    DEFAULT_FONT_PATH,
     event::{BatchFontEntry, BatchRenderFont, RemoveRenderFont, ResetFontRuntime},
     prelude::{
         GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK,
         GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT, GpuChar,
         GpuText,
     },
-    DEFAULT_FONT_PATH,
 };
 
 type RegisterEvent = ModEventStream<(
@@ -608,8 +608,10 @@ impl MiniFontRuntime {
                         advance_px,
                         line_break_acc,
                         color,
+                        first_line_indent: t.first_line_indent,
+                        text_align: t.text_align as u32,
                         flags: ch.layout_flags,
-                        _pad: [0; 3],
+                        _pad: [0; 1],
                     });
                     pen_x_px += advance_px;
                 }
@@ -942,8 +944,10 @@ struct GpuInstance {
     advance_px: f32,
     line_break_acc: u32,
     color: [f32; 4],
+    first_line_indent: f32,
+    text_align: u32,
     flags: u32,
-    _pad: [u32; 3],
+    _pad: [u32; 1],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1781,6 +1785,8 @@ impl MiniFontRuntime {
                     } else {
                         0.0
                     },
+                    first_line_indent: e.font_style.first_weight,
+                    text_align: e.font_style.text_align,
                 };
                 // Debug print
                 // println!(
