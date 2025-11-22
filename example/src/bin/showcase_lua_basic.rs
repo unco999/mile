@@ -18,9 +18,10 @@ const LUA_DEPLOY_DIR: &str = "target/lua_runtime";
 fn run_lua_entry() -> mlua::Result<()> {
     let lua = Lua::new();
     register_lua_api(&lua)?;
+    trigger_runtime_reset(&lua)?;
+
     let deploy_root = resolved_deploy_root();
     configure_package_path(&lua, &deploy_root)?;
-    trigger_runtime_reset(&lua)?;
 
     let script_path = deploy_root.join("main.lua");
     println!("[lua] entry start => {}", script_path.display());
@@ -159,8 +160,10 @@ fn path_to_lua_str(path: &Path) -> String {
 fn trigger_runtime_reset(lua: &Lua) -> mlua::Result<()> {
     let globals = lua.globals();
     if let Ok(reset_table) = globals.get::<Table>("mile_runtime_reset") {
-        if let Ok(reset_fn) = reset_table.get::<Function>("all") {
-            let _: () = reset_fn.call(())?;
+        for key in ["kennel", "font", "ui", "db"] {
+            if let Ok(reset_fn) = reset_table.get::<Function>(key) {
+                let _: () = reset_fn.call(())?;
+            }
         }
     }
     Ok(())

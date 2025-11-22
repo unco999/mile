@@ -556,7 +556,6 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
-            println!("当前需要渲染的gpu text {:?}",t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let mut pen_x_px: f32 = 0.0;
@@ -1773,18 +1772,18 @@ impl MiniFontRuntime {
                     },
                 };
                 // Debug print
-                println!(
-                    "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
-                    gpu_text.sdf_char_index_start_offset,
-                    gpu_text.sdf_char_index_end_offset,
-                    gpu_text.font_size,
-                    gpu_text.color[0],
-                    gpu_text.color[1],
-                    gpu_text.color[2],
-                    gpu_text.color[3],
-                    &e.text,
-                    e.parent.0
-                );
+                // println!(
+                //     "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
+                //     gpu_text.sdf_char_index_start_offset,
+                //     gpu_text.sdf_char_index_end_offset,
+                //     gpu_text.font_size,
+                //     gpu_text.color[0],
+                //     gpu_text.color[1],
+                //     gpu_text.color[2],
+                //     gpu_text.color[3],
+                //     &e.text,
+                //     e.parent.0
+                // );
                 let new_index = self.out_gpu_texts.len();
                 self.out_gpu_texts.push(gpu_text);
                 self.text_removed.push(false);

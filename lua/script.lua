@@ -17,7 +17,7 @@ Mui.new(parent_bind2)
     :default_state(0)
     :state(0)
         :text({
-            text = "更改实时",
+            text = "什么1",
             font_size = 48
         })
         :size(560, 500)
@@ -77,7 +77,7 @@ for i = 1, 10 do
     Mui.new(child_binding)
         :default_state(0)
         :state(1)
-            :color(1,1,1,1)
+            :color(0,1,1,1)
             :on_event("click",function(ctx) 
                 ctx.state = 0;
             end)

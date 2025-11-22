@@ -3544,6 +3544,12 @@ impl PanelIdPool {
         guard.insert(uuid.to_owned(), id);
         id
     }
+
+    fn reset(&self) {
+        let mut guard = self.map.lock().unwrap();
+        guard.clear();
+        self.next_id.store(1, Ordering::SeqCst);
+    }
 }
 
 fn panel_id_pool() -> &'static PanelIdPool {
@@ -3556,6 +3562,10 @@ fn panel_id_pool() -> &'static PanelIdPool {
 
 pub fn panel_numeric_id(uuid: &str) -> u32 {
     panel_id_pool().id_for(uuid)
+}
+
+pub fn reset_panel_id_pool() {
+    panel_id_pool().reset();
 }
 
 fn next_listener_id() -> u64 {
