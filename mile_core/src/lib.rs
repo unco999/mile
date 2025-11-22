@@ -1,6 +1,6 @@
-use mile_api::prelude::{
+use mile_api::{global::get_lua_runtime, prelude::{
     _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
-};
+}};
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont},
     minimal_runtime::MiniFontRuntime,
@@ -11,16 +11,24 @@ use mile_gpu_dsl::prelude::{
     kennel::{self, Kennel, KennelConfig},
 };
 use mile_graphics::structs::WGPUContext;
+use mile_lua::{
+    register_lua_api,
+    watch::{LuaDeployEvent, LuaDeployStatus, spawn_lua_watch},
+};
 use mile_ui::{
     mui_prototype::{PanelRuntimeHandle, build_demo_panel},
     prelude::*,
     runtime::{BufferArenaConfig, MuiRuntime},
 };
+use mlua::{Function, Lua, Table};
 use std::{
     cell::RefCell,
+    fs, io,
     mem::offset_of,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, Mutex},
+    thread,
     time::{Duration, Instant},
 };
 use wgpu::{SurfaceError, TextureFormat};
@@ -28,7 +36,7 @@ use winit::{
     application::ApplicationHandler,
     dpi::PhysicalPosition,
     event::{ElementState, KeyEvent, WindowEvent},
-    event_loop::EventLoop,
+    event_loop::{EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
     window::{self, Window, WindowAttributes},
 };
@@ -40,6 +48,8 @@ use winit::{
 pub struct Mile {
     App: App,
     runtime: Option<EventLoop<AppEvent>>,
+    pub user_event: EventLoopProxy<AppEvent>,
+    pub lua_runtime:Arc<Lua>
 }
 
 impl Mile {
@@ -58,14 +68,16 @@ impl Mile {
 
         let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
         let _proxy = event_loop_main.create_proxy();
-
+        
         // GlobalState keeps GPU/device handles shared across threads.
 
         // App bundles hubs, fonts, rendering context, and timing info.
         let mut app = App::new();
         Mile {
+            lua_runtime:Arc::from(Lua::new()),
             App: app,
             runtime: Some(event_loop_main),
+            user_event: _proxy,
         }
     }
 
@@ -108,7 +120,166 @@ pub struct App {
     pub demo: Option<Box<dyn Fn()>>,
 }
 
+pub const LUA_SOURCE_DIR: &str = "lua";
+pub const LUA_DEPLOY_DIR: &str = "target/lua_runtime";
+
+pub fn run_lua_entry(lua: Arc<Lua>) -> mlua::Result<()> {
+    register_lua_api(&lua)?;
+
+    let deploy_root = resolved_deploy_root();
+    configure_package_path(&lua, &deploy_root)?;
+
+    let script_path = deploy_root.join("main.lua");
+    println!("[lua] entry start => {}", script_path.display());
+    let script = fs::read_to_string(&script_path)?;
+    lua.load(&script).set_name("main.lua").exec()?;
+
+    let globals = lua.globals();
+    let entry: Function = globals.get("mile_entry")?;
+    let context: Table = lua.create_table()?;
+    let handle: Table = entry.call(context)?;
+
+    if let Ok(run_fn) = handle.get::<Function>("run") {
+        run_fn.call::<()>(())?;
+    }
+
+    Ok(())
+}
+
+fn configure_package_path(lua: &Lua, deploy_root: &Path) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let package: Table = globals.get("package")?;
+    let current_path: String = package.get("path")?;
+    let deploy = path_to_lua_str(deploy_root);
+    let search_roots = format!(
+        "{deploy}/?.lua;{deploy}/?/init.lua;{current}",
+        deploy = deploy,
+        current = current_path
+    );
+    package.set("path", search_roots)?;
+    Ok(())
+}
+
+
+
+pub fn spawn_lua_deploy_logger() {
+    let bus = global_event_bus().clone();
+    thread::spawn(move || {
+        let stream = bus.subscribe::<LuaDeployEvent>();
+        while let Ok(delivery) = stream.recv() {
+            let event = delivery.into_owned().unwrap_or_else(|arc| (*arc).clone());
+            log_deploy_event(event);
+        }
+    });
+}
+
+pub fn log_deploy_event(event: LuaDeployEvent) {
+    match event.status {
+        LuaDeployStatus::Copied => {
+            println!(
+                "[lua_deploy] copied {:?} -> {:?}",
+                event.source, event.target
+            );
+        }
+        LuaDeployStatus::Removed => {
+            println!(
+                "[lua_deploy] removed target {:?} (source {:?})",
+                event.target, event.source
+            );
+        }
+        LuaDeployStatus::Failed(reason) => {
+            eprintln!("[lua_deploy] failed to sync {:?}: {}", event.source, reason);
+        }
+    }
+}
+
+pub fn bootstrap_lua_assets() -> io::Result<()> {
+    copy_lua_tree(Path::new(LUA_SOURCE_DIR), Path::new(LUA_DEPLOY_DIR))
+}
+
+pub fn copy_lua_tree(src: &Path, dst: &Path) -> io::Result<()> {
+    if !src.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("lua source dir {:?} not found", src),
+        ));
+    }
+
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let target_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_lua_tree(&path, &target_path)?;
+        } else if is_lua_file(&path) {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&path, &target_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_lua_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("lua"))
+        .unwrap_or(false)
+}
+
+fn resolved_deploy_root() -> PathBuf {
+    fs::canonicalize(LUA_DEPLOY_DIR).unwrap_or_else(|_| Path::new(LUA_DEPLOY_DIR).to_path_buf())
+}
+
+fn path_to_lua_str(path: &Path) -> String {
+    let replaced = path.to_string_lossy().replace('\\', "/");
+    if let Some(stripped) = replaced.strip_prefix("//?/") {
+        stripped.to_string()
+    } else {
+        replaced
+    }
+}
+
+pub fn trigger_runtime_reset(lua: Arc<Lua>) -> mlua::Result<()> {
+    let globals = lua.globals();
+    if let Ok(reset_table) = globals.get::<Table>("mile_runtime_reset") {
+        for key in ["kennel", "font", "ui", "db"] {
+            if let Ok(reset_fn) = reset_table.get::<Function>(key) {
+                let _: () = reset_fn.call(())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl App {
+    pub fn reset(&mut self) {
+        println!("触发了更新");
+        if let Err(err) = run_lua_entry(get_lua_runtime()) {
+            eprintln!("[lua_watch] reload failed: {err}");
+        }
+        if let Some(runtime_cell) = &self.mui_runtime {
+
+
+            let ctx = self.wgpu_context.as_ref().unwrap();
+            let mut runtime = runtime_cell.borrow_mut();
+
+            runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
+            // runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+            if let Some(font_cell) = &self.mile_font {
+                let mut font = font_cell.borrow_mut();
+                let panels = &runtime.buffers.instance;
+                let deltas = &runtime.buffers.panel_anim_delta;
+                font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
+            }
+
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             wgpu_context: None,
@@ -141,6 +312,7 @@ impl App {
 
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
+        
         runtime.flush_relation_work_if_needed(&ctx.queue);
         // 始终刷新已注册的 payload；upload 会根据 dirty 标志决定是否重建实例
         runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
@@ -293,6 +465,7 @@ fn cursor_to_normalized(window: &Window, position: PhysicalPosition<f64>) -> [f3
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Tick,
+    Reset,
 }
 
 impl ApplicationHandler<AppEvent> for App {
@@ -344,12 +517,9 @@ impl ApplicationHandler<AppEvent> for App {
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
-        if matches!(event, AppEvent::Tick) {
-            self.update_frame_time();
-            self.update_runtime();
-            self.compute();
-            self.render();
-            self.app_post();
+        match event {
+            AppEvent::Tick => {}
+            AppEvent::Reset => self.reset(),
         }
     }
 

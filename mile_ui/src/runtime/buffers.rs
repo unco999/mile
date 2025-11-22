@@ -256,6 +256,90 @@ impl BufferArena {
             clamp_desc: self.clamp_desc.slice(..),
         }
     }
+    pub fn reset_panel_memory(&self, queue: &wgpu::Queue) {
+        fn zero_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, size: usize) {
+            if size == 0 {
+                return;
+            }
+            let zeros = vec![0u8; size];
+            queue.write_buffer(buffer, 0, &zeros);
+        }
+
+        let panel_count = self.capacities.max_panels as usize;
+        let panel_bytes = panel_count * std::mem::size_of::<Panel>();
+        zero_buffer(queue, &self.instance, panel_bytes);
+        zero_buffer(queue, &self.snapshot, panel_bytes);
+
+        let delta_bytes = panel_count * std::mem::size_of::<PanelAnimDelta>();
+        zero_buffer(queue, &self.panel_anim_delta, delta_bytes);
+        zero_buffer(
+            queue,
+            &self.spawn_flags,
+            panel_count * std::mem::size_of::<u32>(),
+        );
+        zero_buffer(
+            queue,
+            &self.indirect_draws,
+            panel_count * std::mem::size_of::<[u32; 5]>(),
+        );
+
+        let anim_fields = self.capacities.max_animation_fields as usize;
+        zero_buffer(
+            queue,
+            &self.animation_fields,
+            anim_fields * std::mem::size_of::<AnimtionFieldOffsetPtr>(),
+        );
+        zero_buffer(
+            queue,
+            &self.animation_values,
+            anim_fields * std::mem::size_of::<f32>(),
+        );
+
+        let collections = self.capacities.max_collections as usize;
+        zero_buffer(
+            queue,
+            &self.collections,
+            collections * std::mem::size_of::<GpuUiCollection>(),
+        );
+
+        let relations = self.capacities.max_relations as usize;
+        zero_buffer(
+            queue,
+            &self.relations,
+            relations * std::mem::size_of::<GpuUiInfluence>(),
+        );
+        zero_buffer(
+            queue,
+            &self.relation_ids,
+            relations * std::mem::size_of::<GpuUiIdInfo>(),
+        );
+        zero_buffer(
+            queue,
+            &self.relation_work,
+            relations * std::mem::size_of::<crate::runtime::_ty::GpuRelationWorkItem>(),
+        );
+        zero_buffer(
+            queue,
+            &self.relation_args,
+            relations * std::mem::size_of::<GpuRelationDispatchArgs>(),
+        );
+        zero_buffer(
+            queue,
+            &self.clamp_rules,
+            relations * std::mem::size_of::<crate::runtime::_ty::GpuClampRule>(),
+        );
+
+        let clamp_desc = crate::runtime::_ty::GpuClampDescriptor::default();
+        queue.write_buffer(&self.clamp_desc, 0, bytes_of(&clamp_desc));
+
+        let interaction_cache = crate::runtime::_ty::GpuInteractionFrameCache::zeroed();
+        queue.write_buffer(&self.interaction_frames, 0, bytes_of(&interaction_cache));
+        let debug = crate::runtime::_ty::GpuUiDebugReadCallBack::default();
+        queue.write_buffer(&self.debug_buffer, 0, bytes_of(&debug));
+
+        let anim_desc = GpuAnimationDes::default();
+        queue.write_buffer(&self.animation_descriptor, 0, bytes_of(&anim_desc));
+    }
 }
 
 /// Lightweight collection of buffer bindings passed into compute/render stages.

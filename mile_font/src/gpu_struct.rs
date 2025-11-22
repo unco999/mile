@@ -9,6 +9,7 @@ use std::{
 
 use bitflags::bitflags;
 use bytemuck::{Pod, Zeroable};
+use crate::DEFAULT_FONT_PATH;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -135,7 +136,7 @@ impl Default for FontStyle {
     fn default() -> Self {
         Self {
             font_size: 24,
-            font_file_path: Arc::from("STXIHEI.ttf"),
+            font_file_path: Arc::from(DEFAULT_FONT_PATH),
             font_color: [1.0, 1.0, 1.0, 1.0],
             font_weight: 0,
             font_line_height: 0,

@@ -1,7 +1,7 @@
-print("[lua] Demo             ڵ  10         (             ֵ)")
+-- print("[lua] Demo             ڵ  10         (             ֵ)")
 
-local PARENT_TAG = "lua_container_parent"
-local ITEM_TAG = "lua_container_child"
+-- local PARENT_TAG = "lua_container_parent"
+-- local ITEM_TAG = "lua_container_child"
 
 local parent_bind = db({
     tag = PARENT_TAG,
@@ -16,15 +16,19 @@ local parent_bind2 = db({
 Mui.new(parent_bind2)
     :default_state(0)
     :state(0)
+        :text({
+            text = "测试更新",
+            font_size = 48
+        })
         :size(560, 500)
         :position(100, 620)
         :color(0.08, 0.50, 0.16, 0.95)
         :border({
             color = { 0.15, 0.45, 0.85, 0.8 },
             width = 3.0,
-            radius = 10.0,
+            radius = 5.0,
         })
-        :on_event("target_drag_drop",function()
+        :on_event("target_drag_drop",function(ctx)
             print("被拖入了")
         end)
         :on_event("hover",function()
@@ -47,7 +51,7 @@ Mui.new(parent_bind)
     :state(0)
         :size(560, 500)
         :position(120, 120)
-        :color(0.08, 0.10, 0.16, 0.95)
+        :color(1, 1, 0.16, 0.95)
         :border({
             color = { 0.15, 0.45, 0.85, 0.8 },
             width = 3.0,
@@ -72,7 +76,16 @@ for i = 1, 10 do
     })
     Mui.new(child_binding)
         :default_state(0)
+        :state(1)
+            :color(1,1,1,1)
+            :on_event("click",function(ctx) 
+                ctx.state = 0;
+            end)
         :state(0)
+            :text({
+                text = "4",
+                font_size = 21
+            })
             :position(50 * i,50 * i)
             :size(50, 50)
             :color(0.12 + i * 0.015, 0.35 + i * 0.02, 0.25, 0.88)
@@ -82,12 +95,11 @@ for i = 1, 10 do
                 radius = 8.0,
             })
             :z_index(10)
-            :on_event("drag",function(ctx) 
-                local payload = ctx.payload
-                ctx.drag_payload = payload;
-                print("当前拖拽开始了");
+            :on_event("click",function(ctx) 
+                ctx.state = 1;
             end)
             :container_with(parent_bind)
         :build()
 end
 
+print("构建了所有面板")

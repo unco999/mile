@@ -1224,11 +1224,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     /// - font_size: 像素大小
     /// - color: RGBA
     /// - weight/line_height: 预留参数（直接传入 FontStyle）
-    pub fn text(
-        &self,
-        text: &str,
-        style:FontStyle
-    ) {
+    pub fn text(&self, text: &str, style: FontStyle) {
         let pid = PanelId(self.args.panel_key.panel_id);
         // Always clear previous texts for this panel before queuing new one
         global_event_bus().publish(RemoveRenderFont { parent: pid });
@@ -1325,6 +1321,11 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             .and_then(|ctx| ctx.payload.downcast_ref::<T>())
     }
 
+    /// Retrieve the source panel for the active drag context, if any.
+    pub fn drag_source_panel(&self) -> Option<&PanelKey> {
+        self.drag_context.as_ref().map(|ctx| &ctx.source)
+    }
+
     /// Set the active drag payload for this flow; targets can read via `drag_payload`.
     pub fn set_drag_payload<T>(&mut self, payload: T)
     where
@@ -1332,6 +1333,45 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     {
         let id = DragPayloadId::of::<T>();
         self.drag_payload_with_id(id, payload);
+    }
+
+    /// Set the drag source panel's state if a drag context is active.
+    /// Returns `true` when the transition event is enqueued successfully.
+    pub fn set_drag_source_state(&mut self, state: UiState) -> bool {
+        let Some(ctx) = self.drag_context.clone() else {
+            return false;
+        };
+
+        let arc = runtime_map::<TPayload>();
+        let mut registry = arc.lock().unwrap();
+        let Some(runtime) = registry.get_mut(&ctx.source) else {
+            return false;
+        };
+
+        let handle = runtime.handle.clone();
+        if let Err(err) = handle.mutate(|record| {
+            record.current_state = state;
+            record.change_epoch = record.change_epoch.wrapping_add(1);
+        }) {
+            eprintln!("failed to update drag source state: {err:?}");
+            return false;
+        }
+
+        runtime.current_state = state;
+
+        let Ok(record_after) = handle.read() else {
+            return false;
+        };
+
+        let args = PanelEventArgs {
+            panel_key: ctx.source.clone(),
+            state,
+            event: UiEventKind::TargetDragDrop,
+            record_snapshot: record_after.clone(),
+        };
+        let transition = build_state_transition_event(&record_after, &args, state);
+        enqueue_state_transition(transition);
+        true
     }
 
     /// Set drag payload with an explicit id (e.g., custom tag for matching).
@@ -3500,6 +3540,12 @@ impl PanelIdPool {
         guard.insert(uuid.to_owned(), id);
         id
     }
+
+    fn reset(&self) {
+        let mut guard = self.map.lock().unwrap();
+        guard.clear();
+        self.next_id.store(1, Ordering::SeqCst);
+    }
 }
 
 fn panel_id_pool() -> &'static PanelIdPool {
@@ -3512,6 +3558,10 @@ fn panel_id_pool() -> &'static PanelIdPool {
 
 pub fn panel_numeric_id(uuid: &str) -> u32 {
     panel_id_pool().id_for(uuid)
+}
+
+pub fn reset_panel_id_pool() {
+    panel_id_pool().reset();
 }
 
 fn next_listener_id() -> u64 {

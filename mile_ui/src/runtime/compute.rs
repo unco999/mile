@@ -108,6 +108,12 @@ impl ComputePipelines {
     pub fn mark_all_dirty(&mut self) {
         self.interaction.set_dirty();
         self.animation.set_dirty();
+        self.panel_delta.set_dirty();
+    }
+
+    #[inline]
+    pub fn clear_relation_work(&mut self) {
+        self.relations.clear();
     }
 
     #[inline]
@@ -540,7 +546,7 @@ impl InteractionComputeStage {
                     }
                     if new_frame.hover_id != u32::MAX {
                         println!("拖拽进入了某个面板");
-                        
+
                         hub.push(CpuPanelEvent::TargetDragEnter((
                             new_frame.frame,
                             UiInteractionScope {
@@ -561,7 +567,10 @@ impl InteractionComputeStage {
                     )));
 
                     if old_frame.hover_id != u32::MAX {
-                        println!("拖拽并且落到了某个面板上 hover_id:{} : trigger_panel_state:{}",old_frame.hover_id,old_frame.trigger_panel_state);
+                        println!(
+                            "拖拽并且落到了某个面板上 hover_id:{} : trigger_panel_state:{}",
+                            old_frame.hover_id, old_frame.trigger_panel_state
+                        );
                         hub.push(CpuPanelEvent::TargetDragDrop((
                             new_frame.frame,
                             UiInteractionScope {
@@ -1147,6 +1156,11 @@ impl RelationComputeStage {
     #[inline]
     pub fn has_work(&self) -> bool {
         self.work_count > 0
+    }
+
+    pub fn clear(&mut self) {
+        self.work_count = 0;
+        self.levels.clear();
     }
 
     pub fn readback(

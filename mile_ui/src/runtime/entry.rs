@@ -208,8 +208,9 @@ pub struct MuiRuntime {
     pub panel_cache: HashMap<PanelKey, PanelCpuDescriptor>,
     pub panel_instances: Vec<Panel>,
     pub panel_snapshots: Vec<Panel>,
-    panel_instances_dirty: bool,
+    pub panel_instances_dirty: bool,
     transitioning_panels: HashMap<u32, f32>,
+    pending_transition_instances: HashSet<u32>,
     animation_descriptor: GpuAnimationDes,
     animation_field_cache: HashMap<(u32, u32), u32>,
     pub trace: RefCell<GpuDebug>,
@@ -349,6 +350,7 @@ impl MuiRuntime {
             panel_snapshots: Vec::new(),
             panel_instances_dirty: true,
             transitioning_panels: HashMap::new(),
+            pending_transition_instances: HashSet::new(),
             animation_descriptor: GpuAnimationDes::default(),
             animation_field_cache: HashMap::new(),
             trace: RefCell::new(GpuDebug::new("mui_runtime_render")),
@@ -844,13 +846,14 @@ impl MuiRuntime {
     }
 
     pub fn upload_panel_instances(&mut self, device: &Device, queue: &Queue) {
+        self.flush_pending_transition_instances(queue);
         if !self.panel_instances_dirty {
             return;
         }
         if self.texture_bindings.is_none() {
             let _ = self.rebuild_texture_bindings(device, queue);
         }
-
+        println!("有新的panel更新");
         let mut descriptors: Vec<&PanelCpuDescriptor> = self.panel_cache.values().collect();
         descriptors.sort_by_key(|desc| desc.key.panel_id);
 
@@ -925,6 +928,7 @@ impl MuiRuntime {
         mui_prototype::drain_pending_event_registrations();
         let events = self.event_hub().poll();
         if events.is_empty() {
+            self.flush_pending_transition_instances(queue);
             self.process_shader_results(queue);
             return;
         }
@@ -942,35 +946,24 @@ impl MuiRuntime {
             guard.emit(&event);
         }
         drop(guard);
+        self.flush_pending_transition_instances(queue);
         self.process_shader_results(queue);
     }
 
-    fn reset_runtime(&mut self, device: &Device, _queue: &Queue) {
+    fn reset_runtime(&mut self, _device: &Device, queue: &Queue) {
         snapshot_registry::clear();
-        let capacities = self.buffers.capacities.clone();
-        self.buffers = BufferArena::new(device, &capacities);
-        self.render = RenderPipelines::new(device);
-        self.compute = RefCell::new(ComputePipelines::new(
-            device,
-            &self.buffers,
-            self.global_uniform.buffer(),
-            self.state.event_hub.clone(),
-        ));
-        self.texture_atlas_store = TextureAtlasStore::default();
-        self.texture_bindings = None;
-        self.render_bind_group_layout = None;
-        self.render_bind_group = None;
-        self.render_surface_format = None;
-        self.kennel_bind_group_layout = None;
-        self.kennel_bind_group = None;
+        self.buffers.reset_panel_memory(queue);
         self.panel_cache.clear();
         self.panel_instances.clear();
         self.panel_snapshots.clear();
         self.panel_instances_dirty = true;
         self.transitioning_panels.clear();
+        self.pending_transition_instances.clear();
         self.animation_descriptor = GpuAnimationDes::default();
+        self.animation_descriptor
+            .write_to_buffer(queue, &self.buffers.animation_descriptor);
         self.animation_field_cache.clear();
-        self.pending_relation_flush = false;
+        self.pending_relation_flush = true;
         self.frame_history = FrameHistory::default();
         if let Ok(mut registry) = self.state.panel_events.lock() {
             *registry = PanelEventRegistry::default();
@@ -978,7 +971,10 @@ impl MuiRuntime {
         self.state.clear_frame();
         self.state.frame_state = FrameState::default();
         self.state.event_hub.poll();
-        self.trace = RefCell::new(GpuDebug::new("mui_runtime_render"));
+        if let Ok(mut compute) = self.compute.try_borrow_mut() {
+            compute.mark_all_dirty();
+            compute.clear_relation_work();
+        }
     }
 
     fn apply_panel_style_rewrite(&mut self, queue: &Queue, sig: &PanelStyleRewrite) {
@@ -1536,7 +1532,24 @@ impl MuiRuntime {
                 .find(|desc| desc.key.panel_id == panel_id)
             {
                 desc.display_state = desc.current_state;
-                self.panel_instances_dirty = true;
+                self.pending_transition_instances.insert(panel_id);
+            }
+        }
+    }
+
+    fn flush_pending_transition_instances(&mut self, queue: &Queue) {
+        if self.pending_transition_instances.is_empty() {
+            return;
+        }
+        let pending: Vec<u32> = self.pending_transition_instances.drain().collect();
+        for panel_id in pending {
+            let descriptor = self
+                .panel_cache
+                .iter()
+                .find(|(key, _)| key.panel_id == panel_id)
+                .map(|(_, desc)| desc.clone());
+            if let Some(desc) = descriptor {
+                self.upsert_panel_immediate_from_descriptor(&desc, queue);
             }
         }
     }

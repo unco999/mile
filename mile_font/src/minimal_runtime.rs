@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -18,6 +18,7 @@ use crate::{
         GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT, GpuChar,
         GpuText,
     },
+    DEFAULT_FONT_PATH,
 };
 
 type RegisterEvent = ModEventStream<(
@@ -208,10 +209,7 @@ impl MiniFontRuntime {
             let new_idx = kept_texts.len();
             kept_texts.push(text.clone());
             kept_flags.push(false);
-            rebuilt_indices
-                .entry(text.panel)
-                .or_default()
-                .push(new_idx);
+            rebuilt_indices.entry(text.panel).or_default().push(new_idx);
         }
         self.out_gpu_texts = kept_texts;
         self.text_removed = kept_flags;
@@ -533,6 +531,7 @@ impl MiniFontRuntime {
             cache: None,
         });
 
+        self.render_format = Some(format);
         self.render = Some(MiniRender {
             bgl,
             bg,
@@ -556,7 +555,6 @@ impl MiniFontRuntime {
             if self.text_removed.get(t_idx).copied().unwrap_or(false) {
                 continue;
             }
-            println!("当前需要渲染的gpu text {:?}",t);
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
             let mut pen_x_px: f32 = 0.0;
@@ -1002,6 +1000,7 @@ pub struct MiniFontRuntime {
     buffers: Option<MiniBuffers>,
     compute: Option<MiniCompute>,
     render: Option<MiniRender>,
+    render_format: Option<TextureFormat>,
     // whether new data uploaded and requires compute
     is_update: bool,
     // debug readback
@@ -1030,6 +1029,7 @@ impl MiniFontRuntime {
             buffers: None,
             compute: None,
             render: None,
+            render_format: None,
             is_update: false,
             gpu_debug: GpuDebug::new("MiniFontRuntime"),
             draw_instance_count: 0,
@@ -1046,7 +1046,7 @@ impl MiniFontRuntime {
     /// Convenience: load the demo font used in examples.
     pub fn load_font_file(&mut self) {
         // Prefer repository path under tf/ first; fall back handled in ensure_face_loaded
-        if let Err(e) = self.load_to_face("tf/BIZUDPGothic-Regular.ttf") {
+        if let Err(e) = self.load_to_face(DEFAULT_FONT_PATH) {
             eprintln!(
                 "MiniFontRuntime.load_font_file: failed to load default face: {}",
                 e
@@ -1517,7 +1517,7 @@ impl MiniFontRuntime {
     /// Minimal behavior: dedup, skip cached, assign consecutive indices per font.
     // removed: legacy naive queue_batch_parse; glyph_index is only updated after GPU upload now.
 
-    fn reset_runtime_state(&mut self) {
+    fn reset_runtime_state(&mut self, drop_gpu: bool) {
         self.glyph_index.clear();
         self.fonts.clear();
         self.cpu_glyph_descs.clear();
@@ -1531,12 +1531,17 @@ impl MiniFontRuntime {
         self.tile_cursor = 0;
         self.gpu_char_cursor = 0;
         self.quad_index = 0;
-        self.buffers = None;
-        self.compute = None;
-        self.render = None;
         self.is_update = false;
         self.draw_instance_count = 0;
-        self.gpu_debug = GpuDebug::new("MiniFontRuntime");
+
+        if drop_gpu {
+            self.buffers = None;
+            self.compute = None;
+            self.render = None;
+            self.gpu_debug = GpuDebug::new("MiniFontRuntime");
+        } else if let Some(bufs) = self.buffers.as_mut() {
+            bufs.instruction_cursor = 0;
+        }
     }
 
     /// Poll once: process batch font entries, then render texts.
@@ -1545,7 +1550,12 @@ impl MiniFontRuntime {
     pub fn poll_global_event(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let (batch_entry, batch_render, batch_remove, font_reset) = self.register.poll();
         if !font_reset.is_empty() {
-            self.reset_runtime_state();
+            self.reset_runtime_state(false);
+            self.init_gpu(device);
+            if let Some(fmt) = self.render_format {
+                self.init_render_pipeline(device, queue, fmt);
+            }
+            self.load_font_file();
         }
 
         if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {
@@ -1773,18 +1783,18 @@ impl MiniFontRuntime {
                     },
                 };
                 // Debug print
-                println!(
-                    "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
-                    gpu_text.sdf_char_index_start_offset,
-                    gpu_text.sdf_char_index_end_offset,
-                    gpu_text.font_size,
-                    gpu_text.color[0],
-                    gpu_text.color[1],
-                    gpu_text.color[2],
-                    gpu_text.color[3],
-                    &e.text,
-                    e.parent.0
-                );
+                // println!(
+                //     "GpuText generated -> start:{} end:{} font_size:{} color:[{:.2},{:.2},{:.2},{:.2}] text:\"{}\" panel:{}",
+                //     gpu_text.sdf_char_index_start_offset,
+                //     gpu_text.sdf_char_index_end_offset,
+                //     gpu_text.font_size,
+                //     gpu_text.color[0],
+                //     gpu_text.color[1],
+                //     gpu_text.color[2],
+                //     gpu_text.color[3],
+                //     &e.text,
+                //     e.parent.0
+                // );
                 let new_index = self.out_gpu_texts.len();
                 self.out_gpu_texts.push(gpu_text);
                 self.text_removed.push(false);
@@ -1827,5 +1837,3 @@ impl MiniFontRuntime {
         touched
     }
 }
-
-

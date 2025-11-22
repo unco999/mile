@@ -7,9 +7,9 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub enum LuaDeployStatus {
@@ -54,19 +54,46 @@ where
     thread::spawn(move || {
         let debounce = Duration::from_millis(200);
         let mut on_reload = on_reload;
+        let mut pending_reload = false;
+        let mut deadline: Option<Instant> = None;
+
         loop {
-            match rx.recv() {
-                Ok(Ok(event)) => {
-                    thread::sleep(debounce);
+            let message = if let Some(deadline_instant) = deadline {
+                match rx.recv_timeout(deadline_instant.saturating_duration_since(Instant::now())) {
+                    Ok(res) => Some(res),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if pending_reload {
+                            on_reload();
+                            pending_reload = false;
+                        }
+                        deadline = None;
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                match rx.recv() {
+                    Ok(res) => Some(res),
+                    Err(_) => break,
+                }
+            };
+
+            match message {
+                Some(Ok(event)) => {
                     if handle_event(event, &watch_root, &deploy_root_clone) {
-                        on_reload();
+                        pending_reload = true;
+                        deadline = Some(Instant::now() + debounce);
                     }
                 }
-                Ok(Err(err)) => {
+                Some(Err(err)) => {
                     eprintln!("[lua_watch] notify error: {err}");
                 }
-                Err(_) => break,
+                None => {}
             }
+        }
+
+        if pending_reload {
+            on_reload();
         }
     });
 
