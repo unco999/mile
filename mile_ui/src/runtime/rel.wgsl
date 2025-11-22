@@ -19,45 +19,45 @@ struct PanelAnimDelta {
     container_origin: vec2<f32>,
 };
 struct Panel {
-    // === 16-byte 区 1 ===
+    // === 16-byte  ?1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte 区 2 ===
+    // === 16-byte  ?2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte 区 3 ===
+    // === 16-byte  ?3 ===
     z_index: u32,           // 4 bytes
     pass_through: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte 区 4 ===
+    // === 16-byte  ?4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte 区 5 ===
+    // === 16-byte  ?5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte 区 6 ===
+    // === 16-byte  ?6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte 区 7 ===
+    // === 16-byte  ?7 ===
     scale: vec4<f32>,
 
-    // === 16-byte 区 8 ===
+    // === 16-byte  ?8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte 区 9 ===
+    // === 16-byte  ?9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte 区 10 ===
+    // === 16-byte  ?10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -132,7 +132,9 @@ const REL_LAYOUT_HORIZONTAL: u32 = 1u;
 const REL_LAYOUT_VERTICAL: u32 = 2u;
 const REL_LAYOUT_GRID: u32 = 3u;
 const REL_LAYOUT_RING: u32 = 4u;
+const REL_LAYOUT_FLOAT: u32 = 5u;
 const REL_LAYOUT_ALIGN_CENTER: u32 = 1u << 12u;
+const REL_FLOAT_AXIS_VERTICAL: u32 = 1u << 14u;
 const TAU: f32 = 6.28318530718;
 
 fn is_valid_panel(id: u32) -> bool {
@@ -182,6 +184,103 @@ fn align_axis_offset(
     return start_pad;
 }
 
+fn fetch_container_item(container_id: u32, target_order: u32, fallback: RelWorkItem) -> RelWorkItem {
+    let total = arrayLength(&work_items);
+    var idx: u32 = 0u;
+    loop {
+        if (idx >= total) {
+            break;
+        }
+        let candidate = work_items[idx];
+        if (candidate.container_id == container_id) {
+            let ord = clamp_order(candidate.order, candidate.total);
+            if (ord == target_order) {
+                return candidate;
+            }
+        }
+        idx += 1u;
+    }
+    return fallback;
+}
+
+fn compute_float_offset(panel_index: u32, item: RelWorkItem, vertical: bool) -> vec2<f32> {
+    let container_size = resolve_container_size(item);
+    let left_pad = item.padding.x;
+    let top_pad = item.padding.y;
+    let right_pad = item.padding.z;
+    let bottom_pad = item.padding.w;
+    let order = clamp_order(item.order, item.total);
+    let align_center = (item.relation_flags & REL_LAYOUT_ALIGN_CENTER) != 0u;
+
+    if (!vertical) {
+        let slot = resolve_slot_size(item, panel_index);
+        let limit = max(container_size.x - left_pad - right_pad, slot.x);
+        var cursor = vec2<f32>(left_pad, top_pad);
+        var line_height = 0.0;
+        var j: u32 = 0u;
+        loop {
+            if (j >= order) {
+                break;
+            }
+            let prev_item = fetch_container_item(item.container_id, j, item);
+        var prev_panel = 0u;
+        if (prev_item.panel_id > 0u) {
+            prev_panel = prev_item.panel_id - 1u;
+        }
+        let prev_slot = resolve_slot_size(prev_item, prev_panel);
+            if (cursor.x > left_pad && cursor.x + prev_slot.x > left_pad + limit) {
+                cursor.x = left_pad;
+                cursor.y += line_height + item.spacing.y;
+                line_height = 0.0;
+            }
+            cursor.x += prev_slot.x + item.spacing.x;
+            line_height = max(line_height, prev_slot.y);
+            j += 1u;
+        }
+        if (cursor.x > left_pad && cursor.x + slot.x > left_pad + limit) {
+            cursor.x = left_pad;
+            cursor.y += line_height + item.spacing.y;
+            line_height = 0.0;
+        }
+        let row_height = max(line_height, slot.y);
+        let offset_y = cursor.y + select(0.0, (row_height - slot.y) * 0.5, align_center && row_height > slot.y);
+        return vec2<f32>(cursor.x, offset_y);
+    }
+
+    let slot = resolve_slot_size(item, panel_index);
+    let limit = max(container_size.y - top_pad - bottom_pad, slot.y);
+    var cursor = vec2<f32>(left_pad, top_pad);
+    var column_width = 0.0;
+    var j: u32 = 0u;
+    loop {
+        if (j >= order) {
+            break;
+        }
+        let prev_item = fetch_container_item(item.container_id, j, item);
+        var prev_panel = 0u;
+        if (prev_item.panel_id > 0u) {
+            prev_panel = prev_item.panel_id - 1u;
+        }
+        let prev_slot = resolve_slot_size(prev_item, prev_panel);
+        if (cursor.y > top_pad && cursor.y + prev_slot.y > top_pad + limit) {
+            cursor.y = top_pad;
+            cursor.x += column_width + item.spacing.x;
+            column_width = 0.0;
+        }
+        cursor.y += prev_slot.y + item.spacing.y;
+        column_width = max(column_width, prev_slot.x);
+        j += 1u;
+    }
+    if (cursor.y > top_pad && cursor.y + slot.y > top_pad + limit) {
+        cursor.y = top_pad;
+        cursor.x += column_width + item.spacing.x;
+        column_width = 0.0;
+    }
+    let col_width = max(column_width, slot.x);
+    let offset_x = cursor.x + select(0.0, (col_width - slot.x) * 0.5, align_center && col_width > slot.x);
+    return vec2<f32>(offset_x, cursor.y);
+}
+
 fn compute_layout_offset(panel_id: u32, item: RelWorkItem) -> vec2<f32> {
 
     let layout_kind = item.relation_flags & REL_LAYOUT_TYPE_MASK;
@@ -229,6 +328,9 @@ fn compute_layout_offset(panel_id: u32, item: RelWorkItem) -> vec2<f32> {
             top_pad + inner_height * 0.5,
         );
         offset = center + vec2<f32>(cos(angle), sin(angle)) * radius - slot * 0.5;
+    } else if (layout_kind == REL_LAYOUT_FLOAT) {
+        let vertical = (item.relation_flags & REL_FLOAT_AXIS_VERTICAL) != 0u;
+        return compute_float_offset(panel_id, item, vertical);
     }
     return offset;
 }

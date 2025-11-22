@@ -20,7 +20,10 @@ use mile_ui::{
         BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState,
         reset_panel_id_pool,
     },
-    mui_rel::{RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace, apply_container_alias},
+    mui_rel::{
+        RelContainerSpec, RelFloatAxis, RelLayoutKind, RelScrollAxis, RelSpace,
+        apply_container_alias,
+    },
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
 };
@@ -1499,6 +1502,32 @@ fn parse_layout_kind(kind: &str, table: Option<&Table>) -> LuaResult<RelLayoutKi
                 clockwise,
             })
         }
+        "float" => {
+            let axis = table
+                .map(|tbl| tbl.get::<Option<String>>("axis"))
+                .transpose()?
+                .flatten()
+                .map(|name| parse_float_axis_name(&name))
+                .transpose()?
+                .unwrap_or(RelFloatAxis::Horizontal);
+            let spacing = if let Some(tbl) = table {
+                parse_vec2_field(tbl, "spacing")?
+                    .or_else(|| parse_vec2_field(tbl, "gap").ok().flatten())
+                    .unwrap_or([0.0, 0.0])
+            } else {
+                [0.0, 0.0]
+            };
+            let align_center = table
+                .map(|tbl| tbl.get::<Option<bool>>("align_center"))
+                .transpose()?
+                .flatten()
+                .unwrap_or(false);
+            Ok(RelLayoutKind::Float {
+                axis,
+                spacing,
+                align_center,
+            })
+        }
         other => Err(mlua::Error::external(format!(
             "unsupported layout kind '{other}'"
         ))),
@@ -1536,6 +1565,16 @@ fn parse_vec4_field(table: &Table, key: &str) -> LuaResult<Option<[f32; 4]>> {
             Ok(Some(values))
         }
         _ => Ok(None),
+    }
+}
+
+fn parse_float_axis_name(name: &str) -> LuaResult<RelFloatAxis> {
+    match name.trim().to_lowercase().as_str() {
+        "x" | "horizontal" => Ok(RelFloatAxis::Horizontal),
+        "y" | "vertical" => Ok(RelFloatAxis::Vertical),
+        other => Err(mlua::Error::external(format!(
+            "unsupported float axis '{other}'"
+        ))),
     }
 }
 

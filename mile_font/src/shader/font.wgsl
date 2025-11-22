@@ -285,7 +285,7 @@ fn adaptive_edge_width(size_px: f32, px_range: f32) -> vec2<f32> {
 fn adaptive_gamma(size_px: f32) -> f32 {
     // 小字号需要更亮的边缘，大字号保持锐利。
     let size_blend = font_size_normalized(size_px);
-    return mix(0.3, 1.2, size_blend);
+    return mix(0.6, 1.2, size_blend) + 0.24;
 }
 
 @fragment
