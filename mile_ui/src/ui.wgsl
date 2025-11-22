@@ -564,6 +564,19 @@ fn evaluate_render_layer(layer_index: u32, input: VertexOutput, base_color: vec4
     return composed;
 }
 
+fn rounded_rect_coverage(uv: vec2<f32>, size: vec2<f32>, radius: f32) -> f32 {
+    let half_size = size * 0.5;
+    let clamped_radius = clamp(radius, 0.0, min(half_size.x, half_size.y));
+
+    let local = uv * size - half_size;
+    let q = abs(local) - (half_size - vec2<f32>(clamped_radius));
+
+    let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - clamped_radius;
+
+    let aa = max(fwidth(dist), 1e-4);
+    return clamp(0.5 - dist / aa, 0.0, 1.0);
+}
+
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // 浣跨�?texture_id 绱㈠紩鏁扮粍杩涜閲囨牱
@@ -591,6 +604,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if any(compute_color != vec4<f32>(0.0)) {
         final_color = compute_color;
     }
+    let base_radius = min(input.instance_size.x, input.instance_size.y) * 0.08;
+    let coverage = rounded_rect_coverage(input.uv, input.instance_size, base_radius);
+    final_color.a = final_color.a * coverage;
     return final_color;
     // 淇濇寔鍘熸湁閫忔槑搴?
 }
