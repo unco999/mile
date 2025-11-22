@@ -83,8 +83,10 @@ struct Instance {
     advance_px: f32,
     line_break_acc: u32,
     color: vec4<f32>,
+    first_line_indent: f32,
+    text_align: u32,
     flags: u32,
-    _pad: array<u32, 3>,
+    _pad: array<u32, 1>,
 };
 
 @group(0) @binding(4)
