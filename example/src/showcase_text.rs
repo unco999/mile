@@ -31,7 +31,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         FontStyle{
                             font_size:50,
                             font_line_height:100,
-                            first_weight:50.0,
+                            first_weight:150.0,
                             ..Default::default()
                         }
                     );
