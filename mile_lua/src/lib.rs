@@ -9,10 +9,7 @@ use glam::{vec2, vec3, vec4};
 use mile_api::prelude::{
     _ty::PanelId, KeyedEventStream, global_db, global_event_bus, global_key_event_bus,
 };
-use mile_font::{
-    event::{RemoveRenderFont, ResetFontRuntime},
-    prelude::FontStyle,
-};
+use mile_font::{event::{RemoveRenderFont, ResetFontRuntime}, prelude::FontStyle};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
     mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
@@ -509,7 +506,7 @@ impl LuaMuiBuilder {
                 }
                 if let Some(container) = entry.spec.container.as_ref() {
                     let spec = container.clone();
-                    println!("有个单位执行了容器设定 {:?}", spec);
+                    println!("有个单位执行了容器设定 {:?}",spec);
                     s.rel().container_self(move |target| *target = spec);
                 }
                 for (alias, panel_uuid) in entry.container_aliases.iter() {
@@ -609,10 +606,6 @@ fn dispatch_lua_event(
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
     tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
-    attach_flow_table_shortcuts(lua, &tbl)?;
-    if let Some(source_panel) = drag_source_panel {
-        tbl.set("drag_source_panel", source_panel)?;
-    }
     if let Some(drag_payload) = flow.drag_payload::<LuaPayload>() {
         tbl.set(
             "drag_payload",
@@ -624,7 +617,7 @@ fn dispatch_lua_event(
     let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
-        return Ok(());
+        return Ok(())
     }
     apply_flow_directives(lua_ref, &tbl, flow)?;
     Ok(())
@@ -646,7 +639,6 @@ fn dispatch_lua_on_data(
         "payload",
         materialize_payload_value(lua, flow.payload_ref())?,
     )?;
-    attach_flow_table_shortcuts(lua, &tbl)?;
     if let Some(idx) = source_db_index {
         tbl.set("source_db_index", idx)?;
     }
@@ -709,53 +701,6 @@ fn apply_flow_directives(
             flow.mark_changed();
         }
     }
-    Ok(())
-}
-
-fn parse_state_argument(args: &Variadic<Value>) -> LuaResult<u32> {
-    for value in args.iter() {
-        match value {
-            Value::Integer(i) => {
-                if let Ok(state) = u32::try_from(*i) {
-                    return Ok(state);
-                }
-            }
-            Value::Number(n) if *n >= 0.0 && n.fract() == 0.0 => {
-                return Ok(*n as u32);
-            }
-            Value::String(s) => {
-                if let Ok(state) = s.to_str()?.parse::<u32>() {
-                    return Ok(state);
-                }
-            }
-            Value::Nil | Value::Table(_) => {}
-            _ => {}
-        }
-    }
-
-    Err(Error::FromLuaConversionError {
-        from: "Value",
-        to: "u32",
-        message: Some("state argument expects a number or numeric string".to_string()),
-    })
-}
-
-fn attach_flow_table_shortcuts(lua: &Lua, table: &Table) -> LuaResult<()> {
-    let table_ref = table.clone();
-    let set_state_fn = lua.create_function(move |_, args: Variadic<Value>| {
-        let next_state = parse_state_argument(&args)?;
-        table_ref.set("next_state", next_state)?;
-        Ok(())
-    })?;
-    table.set("set_state", set_state_fn)?;
-
-    let table_ref = table.clone();
-    let set_drag_state_fn = lua.create_function(move |_, args: Variadic<Value>| {
-        let next_state = parse_state_argument(&args)?;
-        table_ref.set("drag_source_state", next_state)?;
-        Ok(())
-    })?;
-    table.set("set_drag_source_state", set_drag_state_fn)?;
     Ok(())
 }
 
@@ -1012,8 +957,8 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
     let panel_size: Option<Vec<f32>> = table.get("panel_size").ok();
     let weight: u32 = table.get("weight").unwrap_or(400);
     let line_height: u32 = table.get("line_height").unwrap_or(0);
-    let first_weight: f32 = table.get("first_weight").unwrap_or(0.0);
-    let text_align: u32 = table.get("text_align").unwrap_or(0);
+    let first_weight:f32 =  table.get("first_weight").unwrap_or(0.0);
+    let text_align:u32 =  table.get("text_align").unwrap_or(0);
     let final_color = if let Some(c) = color {
         let mut arr = [1.0, 1.0, 1.0, 1.0];
         for (i, v) in c.iter().copied().take(4).enumerate() {
@@ -1038,15 +983,15 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
         .map(|p| p.into())
         .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
 
-    let style = FontStyle {
+    let style = FontStyle{
         font_size,
-        font_file_path: path,
+        font_file_path:path,
         font_color: final_color,
-        font_weight: weight,
+        font_weight:weight,
         font_line_height: line_height,
         first_weight,
         panel_size,
-        text_align: text_align.into(),
+        text_align:text_align.into(),
     };
 
     flow.clear_texts();
@@ -1334,9 +1279,6 @@ fn parse_container_spec(table: &Table) -> LuaResult<RelContainerSpec> {
     if let Some(size) = parse_vec2_field(table, "size")? {
         spec.size = Some(size);
     }
-    if let Some(percent) = parse_vec2_field(table, "size_percent_of_parent")? {
-        spec.size_percent_of_parent = Some(percent);
-    }
     if let Some(slot) = parse_vec2_field(table, "slot_size")? {
         spec.slot_size = Some(slot);
     }
@@ -1353,9 +1295,6 @@ fn parse_container_spec(table: &Table) -> LuaResult<RelContainerSpec> {
     }
     if let Some(layout_value) = table.get::<Option<Value>>("layout")? {
         spec.layout = parse_layout_value(layout_value)?;
-    }
-    if let Some(scale) = parse_vec2_field(table, "element_scale")? {
-        spec.element_scale = scale;
     }
     Ok(spec)
 }

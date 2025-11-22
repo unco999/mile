@@ -1,9 +1,6 @@
 use glam::{vec2, vec4};
 use mile_db::DbError;
-use mile_ui::{
-    mui_prototype::{Mui, UiEventKind, UiPanelData, UiState},
-    structs::PanelField,
-};
+use mile_ui::{mui_prototype::{Mui, UiEventKind, UiPanelData, UiState}, structs::PanelField};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -16,6 +13,7 @@ struct TargetData;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 struct TData;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 struct DragTest;
@@ -34,10 +32,10 @@ pub fn register_test() -> Result<(), DbError> {
                 .on_event(UiEventKind::SourceDragStart, |_flow| {
                     println!("[source] drag start");
                 })
-                .source_drag_start(|flow| {
+                .source_drag_start(|flow|{
                     println!("当前拖拽开始了");
-                    flow.style_add(PanelField::SIZE_X.bits(), [50.0, 0.0, 0.0, 0.0]);
-                    flow.style_add(PanelField::SIZE_Y.bits(), [50.0, 0.0, 0.0, 0.0]);
+                    flow.style_add(PanelField::SIZE_X.bits(), [50.0,0.0,0.0,0.0]);
+                    flow.style_add(PanelField::SIZE_Y.bits(), [50.0,0.0,0.0,0.0]);
                     flow.set_drag_payload(DragTest);
                 })
                 .source_drag_over(|_flow, delta| {
@@ -45,8 +43,8 @@ pub fn register_test() -> Result<(), DbError> {
                 })
                 .source_drag_drop(|_flow| {
                     println!("[source] drag drop");
-                    _flow.style_add(PanelField::SIZE_X.bits(), [160.0, 0.0, 0.0, 0.0]);
-                    _flow.style_add(PanelField::SIZE_Y.bits(), [110.0, 0.0, 0.0, 0.0]);
+                    _flow.style_add(PanelField::SIZE_X.bits(), [160.0,0.0,0.0,0.0]);
+                    _flow.style_add(PanelField::SIZE_Y.bits(), [110.0,0.0,0.0,0.0]);
                 })
                 .finish()
         })
@@ -62,8 +60,8 @@ pub fn register_test() -> Result<(), DbError> {
                 .size(vec2(220.0, 150.0))
                 .color(vec4(0.8, 0.3, 0.3, 0.9))
                 .events()
-                .on_event(UiEventKind::Hover, |flow| {})
-                .on_event(UiEventKind::TargetDragDrop, |flow| {
+                .on_event(UiEventKind::Hover, |flow|{})
+                .on_event(UiEventKind::TargetDragDrop, |flow|{
                     println!("2号被置入");
                 })
                 .finish()
@@ -79,8 +77,8 @@ pub fn register_test() -> Result<(), DbError> {
                 .size(vec2(220.0, 150.0))
                 .color(vec4(0.8, 0.3, 0.3, 0.9))
                 .events()
-                .on_event(UiEventKind::Hover, |flow| {})
-                .target_drag_drop::<DragTest, _>(|flow, target_flow| {
+                .on_event(UiEventKind::Hover, |flow|{})
+                .target_drag_drop::<DragTest,_>(|flow,target_flow|{
                     println!("3号被drop");
                 })
                 .finish()
