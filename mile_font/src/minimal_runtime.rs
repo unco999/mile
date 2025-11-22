@@ -557,7 +557,7 @@ impl MiniFontRuntime {
             }
             let start = t.sdf_char_index_start_offset;
             let end = t.sdf_char_index_end_offset;
-            let mut pen_x_px: f32 = 0.0;
+            let mut pen_x_px: f32 = t.first_line_indent;
             let mut line_break_acc: u32 = 0;
             let size_px: f32 = t.font_size;
             let origin = [t.position[0], t.position[1]];
