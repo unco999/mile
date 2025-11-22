@@ -101,16 +101,16 @@ impl RelationRegistry {
             entry.active_state = Some(state.0);
         }
         self.dirty.insert(panel_id);
-        self.rebuild_memberships();
-        self.mark_all_container_children_dirty();
+        let previous_members = self.rebuild_memberships();
+        self.mark_changed_container_children_dirty(previous_members);
     }
 
     pub fn clear_panel(&mut self, panel_id: u32) {
         self.panels.remove(&panel_id);
         self.active_links.remove(&panel_id);
         self.dirty.insert(panel_id);
-        self.rebuild_memberships();
-        self.mark_all_container_children_dirty();
+        let previous_members = self.rebuild_memberships();
+        self.mark_changed_container_children_dirty(previous_members);
     }
 
     pub fn set_active_state(&mut self, panel_id: u32, state: UiState) {
@@ -118,8 +118,8 @@ impl RelationRegistry {
             if entry.active_state != Some(state.0) {
                 entry.active_state = Some(state.0);
                 self.dirty.insert(panel_id);
-                self.rebuild_memberships();
-                self.mark_all_container_children_dirty();
+                let previous_members = self.rebuild_memberships();
+                self.mark_changed_container_children_dirty(previous_members);
             }
         }
     }
@@ -300,8 +300,8 @@ impl RelationRegistry {
             .unwrap_or(0)
     }
 
-    fn rebuild_memberships(&mut self) {
-        self.container_members.clear();
+    fn rebuild_memberships(&mut self) -> HashMap<u32, Vec<u32>> {
+        let previous_members = std::mem::take(&mut self.container_members);
         for (&panel_id, entry) in &self.panels {
             let Some(graph) = entry.active_graph() else {
                 continue;
@@ -322,12 +322,31 @@ impl RelationRegistry {
             children.dedup();
         }
         self.recompute_panel_depths();
+        previous_members
     }
 
-    fn mark_all_container_children_dirty(&mut self) {
-        for children in self.container_members.values() {
-            for &child in children {
-                self.dirty.insert(child);
+    fn mark_changed_container_children_dirty(&mut self, previous_members: HashMap<u32, Vec<u32>>) {
+        for (container, old_children) in &previous_members {
+            match self.container_members.get(container) {
+                Some(new_children) if new_children == old_children => {}
+                Some(new_children) => {
+                    for &child in old_children.iter().chain(new_children.iter()) {
+                        self.dirty.insert(child);
+                    }
+                }
+                None => {
+                    for &child in old_children {
+                        self.dirty.insert(child);
+                    }
+                }
+            }
+        }
+
+        for (container, new_children) in &self.container_members {
+            if !previous_members.contains_key(container) {
+                for &child in new_children {
+                    self.dirty.insert(child);
+                }
             }
         }
     }

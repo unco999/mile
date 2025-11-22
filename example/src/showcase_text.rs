@@ -17,12 +17,11 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .on_event(mile_ui::mui_prototype::UiEventKind::Init, |flow| {
                     flow.text(
                         "Mile UI — Text Demo 点击渲染文本",
-                       FontStyle{
-                            font_size:50,
-                            font_line_height:50,
+                        FontStyle {
+                            font_size: 50,
+                            font_line_height: 50,
                             ..Default::default()
-                       }
-                        
+                        },
                     );
                 })
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
