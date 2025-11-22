@@ -1,6 +1,8 @@
 pub mod gpu_struct;
 pub mod minimal_runtime;
 
+pub const DEFAULT_FONT_PATH: &str = "tf/STXIHEI.ttf";
+
 pub mod event {
     use std::{rc::Rc, sync::Arc};
 

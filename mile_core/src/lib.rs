@@ -263,10 +263,20 @@ impl App {
             eprintln!("[lua_watch] reload failed: {err}");
         }
         if let Some(runtime_cell) = &self.mui_runtime {
+
+
             let ctx = self.wgpu_context.as_ref().unwrap();
             let mut runtime = runtime_cell.borrow_mut();
+
             runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
-            runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+            // runtime.upload_panel_instances(&ctx.device, &ctx.queue);
+            if let Some(font_cell) = &self.mile_font {
+                let mut font = font_cell.borrow_mut();
+                let panels = &runtime.buffers.instance;
+                let deltas = &runtime.buffers.panel_anim_delta;
+                font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
+            }
+
         }
     }
 

@@ -963,7 +963,7 @@ impl MuiRuntime {
         self.animation_descriptor
             .write_to_buffer(queue, &self.buffers.animation_descriptor);
         self.animation_field_cache.clear();
-        self.pending_relation_flush = false;
+        self.pending_relation_flush = true;
         self.frame_history = FrameHistory::default();
         if let Ok(mut registry) = self.state.panel_events.lock() {
             *registry = PanelEventRegistry::default();

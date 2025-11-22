@@ -18,6 +18,7 @@ use crate::{
         GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX, GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT, GpuChar,
         GpuText,
     },
+    DEFAULT_FONT_PATH,
 };
 
 type RegisterEvent = ModEventStream<(
@@ -1045,7 +1046,7 @@ impl MiniFontRuntime {
     /// Convenience: load the demo font used in examples.
     pub fn load_font_file(&mut self) {
         // Prefer repository path under tf/ first; fall back handled in ensure_face_loaded
-        if let Err(e) = self.load_to_face("tf/BIZUDPGothic-Regular.ttf") {
+        if let Err(e) = self.load_to_face(DEFAULT_FONT_PATH) {
             eprintln!(
                 "MiniFontRuntime.load_font_file: failed to load default face: {}",
                 e
@@ -1516,7 +1517,7 @@ impl MiniFontRuntime {
     /// Minimal behavior: dedup, skip cached, assign consecutive indices per font.
     // removed: legacy naive queue_batch_parse; glyph_index is only updated after GPU upload now.
 
-    fn reset_runtime_state(&mut self) {
+    fn reset_runtime_state(&mut self, drop_gpu: bool) {
         self.glyph_index.clear();
         self.fonts.clear();
         self.cpu_glyph_descs.clear();
@@ -1530,12 +1531,17 @@ impl MiniFontRuntime {
         self.tile_cursor = 0;
         self.gpu_char_cursor = 0;
         self.quad_index = 0;
-        self.buffers = None;
-        self.compute = None;
-        self.render = None;
         self.is_update = false;
         self.draw_instance_count = 0;
-        self.gpu_debug = GpuDebug::new("MiniFontRuntime");
+
+        if drop_gpu {
+            self.buffers = None;
+            self.compute = None;
+            self.render = None;
+            self.gpu_debug = GpuDebug::new("MiniFontRuntime");
+        } else if let Some(bufs) = self.buffers.as_mut() {
+            bufs.instruction_cursor = 0;
+        }
     }
 
     /// Poll once: process batch font entries, then render texts.
@@ -1544,12 +1550,12 @@ impl MiniFontRuntime {
     pub fn poll_global_event(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let (batch_entry, batch_render, batch_remove, font_reset) = self.register.poll();
         if !font_reset.is_empty() {
-            self.reset_runtime_state();
+            self.reset_runtime_state(false);
+            self.init_gpu(device);
             if let Some(fmt) = self.render_format {
-                self.init_gpu(device);
                 self.init_render_pipeline(device, queue, fmt);
-                self.load_font_file();
             }
+            self.load_font_file();
         }
 
         if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {

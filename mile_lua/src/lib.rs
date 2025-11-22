@@ -12,6 +12,7 @@ use mile_api::prelude::{
 use mile_font::{
     event::{RemoveRenderFont, ResetFontRuntime},
     prelude::FontStyle,
+    DEFAULT_FONT_PATH,
 };
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
@@ -36,8 +37,6 @@ use std::sync::{Arc, Mutex};
 
 type SharedLua = Arc<Mutex<Lua>>;
 static LUA_PANEL_REGISTRY: OnceCell<Mutex<Vec<PanelKey>>> = OnceCell::new();
-const DEFAULT_FONT_PATH: &str = "tf/STXIHEI.ttf";
-
 fn panel_registry() -> &'static Mutex<Vec<PanelKey>> {
     LUA_PANEL_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
 }

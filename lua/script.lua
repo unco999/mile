@@ -17,7 +17,7 @@ Mui.new(parent_bind2)
     :default_state(0)
     :state(0)
         :text({
-            text = "什么2",
+            text = "测试更新",
             font_size = 48
         })
         :size(560, 500)
@@ -26,7 +26,7 @@ Mui.new(parent_bind2)
         :border({
             color = { 0.15, 0.45, 0.85, 0.8 },
             width = 3.0,
-            radius = 10.0,
+            radius = 5.0,
         })
         :on_event("target_drag_drop",function(ctx)
             print("被拖入了")
@@ -77,12 +77,15 @@ for i = 1, 10 do
     Mui.new(child_binding)
         :default_state(0)
         :state(1)
-            :color(0,1,1,1)
+            :color(1,1,1,1)
             :on_event("click",function(ctx) 
                 ctx.state = 0;
             end)
         :state(0)
-            :text("测试字符串")
+            :text({
+                text = "4",
+                font_size = 21
+            })
             :position(50 * i,50 * i)
             :size(50, 50)
             :color(0.12 + i * 0.015, 0.35 + i * 0.02, 0.25, 0.88)
@@ -99,4 +102,4 @@ for i = 1, 10 do
         :build()
 end
 
-print("构建了所有面板1")
+print("构建了所有面板")
