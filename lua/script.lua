@@ -26,7 +26,6 @@ Mui.new(parent_bind2)
         })
         :on_event("target_drag_drop",function(ctx)
             print("被拖入了")
-            ctx:set_drag_source_state(1)
         end)
         :on_event("hover",function()
             print("悬浮")
@@ -74,7 +73,10 @@ for i = 1, 10 do
     Mui.new(child_binding)
         :default_state(0)
         :state(1)
-            :container_with(parent_bind2)
+            :color(1,1,1,1)
+            :on_event("click",function(ctx) 
+                ctx.state = 0;
+            end)
         :state(0)
             :position(50 * i,50 * i)
             :size(50, 50)
@@ -85,10 +87,8 @@ for i = 1, 10 do
                 radius = 8.0,
             })
             :z_index(10)
-            :on_event("drag",function(ctx) 
-                local payload = ctx.payload
-                ctx.drag_payload = payload;
-                print("当前拖拽开始了");
+            :on_event("click",function(ctx) 
+                ctx.state = 1;
             end)
             :container_with(parent_bind)
         :build()

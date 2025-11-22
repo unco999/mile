@@ -120,7 +120,31 @@ impl RelationRegistry {
                 self.dirty.insert(panel_id);
                 let previous_members = self.rebuild_memberships();
                 self.mark_changed_container_children_dirty(previous_members);
+                self.mark_container_family_dirty(panel_id);
             }
+        }
+    }
+
+    fn mark_container_family_dirty(&mut self, panel_id: u32) {
+        let container_id = self
+            .container_members
+            .iter()
+            .find_map(|(&container, children)| {
+                if children.contains(&panel_id) {
+                    Some(container)
+                } else {
+                    None
+                }
+            });
+
+        if let Some(container_id) = container_id {
+            if let Some(children) = self.container_members.get(&container_id) {
+                for &child in children {
+                    self.dirty.insert(child);
+                    self.active_links.remove(&child);
+                }
+            }
+            self.dirty.insert(container_id);
         }
     }
 
@@ -332,11 +356,13 @@ impl RelationRegistry {
                 Some(new_children) => {
                     for &child in old_children.iter().chain(new_children.iter()) {
                         self.dirty.insert(child);
+                        self.active_links.remove(&child);
                     }
                 }
                 None => {
                     for &child in old_children {
                         self.dirty.insert(child);
+                        self.active_links.remove(&child);
                     }
                 }
             }
@@ -346,6 +372,7 @@ impl RelationRegistry {
             if !previous_members.contains_key(container) {
                 for &child in new_children {
                     self.dirty.insert(child);
+                    self.active_links.remove(&child);
                 }
             }
         }
