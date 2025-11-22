@@ -16,6 +16,10 @@ local parent_bind2 = db({
 Mui.new(parent_bind2)
     :default_state(0)
     :state(0)
+        :text({
+            text = "更改实时",
+            font_size = 48
+        })
         :size(560, 500)
         :position(100, 620)
         :color(0.08, 0.50, 0.16, 0.95)
@@ -78,6 +82,7 @@ for i = 1, 10 do
                 ctx.state = 0;
             end)
         :state(0)
+            :text("测试字符串")
             :position(50 * i,50 * i)
             :size(50, 50)
             :color(0.12 + i * 0.015, 0.35 + i * 0.02, 0.25, 0.88)

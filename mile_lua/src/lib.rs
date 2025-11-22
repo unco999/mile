@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 
 type SharedLua = Arc<Mutex<Lua>>;
 static LUA_PANEL_REGISTRY: OnceCell<Mutex<Vec<PanelKey>>> = OnceCell::new();
+const DEFAULT_FONT_PATH: &str = "tf/STXIHEI.ttf";
 
 fn panel_registry() -> &'static Mutex<Vec<PanelKey>> {
     LUA_PANEL_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
@@ -395,6 +396,54 @@ struct StateSpec {
     container: Option<RelContainerSpec>,
     z_index: Option<i32>,
     border: Option<BorderStyle>,
+    texts: Vec<LuaTextSpec>,
+}
+
+#[derive(Clone)]
+struct LuaTextSpec {
+    text: String,
+    font_path: Option<String>,
+    font_size: u32,
+    color: [f32; 4],
+    panel_size: [f32; 2],
+    weight: u32,
+    line_height: u32,
+    first_weight: f32,
+    text_align: u32,
+}
+
+impl Default for LuaTextSpec {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            font_path: None,
+            font_size: 16,
+            color: [1.0; 4],
+            panel_size: [1.0; 2],
+            weight: 400,
+            line_height: 0,
+            first_weight: 0.0,
+            text_align: 0,
+        }
+    }
+}
+
+impl LuaTextSpec {
+    fn to_font_style(&self) -> FontStyle {
+        FontStyle {
+            font_size: self.font_size,
+            font_file_path: Arc::from(self
+                .font_path
+                .clone()
+                .unwrap_or_else(|| DEFAULT_FONT_PATH.to_string())),
+            font_color: self.color,
+            font_weight: self.weight,
+            font_line_height: self.line_height,
+            first_weight: self.first_weight,
+            panel_size: self.panel_size,
+            text_align: self.text_align.into(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -526,6 +575,15 @@ impl LuaMuiBuilder {
                     let payload = payload.clone();
                     events = events.on_event(UiEventKind::Init, move |flow| {
                         *flow.payload() = payload.clone();
+                    });
+                }
+                if !entry.spec.texts.is_empty() {
+                    let texts = entry.spec.texts.clone();
+                    events = events.on_event(UiEventKind::Init, move |flow| {
+                        flow.clear_texts();
+                        for spec in &texts {
+                            flow.text(&spec.text, spec.to_font_style());
+                        }
                     });
                 }
 
@@ -987,7 +1045,7 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
 
     let path = font_path
         .map(|p| p.into())
-        .unwrap_or_else(|| "tf/STXIHEI.ttf".into());
+        .unwrap_or_else(|| DEFAULT_FONT_PATH.into());
 
     let style = FontStyle{
         font_size,
@@ -1003,6 +1061,44 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
     flow.clear_texts();
     flow.text(&text, style);
     Ok(())
+}
+
+fn parse_builder_text_spec(lua: &Lua, value: Value) -> LuaResult<LuaTextSpec> {
+    match value {
+        Value::Nil => Err(mlua::Error::external("text expects string or table")),
+        Value::String(s) => Ok(LuaTextSpec {
+            text: s.to_string_lossy().to_string(),
+            ..LuaTextSpec::default()
+        }),
+        Value::Table(tbl) => parse_builder_text_spec_table(&tbl),
+        other => Err(mlua::Error::external(format!(
+            "text expects string or table, got {}",
+            other.type_name()
+        ))),
+    }
+}
+
+fn parse_builder_text_spec_table(tbl: &Table) -> LuaResult<LuaTextSpec> {
+    let text: Option<String> = tbl.get::<Option<String>>("text")?;
+    let mut spec = LuaTextSpec::default();
+    spec.text = text.ok_or_else(|| mlua::Error::external("text table requires field 'text'"))?;
+    spec.font_path = tbl.get::<Option<String>>("font_path")?;
+    spec.font_size = tbl.get::<Option<u32>>("font_size")?.unwrap_or(16);
+    spec.weight = tbl.get::<Option<u32>>("weight")?.unwrap_or(400);
+    spec.line_height = tbl.get::<Option<u32>>("line_height")?.unwrap_or(0);
+    spec.first_weight = tbl.get::<Option<f32>>("first_weight")?.unwrap_or(0.0);
+    spec.text_align = tbl.get::< Option<u32>>("text_align")?.unwrap_or(0);
+    if let Some(color) = tbl.get::<Option<Vec<f32>>>("color")? {
+        for (idx, value) in color.into_iter().take(4).enumerate() {
+            spec.color[idx] = value;
+        }
+    }
+    if let Some(panel_size) = tbl.get::<Option<Vec<f32>>>("panel_size")? {
+        for (idx, value) in panel_size.into_iter().take(2).enumerate() {
+            spec.panel_size[idx] = value;
+        }
+    }
+    Ok(spec)
 }
 
 impl UserData for LuaMuiBuilder {
@@ -1031,6 +1127,12 @@ impl UserData for LuaMuiBuilder {
 
         methods.add_method_mut("color", |lua, this, (r, g, b, a): (f32, f32, f32, f32)| {
             this.current_entry_mut().spec.color = Some([r, g, b, a]);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("text", |lua, this, value: Value| {
+            let spec = parse_builder_text_spec(lua, value)?;
+            this.current_entry_mut().spec.texts.push(spec);
             lua.create_userdata(this.clone())
         });
 
