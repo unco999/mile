@@ -160,7 +160,9 @@ impl GpuDebug {
         }
 
         let name = self.import_name;
-        if(self.buffer.is_none()) {return;}
+        if (self.buffer.is_none()) {
+            return;
+        }
         DownloadBuffer::read_buffer(
             device,
             queue,

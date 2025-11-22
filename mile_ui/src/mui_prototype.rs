@@ -1224,11 +1224,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     /// - font_size: 像素大小
     /// - color: RGBA
     /// - weight/line_height: 预留参数（直接传入 FontStyle）
-    pub fn text(
-        &self,
-        text: &str,
-        style:FontStyle
-    ) {
+    pub fn text(&self, text: &str, style: FontStyle) {
         let pid = PanelId(self.args.panel_key.panel_id);
         // Always clear previous texts for this panel before queuing new one
         global_event_bus().publish(RemoveRenderFont { parent: pid });

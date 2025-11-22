@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -208,10 +208,7 @@ impl MiniFontRuntime {
             let new_idx = kept_texts.len();
             kept_texts.push(text.clone());
             kept_flags.push(false);
-            rebuilt_indices
-                .entry(text.panel)
-                .or_default()
-                .push(new_idx);
+            rebuilt_indices.entry(text.panel).or_default().push(new_idx);
         }
         self.out_gpu_texts = kept_texts;
         self.text_removed = kept_flags;
@@ -533,6 +530,7 @@ impl MiniFontRuntime {
             cache: None,
         });
 
+        self.render_format = Some(format);
         self.render = Some(MiniRender {
             bgl,
             bg,
@@ -1001,6 +999,7 @@ pub struct MiniFontRuntime {
     buffers: Option<MiniBuffers>,
     compute: Option<MiniCompute>,
     render: Option<MiniRender>,
+    render_format: Option<TextureFormat>,
     // whether new data uploaded and requires compute
     is_update: bool,
     // debug readback
@@ -1029,6 +1028,7 @@ impl MiniFontRuntime {
             buffers: None,
             compute: None,
             render: None,
+            render_format: None,
             is_update: false,
             gpu_debug: GpuDebug::new("MiniFontRuntime"),
             draw_instance_count: 0,
@@ -1545,6 +1545,11 @@ impl MiniFontRuntime {
         let (batch_entry, batch_render, batch_remove, font_reset) = self.register.poll();
         if !font_reset.is_empty() {
             self.reset_runtime_state();
+            if let Some(fmt) = self.render_format {
+                self.init_gpu(device);
+                self.init_render_pipeline(device, queue, fmt);
+                self.load_font_file();
+            }
         }
 
         if batch_entry.is_empty() && batch_render.is_empty() && batch_remove.is_empty() {
@@ -1826,5 +1831,3 @@ impl MiniFontRuntime {
         touched
     }
 }
-
-

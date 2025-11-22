@@ -9,10 +9,16 @@ use glam::{vec2, vec3, vec4};
 use mile_api::prelude::{
     _ty::PanelId, KeyedEventStream, global_db, global_event_bus, global_key_event_bus,
 };
-use mile_font::{event::{RemoveRenderFont, ResetFontRuntime}, prelude::FontStyle};
+use mile_font::{
+    event::{RemoveRenderFont, ResetFontRuntime},
+    prelude::FontStyle,
+};
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
-    mui_prototype::{BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState},
+    mui_prototype::{
+        BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState,
+        reset_panel_id_pool,
+    },
     mui_rel::{RelContainerSpec, RelLayoutKind, RelScrollAxis, RelSpace, apply_container_alias},
     runtime::entry::ResetUiRuntime,
     runtime::relations::clear_panel_relations,
@@ -280,6 +286,7 @@ fn clear_ui_panels() -> LuaResult<u32> {
     }
     clear_font_for_panels(&panels);
     global_event_bus().publish(ResetUiRuntime);
+    reset_panel_id_pool();
     Ok(panels.len() as u32)
 }
 
@@ -432,10 +439,11 @@ impl LuaTextSpec {
     fn to_font_style(&self) -> FontStyle {
         FontStyle {
             font_size: self.font_size,
-            font_file_path: Arc::from(self
-                .font_path
-                .clone()
-                .unwrap_or_else(|| DEFAULT_FONT_PATH.to_string())),
+            font_file_path: Arc::from(
+                self.font_path
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_FONT_PATH.to_string()),
+            ),
             font_color: self.color,
             font_weight: self.weight,
             font_line_height: self.line_height,
@@ -555,7 +563,7 @@ impl LuaMuiBuilder {
                 }
                 if let Some(container) = entry.spec.container.as_ref() {
                     let spec = container.clone();
-                    println!("有个单位执行了容器设定 {:?}",spec);
+                    println!("有个单位执行了容器设定 {:?}", spec);
                     s.rel().container_self(move |target| *target = spec);
                 }
                 for (alias, panel_uuid) in entry.container_aliases.iter() {
@@ -675,7 +683,7 @@ fn dispatch_lua_event(
     let lua_ref = lua;
     if let Some(Value::Table(new_tbl)) = ret {
         apply_flow_directives(lua_ref, &new_tbl, flow)?;
-        return Ok(())
+        return Ok(());
     }
     apply_flow_directives(lua_ref, &tbl, flow)?;
     Ok(())
@@ -1021,8 +1029,8 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
     let panel_size: Option<Vec<f32>> = table.get("panel_size").ok();
     let weight: u32 = table.get("weight").unwrap_or(400);
     let line_height: u32 = table.get("line_height").unwrap_or(0);
-    let first_weight:f32 =  table.get("first_weight").unwrap_or(0.0);
-    let text_align:u32 =  table.get("text_align").unwrap_or(0);
+    let first_weight: f32 = table.get("first_weight").unwrap_or(0.0);
+    let text_align: u32 = table.get("text_align").unwrap_or(0);
     let final_color = if let Some(c) = color {
         let mut arr = [1.0, 1.0, 1.0, 1.0];
         for (i, v) in c.iter().copied().take(4).enumerate() {
@@ -1047,15 +1055,15 @@ fn apply_text_from_lua(flow: &mut EventFlow<'_, LuaPayload>, value: &Value) -> L
         .map(|p| p.into())
         .unwrap_or_else(|| DEFAULT_FONT_PATH.into());
 
-    let style = FontStyle{
+    let style = FontStyle {
         font_size,
-        font_file_path:path,
+        font_file_path: path,
         font_color: final_color,
-        font_weight:weight,
+        font_weight: weight,
         font_line_height: line_height,
         first_weight,
         panel_size,
-        text_align:text_align.into(),
+        text_align: text_align.into(),
     };
 
     flow.clear_texts();
@@ -1087,7 +1095,7 @@ fn parse_builder_text_spec_table(tbl: &Table) -> LuaResult<LuaTextSpec> {
     spec.weight = tbl.get::<Option<u32>>("weight")?.unwrap_or(400);
     spec.line_height = tbl.get::<Option<u32>>("line_height")?.unwrap_or(0);
     spec.first_weight = tbl.get::<Option<f32>>("first_weight")?.unwrap_or(0.0);
-    spec.text_align = tbl.get::< Option<u32>>("text_align")?.unwrap_or(0);
+    spec.text_align = tbl.get::<Option<u32>>("text_align")?.unwrap_or(0);
     if let Some(color) = tbl.get::<Option<Vec<f32>>>("color")? {
         for (idx, value) in color.into_iter().take(4).enumerate() {
             spec.color[idx] = value;

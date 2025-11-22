@@ -1,7 +1,7 @@
-print("[lua] Demo             ڵ  10         (             ֵ)")
+-- print("[lua] Demo             ڵ  10         (             ֵ)")
 
-local PARENT_TAG = "lua_container_parent"
-local ITEM_TAG = "lua_container_child"
+-- local PARENT_TAG = "lua_container_parent"
+-- local ITEM_TAG = "lua_container_child"
 
 local parent_bind = db({
     tag = PARENT_TAG,
@@ -51,7 +51,7 @@ Mui.new(parent_bind)
     :state(0)
         :size(560, 500)
         :position(120, 120)
-        :color(0.08, 0.10, 0.16, 0.95)
+        :color(1, 0.10, 0.16, 0.95)
         :border({
             color = { 0.15, 0.45, 0.85, 0.8 },
             width = 3.0,
@@ -98,4 +98,3 @@ for i = 1, 10 do
             :container_with(parent_bind)
         :build()
 end
-
