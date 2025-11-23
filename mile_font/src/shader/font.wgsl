@@ -65,9 +65,9 @@ struct FontGlyphDes {
     advance_width: u32,       // 字形的总前进宽度[citation:9]
     left_side_bearing: i32,   // 从原点到位图左边的距离[citation:9]
     
-    // 字形特定的度量
-    glyph_advance_width: u32, // 特定字形的前进宽度
-    glyph_left_side_bearing: i32, // 特定字形的左侧支撑
+    // 字形特定的度�?
+    glyph_advance_width: u32, // 特定字形的前进宽�?
+    glyph_left_side_bearing: i32, // 特定字形的左侧支�?
 };
 
 
@@ -99,7 +99,7 @@ struct Panel {
     uv_offset: vec2<f32>,
     uv_scale: vec2<f32>,
     z_index: u32,
-    pass_through: u32,
+    interaction_passthrough: u32,
     id: u32,
     interaction: u32,
     event_mask: u32,
@@ -126,7 +126,7 @@ struct PanelAnimDelta {
     delta_uv_offset: vec2<f32>,
     delta_uv_scale: vec2<f32>,
     delta_z_index: i32,
-    delta_pass_through: i32,
+    delta_interaction_passthrough: i32,
     panel_id: u32,
     _pad0: u32,
     delta_interaction: u32,
@@ -163,7 +163,7 @@ fn vs_main(
     let screen_width = f32(global_uniform.screen_size.x);
     let screen_height = f32(global_uniform.screen_size.y);
     // pixel -> NDC conversion uses actual screen size
-    // 通过实例索引选择 glyph，并将 tile 偏移叠加到 uv 上
+    // 通过实例索引选择 glyph，并�?tile 偏移叠加�?uv �?
     let inst = instances[inst_id];
     let des = glyph_descs[inst.char_index];
     let index = inst.self_index;
@@ -197,19 +197,18 @@ fn vs_main(
     let padding = 5.0;
     let wrap_width = max(container.x - padding * 2.0, 1.0);
     let units = max(f32(des.units_per_em), 1.0);
-    let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
     let glyph_advance_px = f32(des.glyph_advance_width) / units * inst.size_px;
     let layout_width_px = select(
-        max(glyph_advance_px, glyph_width_px),
+        glyph_advance_px,
         inst.advance_px,
         inst.advance_px > 0.0,
     );
-    let glyph_left_units = select(
-        des.left_side_bearing,
-        des.glyph_left_side_bearing,
-        des.glyph_left_side_bearing != 0,
-    );
-    let glyph_left_px = f32(glyph_left_units) / units * inst.size_px;
+    let glyph_left_px = f32(des.glyph_left_side_bearing) / units * inst.size_px;
+    let glyph_width_units = max(f32(des.x_max - des.x_min), 1.0);
+    let glyph_height_units = max(f32(des.y_max - des.y_min), 1.0);
+    let glyph_width_px = glyph_width_units / units * inst.size_px;
+    let glyph_height_px = glyph_height_units / units * inst.size_px;
+    let glyph_top_px = (f32(des.y_max) + inst.line_height_px * 0.0) / units * inst.size_px;
     let base_line = u32(cursor_x / wrap_width);
     let x_in_line = cursor_x - f32(base_line) * wrap_width;
     let overflow = (x_in_line + layout_width_px) >= wrap_width;
@@ -234,10 +233,9 @@ fn vs_main(
         let prev_cursor = prev.origin_cursor.z;
         let prev_des = glyph_descs[prev.char_index];
         let prev_units = max(f32(prev_des.units_per_em), 1.0);
-        let prev_glyph_width_px = f32(prev_des.x_max - prev_des.x_min) / prev_units * prev.size_px;
         let prev_glyph_advance_px = f32(prev_des.glyph_advance_width) / prev_units * prev.size_px;
         let prev_layout_width_px = select(
-            max(prev_glyph_advance_px, prev_glyph_width_px),
+            prev_glyph_advance_px,
             prev.advance_px,
             prev.advance_px > 0.0,
         );
@@ -260,7 +258,14 @@ fn vs_main(
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
     let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin + glyph_left_px, wrapped_y) + position * inst.size_px;
+    let quad_size = vec2<f32>(glyph_width_px, glyph_height_px);
+    let px = panel.position
+        + delta.delta_position
+        + vec2<f32>(
+            wrapped_x_with_origin + glyph_left_px,
+            wrapped_y - glyph_top_px + inst.size_px,
+        )
+        + position * quad_size;
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
@@ -293,12 +298,10 @@ fn saturate(v: f32) -> f32 {
 }
 
 fn font_size_normalized(size_px: f32) -> f32 {
-    // Map roughly 12px..76px into 0..1. Values outside the range are clamped.
     return saturate((size_px - 12.0) / 78.0);
 }
 
 fn adaptive_edge_width(size_px: f32, px_range: f32) -> vec2<f32> {
-    // 返回 (thin, wide) 两个宽度：小字号依赖 thin 保证亮度，大字号更多使用 wide 保留平滑。
     let norm = font_size_normalized(size_px);
     let thin_scale = mix(0.35, 0.6, norm);
     let thin_bias = mix(0.0006, 0.00025, norm);
@@ -310,7 +313,6 @@ fn adaptive_edge_width(size_px: f32, px_range: f32) -> vec2<f32> {
 }
 
 fn adaptive_gamma(size_px: f32) -> f32 {
-    // 小字号需要更亮的边缘，大字号保持锐利。
     let size_blend = font_size_normalized(size_px);
     return mix(0.3, 1.2, size_blend) + 0.15;
 }
@@ -323,7 +325,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;
     let glyph_uv = in.uv + pixel_offset;
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
-    // 基于屏幕像素导数和梯度计算自适应边缘宽度。
     let dp = vec2<f32>(dpdx(sdf_value), dpdy(sdf_value));
     let grad = length(dp);
     let px_range = max(fwidth(sdf_value) / max(grad, 1e-3), 1e-4);
@@ -333,16 +334,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let wide = widths.y;
     let sharp_coverage = smoothstep(0.5 - thin, 0.5 + thin, sdf_value);
     let soft_coverage = smoothstep(0.5 - wide, 0.5 + wide, sdf_value);
-    // Blend 两种 coverage：小字号靠 sharp，越大越接近 soft。
     let size_norm = font_size_normalized(in.font_size);
     let coverage = mix(max(sharp_coverage, soft_coverage * 0.9), soft_coverage, size_norm);
-    // 对 coverage 做 gamma 调整，并对大字号稍微增强边缘对比。
     let gamma = adaptive_gamma(in.font_size);
     let shaped = pow(max(coverage, 1e-4), gamma);
     let fringe = shaped * (1.0 - shaped);
     let edge_boost = mix(0.2, 0.45, size_norm);
     let boosted = saturate(shaped + fringe * edge_boost);
-    // 为小字号额外抬升内部亮度。
     let interior = smoothstep(0.52 + thin, 0.7 + thin, sdf_value);
     let smallness = smoothstep(0.0, 0.5, 0.5 - size_norm);
     let interior_boost = interior * smallness * 0.5;

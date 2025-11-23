@@ -1,43 +1,43 @@
 struct Panel {
-    // === 16-byte 区 1 ===
+    // === 16-byte �?1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte 区 2 ===
+    // === 16-byte �?2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte 区 3 ===
+    // === 16-byte �?3 ===
     z_index: u32,           // 4 bytes
-    pass_through: u32,      // 4 bytes
+    interaction_passthrough: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte 区 4 ===
+    // === 16-byte �?4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte 区 5 ===
+    // === 16-byte �?5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte 区 6 ===
+    // === 16-byte �?6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte 区 7 ===
+    // === 16-byte �?7 ===
     scale: vec4<f32>,
 
-    // === 16-byte 区 8 ===
+    // === 16-byte �?8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte 区 9 ===
+    // === 16-byte �?9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte 区 10 ===
+    // === 16-byte �?10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -62,7 +62,7 @@ struct TransformAnim {
     _pad3: u32,
 
     last_applied: f32,
-    _pad4: vec3<u32>, // 对齐到 16 字节
+    _pad4: vec3<u32>, // 对齐�?16 字节
 };
 
 struct GpuUiCollection {
@@ -80,7 +80,7 @@ struct GpuUiRelation {
     id_start: u32,
     id_count: u32,
     reserved: u32,
-    padding: u32, // 新增：保证32字节对齐
+    padding: u32, // 新增：保�?2字节对齐
 }
 
 struct GpuUiInfluence {
@@ -129,9 +129,9 @@ struct GlobalUniform {
 
 struct GpuUiIdInfo {
     panel_id: u32,     // panel 的唯一 id
-    is_source: u32,    // 0 = 普通 panel, 1 = source panel
-    relation_idx: u32, // 对应的 relation buffer 索引，如果不是 source 可填 0xFFFFFFFF
-    padding: u32,      // 对齐到 16 字节
+    is_source: u32,    // 0 = 普�?panel, 1 = source panel
+    relation_idx: u32, // 对应�?relation buffer 索引，如果不�?source 可填 0xFFFFFFFF
+    padding: u32,      // 对齐�?16 字节
 }
 
 
@@ -154,7 +154,7 @@ struct GpuInteractionFrame {
     _pad3: vec2<f32>,
 
     pinch_delta: f32,
-    pass_through_depth: u32,
+    interaction_passthrough_depth: u32,
     event_point: vec2<f32>,
     _pad5: vec4<u32>, // 保证 128 字节
 };
@@ -172,7 +172,7 @@ fn ndc_to_pixel(ndc: vec2<f32>, screen_size: vec2<f32>) -> vec2<f32> {
     // X: [-1,1] -> [0, width]
     let x = (ndc.x + 1.0) * 0.5 * screen_size.x;
 
-    // Y: [-1,1] -> [height, 0] （翻转 Y）
+    // Y: [-1,1] -> [height, 0] （翻�?Y�?
     let y = (1.0 - ndc.y) * 0.5 * screen_size.y;
 
     return vec2<f32>(x, y);
@@ -191,20 +191,20 @@ struct PanelAnimDelta {
      delta_uv_scale: vec2<f32>,
 
     // --- Panel attributes ---
-     delta_z_index: i32,        // 可选，用于动画 z 层变化
-     delta_pass_through: i32,   // 可选
-     panel_id: u32,             // 对应 Panel 的 id
+     delta_z_index: i32,        // 可选，用于动画 z 层变�?
+     delta_interaction_passthrough: i32,   // 可�?
+     panel_id: u32,             // 对应 Panel �?id
      _pad0: u32,                // 补齐 16 字节
 
-    // --- 状态相关 ---
+    // --- 状态相�?---
      delta_interaction: u32,    // mask
      delta_event_mask: u32,     // mask
      delta_state_mask: u32,     // mask
      _pad1: u32,                // 对齐
 
-    // --- 透明度/texture ---
+    // --- 透明�?texture ---
      delta_transparent: f32,
-     delta_texture_id: i32,     // 可选，整型存 texture 变化
+     delta_texture_id: i32,     // 可选，整型�?texture 变化
      _pad2: u32,           // 补齐 16 字节
      _pad3: u32,           // 补齐 16 字节
 
@@ -213,9 +213,9 @@ struct PanelAnimDelta {
      container_origin: vec2<f32>,
 }
 
-// fn try_set_click_layout(inst_id: u32, pass_through: u32) -> bool {
-//     // 如果允许穿透，不参与竞争
-//     if (pass_through == 1u) {
+// fn try_set_click_layout(inst_id: u32, interaction_passthrough: u32) -> bool {
+//     // 如果允许穿透，不参与竞�?
+//     if (interaction_passthrough == 1u) {
 //         return false;
 //     }
 
@@ -226,13 +226,13 @@ struct PanelAnimDelta {
 //         return true;
 //     }
 
-//     // 如果当前id更大，说明自己是目前最上层的点击目标
+//     // 如果当前id更大，说明自己是目前最上层的点击目�?
 //     return inst_id > prev_id;
 // }
 
-fn try_set_click_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
-        return false; // 穿透层不参与竞争
+fn try_set_click_layout(panel_id: u32, z_index: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough == 1u) {
+        return false; // 穿透层不参与竞�?
     }
 
     let prev_z = atomicMax(&global_uniform.click_layout_z, z_index);
@@ -250,8 +250,8 @@ fn try_set_click_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool 
     return false; 
 }
 
-fn try_set_hover_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
+fn try_set_hover_layout(panel_id: u32, z_index: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough == 1u) {
         return false; 
     }
 
@@ -265,27 +265,27 @@ fn try_set_hover_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool 
         }
     }
 
-    return false; // 被上层挡住
+    return false; // 被上层挡�?
 }
 
-fn try_set_drag_layout(panel_id: u32, z_index: u32, pass_through: u32) -> bool {
-    if (pass_through == 1u) {
-        return false; // 穿透层不参与竞争
+fn try_set_drag_layout(panel_id: u32, z_index: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough == 1u) {
+        return false; // 穿透层不参与竞�?
     }
 
-    // 原子获取当前最高 z_index
+    // 原子获取当前最�?z_index
     let prev_z = atomicMax(&global_uniform.drag_layout_z, z_index);
     let prev_id = atomicLoad(&global_uniform.drag_layout_id);
 
          // debug 信息
-    // 如果自己是更高层，或者同层 id 更大
+    // 如果自己是更高层，或者同�?id 更大
     if (z_index > prev_z || (z_index == prev_z && panel_id >= prev_id)) {
         if ( atomicMax(&global_uniform.drag_layout_id, panel_id) == panel_id){
             return true; // 成功成为当前点击目标
         }
     }
 
-    return false; // 被上层挡住
+    return false; // 被上层挡�?
 }
 
 
@@ -294,7 +294,7 @@ const U32_MAX: u32 = 4294967295u;
 
 @group(0) @binding(0) var<storage, read_write> panels: array<Panel>;
 @group(0) @binding(1) var<storage,read_write>  global_uniform: GlobalUniform;
-//0号索引是当前帧
+//0号索引是当前�?
 @group(0) @binding(2) var<storage,read_write> frame_cache_array:array<GpuInteractionFrame,2>;
 @group(0) @binding(3) var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
 @group(0) @binding(4) var<storage, read_write> panel_anim_delta: array<PanelAnimDelta>;
@@ -307,7 +307,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let mouse = global_uniform.mouse_pos; 
     let state = global_uniform.mouse_state; 
     let panel_interaction = inst.interaction;
-    let pass_through = inst.pass_through;
+    let interaction_passthrough = inst.interaction_passthrough;
     let z_index = inst.z_index;
 
     debug_buffer.floats[0] = global_uniform.time;
@@ -349,7 +349,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             mouse_pressed && 
             frame_cache_array[0].drag_id == inst.id 
          ) {
-            // 计算面板新位置
+            // 计算面板新位�?
             let new_panel_pos = pixel_pos - global_uniform.event_point;
 
             // delta 可以直接用鼠标移动量
@@ -368,7 +368,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
              panel_anim_delta[inst.id].delta_position = vec2<f32>(0.0);
         }
             
-        let try_hover = try_set_hover_layout(inst.id,z_index,pass_through);
+        let try_hover = try_set_hover_layout(inst.id,z_index,interaction_passthrough);
         // drag
         if(  
             ((panel_interaction & 2u) != 0u) && 
@@ -378,7 +378,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             frame_cache_array[1].trigger_panel_state = panels[frame_cache_array[1].hover_id].state;
         }
         
-        let try_drag = try_set_click_layout(inst.id,z_index,pass_through);
+        let try_drag = try_set_click_layout(inst.id,z_index,interaction_passthrough);
         // click
         if ( 
             ((panel_interaction & 2u) != 0u) 
@@ -394,7 +394,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
 
         // drag
-        let try_click = try_set_drag_layout(inst.id,z_index,pass_through);
+        let try_click = try_set_drag_layout(inst.id,z_index,interaction_passthrough);
 
         if(  
             ((panel_interaction & 4u) != 0u) && 

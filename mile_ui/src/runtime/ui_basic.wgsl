@@ -8,7 +8,7 @@ struct VertexInput {
     @location(5) uv_scale: vec2<f32>,
 
     @location(6) z_index: u32,
-    @location(7) pass_through: u32,
+    @location(7) interaction_passthrough: u32,
     @location(8) instance_id: u32,
     @location(9) interaction: u32,
 
@@ -432,7 +432,6 @@ fn random(seed: f32) -> f32 {
 }
 
 fn smoothstep_official(edge0: f32, edge1: f32, value: f32) -> f32 {
-    // WGSL 内置 smoothstep：对 value 进行 clamp，并使用 3x^2-2x^3 的 Hermite 插值
     return smoothstep(edge0, edge1, value);
 }
 

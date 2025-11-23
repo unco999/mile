@@ -5,7 +5,7 @@ struct PanelAnimDelta {
     delta_uv_offset: vec2<f32>,
     delta_uv_scale: vec2<f32>,
     delta_z_index: i32,
-    delta_pass_through: i32,
+    delta_interaction_passthrough: i32,
     panel_id: u32,
     _pad0: u32,
     delta_interaction: u32,
@@ -19,45 +19,35 @@ struct PanelAnimDelta {
     container_origin: vec2<f32>,
 };
 struct Panel {
-    // === 16-byte  ?1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte  ?2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte  ?3 ===
     z_index: u32,           // 4 bytes
-    pass_through: u32,      // 4 bytes
+    interaction_passthrough: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte  ?4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte  ?5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte  ?6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte  ?7 ===
     scale: vec4<f32>,
 
-    // === 16-byte  ?8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte  ?9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte  ?10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes

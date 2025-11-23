@@ -1,43 +1,33 @@
 struct Panel {
-    // === 16-byte 区 1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte 区 2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte 区 3 ===
     z_index: u32,           // 4 bytes
-    pass_through: u32,      // 4 bytes
+    interaction_passthrough: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte 区 4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte 区 5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte 区 6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte 区 7 ===
     scale: vec4<f32>,
 
-    // === 16-byte 区 8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte 区 9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte 区 10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -55,7 +45,7 @@ struct PanelAnimDelta {
     delta_uv_offset: vec2<f32>,
     delta_uv_scale: vec2<f32>,
     delta_z_index: i32,
-    delta_pass_through: i32,
+    delta_interaction_passthrough: i32,
     panel_id: u32,
     _pad0: u32,
     delta_interaction: u32,
@@ -177,18 +167,18 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         panels[idx].transparent += dtrans;
         panel_deltas[panel_id].delta_transparent = 0.0;
     }
-    // Integer-like fields: z_index, pass_through
+    // Integer-like fields: z_index, interaction_passthrough
     let dz = panel_deltas[panel_id].delta_z_index;
     if (dz != 0) {
         let z = i32(panels[idx].z_index) + dz;
         panels[idx].z_index = u32(max(z, 0));
         panel_deltas[panel_id].delta_z_index = 0;
     }
-    let dpass = panel_deltas[panel_id].delta_pass_through;
+    let dpass = panel_deltas[panel_id].delta_interaction_passthrough;
     if (dpass != 0) {
-        let p = i32(panels[idx].pass_through) + dpass;
-        panels[idx].pass_through = u32(max(p, 0));
-        panel_deltas[panel_id].delta_pass_through = 0;
+        let p = i32(panels[idx].interaction_passthrough) + dpass;
+        panels[idx].interaction_passthrough = u32(max(p, 0));
+        panel_deltas[panel_id].delta_interaction_passthrough = 0;
     }
     // Interaction/event/state mask: OR then clear
     let di = panel_deltas[panel_id].delta_interaction;

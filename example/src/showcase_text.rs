@@ -18,7 +18,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .events()
                 .on_event(mile_ui::mui_prototype::UiEventKind::Init, |flow| {
                     flow.text(
-                        "ABCDEFGHIJKLMN",
+                        "我,",
                         FontStyle {
                             font_size: 50,
                             font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
@@ -31,7 +31,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
                     flow.clear_texts();
                     flow.text(
-                        "我们来试试网格布局，这里有一个容器的例子，容器里有一些子项。默认情况下，这些子项以普通的顺序排列，一个接一个地显示出来。",
+                        "那只鸟生来一翼破损,风也不凑巧,天黑了,鸟群南迁,猎人们在平原上谈笑,自信的狂风中有迎难而上的鸟群,她蜷缩在枯草里 发出悲鸣,没人在意宇宙中微弱的信号,恐惧开始蔓延,无数颗星星掉落",
                         FontStyle{
                             font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
                             font_size:50,
