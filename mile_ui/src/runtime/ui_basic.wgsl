@@ -515,8 +515,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     out.clip_position = to_clip_space(quad_pos);
 
-    let normalized_z = f32(input.z_index) / 100.0;
-    out.clip_position.z = 1.0 - clamp(normalized_z, 0.0, 1.0);
+    let normalized_z = clamp(f32(input.z_index) / 100.0, 0.0, 1.0);
+    out.clip_position.z = normalized_z;
 
     out.uv = uv;
     out.texture_id = input.texture_id;
@@ -547,6 +547,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         let atlas_uv = input.uv;
         sampled = textureSample(tex, samp, atlas_uv);
+        sampled = vec4<f32>(sampled.rgb * sampled.a, sampled.a);
     }
 
     var base_color = vec4<f32>(sampled.rgb * input.color.rgb, sampled.a * input.color.a);

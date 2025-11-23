@@ -567,10 +567,7 @@ impl InteractionComputeStage {
                     )));
 
                     if old_frame.hover_id != u32::MAX {
-                        println!(
-                            "拖拽并且落到了某个面板上 hover_id:{} : trigger_panel_state:{}",
-                            old_frame.hover_id, old_frame.trigger_panel_state
-                        );
+
                         hub.push(CpuPanelEvent::TargetDragDrop((
                             new_frame.frame,
                             UiInteractionScope {

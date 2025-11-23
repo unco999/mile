@@ -155,7 +155,6 @@ struct GpuUiDebugReadCallBack {
 
 @group(0) @binding(7)
 var<storage, read_write> debug_buffer: GpuUiDebugReadCallBack;
-
 @vertex
 fn vs_main(
     @location(0) position: vec2<f32>,
@@ -164,30 +163,38 @@ fn vs_main(
 ) -> VertexOutput {
     let screen_width = f32(global_uniform.screen_size.x);
     let screen_height = f32(global_uniform.screen_size.y);
-    // pixel -> NDC conversion uses actual screen size
-    // 通过实例索引选择 glyph，并�?tile 偏移叠加�?uv �?
+
+    // 通过实例索引选择 glyph，并叠加 tile 偏移到 uv
     let inst = instances[inst_id];
     let des = glyph_descs[inst.char_index];
     let index = inst.self_index;
-    let self_z_index = smoothstep(0,1024,f32(index));
-    let tile_scale = vec2<f32>(f32(GLYPH_SIZE) / ATLAS_SIZE.x, f32(GLYPH_SIZE) / ATLAS_SIZE.y);
+    let self_z_index = smoothstep(0, 1024, f32(index));
+
+    let tile_scale = vec2<f32>(
+        f32(GLYPH_SIZE) / ATLAS_SIZE.x,
+        f32(GLYPH_SIZE) / ATLAS_SIZE.y
+    );
     let tile_origin = vec2<f32>(
         f32(des.texture_idx_x) * tile_scale.x,
         f32(des.texture_idx_y) * tile_scale.y
     );
+
     var out: VertexOutput;
 
     // Pixel-accurate layout with wrapping by panel.size:
     // - Wrap X when exceeding panel.size.x
     // - Drop rendering when exceeding panel.size.y
-    // UI buffers index by (panel_id - 1); our instance.panel_index carries PanelId value.
+    // instances.panel_index 是 PanelId，buffers 用 (panel_id - 1) 做索引
     let pidx = inst.panel_index - 1u;
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
     let container = panel.size;
-    // CPU provides baseline origin + cursor offset; fall back to glyph metrics if runtime data is invalid.
+
+    // CPU 提供的 baseline origin + cursor_x
     let origin = inst.origin_cursor.xy;
     let cursor_x = inst.origin_cursor.z;
+
+    // 行高：优先使用实例给的 line_height_px，否则按 font metrics 算
     var line_height_px = inst.line_height_px;
     if (line_height_px <= 0.0) {
         let units = max(f32(des.units_per_em), 1.0);
@@ -195,29 +202,37 @@ fn vs_main(
         line_height_px = line_height_em / units * inst.size_px;
     }
     debug_buffer.floats[pidx] = line_height_px;
+
     let padding = 5.0;
     let wrap_width = max(container.x - padding * 2.0, 1.0);
     let units = max(f32(des.units_per_em), 1.0);
-    let glyph_advance_px = f32(des.glyph_advance_width) / units * inst.size_px;
+
+    let glyph_advance_px =
+        f32(des.glyph_advance_width) / units * inst.size_px;
     let layout_width_px = select(
         glyph_advance_px,
         inst.advance_px,
         inst.advance_px > 0.0,
     );
-    let glyph_left_px = f32(des.glyph_left_side_bearing) / units * inst.size_px;
+
+    let glyph_left_px =
+        f32(des.glyph_left_side_bearing) / units * inst.size_px;
     let glyph_width_units = max(f32(des.x_max - des.x_min), 1.0);
     let glyph_height_units = max(f32(des.y_max - des.y_min), 1.0);
     let glyph_width_px = glyph_width_units / units * inst.size_px;
     let glyph_height_px = glyph_height_units / units * inst.size_px;
     let glyph_top_px = f32(des.y_max) / units * inst.size_px;
+
     let base_line = u32(cursor_x / wrap_width);
     let x_in_line = cursor_x - f32(base_line) * wrap_width;
     let overflow = (x_in_line + layout_width_px) >= wrap_width;
+
     let line_index: u32 =
         inst.line_break_acc + base_line + select(0u, 1u, overflow);
+
     var wrapped_x = select(x_in_line, 0.0, overflow);
 
-    // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
+    // 累加之前 overflow 到这一行的剩余宽度（让换行对齐）
     var carry = 0.0;
     var scan_idx = inst_id;
     var scans: u32 = 0u;
@@ -227,23 +242,31 @@ fn vs_main(
         }
         scan_idx -= 1u;
         scans += 1u;
+
         let prev = instances[scan_idx];
         if (prev.text_index != inst.text_index) {
             break;
         }
+
         let prev_cursor = prev.origin_cursor.z;
         let prev_des = glyph_descs[prev.char_index];
         let prev_units = max(f32(prev_des.units_per_em), 1.0);
-        let prev_glyph_advance_px = f32(prev_des.glyph_advance_width) / prev_units * prev.size_px;
+
+        let prev_glyph_advance_px =
+            f32(prev_des.glyph_advance_width) / prev_units * prev.size_px;
         let prev_layout_width_px = select(
             prev_glyph_advance_px,
             prev.advance_px,
             prev.advance_px > 0.0,
         );
+
         let prev_base_line = u32(prev_cursor / wrap_width);
         let prev_x_in_line = prev_cursor - f32(prev_base_line) * wrap_width;
-        let prev_overflow = (prev_x_in_line + prev_layout_width_px) >= wrap_width;
-        let prev_line = prev.line_break_acc + prev_base_line + select(0u, 1u, prev_overflow);
+        let prev_overflow =
+            (prev_x_in_line + prev_layout_width_px) >= wrap_width;
+        let prev_line =
+            prev.line_break_acc + prev_base_line + select(0u, 1u, prev_overflow);
+
         if (prev_line != line_index) {
             break;
         }
@@ -251,15 +274,25 @@ fn vs_main(
             carry += wrap_width - prev_x_in_line;
         }
     }
+
     wrapped_x += carry;
-    // Clamp to the padded wrap width so long lines do not spill beyond the right edge.
+
+    // 控制在容器范围内，避免溢出到右侧
     wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
+
     let local_y = origin.y + padding + f32(line_index) * line_height_px;
     let wrapped_y = local_y;
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
-    // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
+
+    // 容器 Y 方向可见性
+    let visible = select(
+        0.0,
+        1.0,
+        wrapped_y + inst.size_px <= container.y - padding,
+    );
+
     let quad_size = vec2<f32>(layout_width_px, glyph_height_px);
+
     let px = panel.position
         + delta.delta_position
         + vec2<f32>(
@@ -267,23 +300,28 @@ fn vs_main(
             wrapped_y - glyph_top_px + inst.size_px,
         )
         + position * quad_size;
+
     out.uv = tile_origin + uv * tile_scale;
-    let safe_layout_width = max(layout_width_px, 1e-3);
+
+    // 这里不再用 glyph_bounds 来裁剪，只保留 quad 内部的归一化坐标
     out.quad_coord = position;
-    out.glyph_bounds =
-        vec2<f32>(glyph_left_px / safe_layout_width, glyph_width_px / safe_layout_width);
+    out.glyph_bounds = vec2<f32>(0.0, 1.0);
+
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
-    
+
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
     let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
-    let z_norm = f32(panel.z_index) / 100.0 + self_z_index;
-    let z = 0.99 - z_norm;
+    let base_z = clamp(f32(panel.z_index) / 100.0, 0.0, 1.0);
+    let glyph_offset = self_z_index * 0.005 + 0.001;
+    let z = clamp(base_z - glyph_offset, 0.0, 0.9999);
+
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
     out.vis = visible;
     out.color = inst.color;
     out.font_size = inst.size_px;
     return out;
 }
+
 
 @group(0) @binding(0)
 var font_distance_texture: texture_2d<f32>;
@@ -320,47 +358,57 @@ fn adaptive_edge_width(size_px: f32, px_range: f32) -> vec2<f32> {
 
 fn adaptive_gamma(size_px: f32) -> f32 {
     let size_blend = font_size_normalized(size_px);
-    return mix(0.3, 1.2, size_blend) + 0.15;
+    return mix(0.6, 1.2, size_blend);
 }
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let start_ratio = in.glyph_bounds.x;
-    let width_ratio = clamp(in.glyph_bounds.y, 1e-4, 1.5);
-    let x_norm = in.quad_coord.x;
-    let inside =
-        step(start_ratio, x_norm) * (1.0 - step(start_ratio + width_ratio, x_norm));
-    if (in.vis < 0.5 || inside < 0.5) {
+    // 只用 vis 控制是否丢弃，不再按 glyph_bounds 横向裁剪
+    if (in.vis < 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
+
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;
     let glyph_uv = in.uv + pixel_offset;
+
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
     let dp = vec2<f32>(dpdx(sdf_value), dpdy(sdf_value));
     let grad = length(dp);
     let px_range = max(fwidth(sdf_value) / max(grad, 1e-3), 1e-4);
+
     let edge_width = adaptive_edge_width(in.font_size, px_range);
     let widths = adaptive_edge_width(in.font_size, px_range);
     let thin = widths.x;
     let wide = widths.y;
+
     let sharp_coverage = smoothstep(0.5 - thin, 0.5 + thin, sdf_value);
     let soft_coverage = smoothstep(0.5 - wide, 0.5 + wide, sdf_value);
+
     let size_norm = font_size_normalized(in.font_size);
-    let coverage = mix(max(sharp_coverage, soft_coverage * 0.9), soft_coverage, size_norm);
+    let coverage = mix(
+        max(sharp_coverage, soft_coverage * 0.9),
+        soft_coverage,
+        size_norm,
+    );
+
     let gamma = adaptive_gamma(in.font_size);
     let shaped = pow(max(coverage, 1e-4), gamma);
+
     let fringe = shaped * (1.0 - shaped);
     let edge_boost = mix(0.2, 0.45, size_norm);
     let boosted = saturate(shaped + fringe * edge_boost);
+
     let interior = smoothstep(0.52 + thin, 0.7 + thin, sdf_value);
     let smallness = smoothstep(0.0, 0.5, 0.5 - size_norm);
     let interior_boost = interior * smallness * 0.5;
+
     let final_coverage = saturate(boosted + interior_boost);
+
     let tint = in.color;
     let dist_from_edge = abs(sdf_value - 0.5);
     let edge_region = 1.0 - smoothstep(thin * 2.0, thin * 6.0, dist_from_edge);
     let whiteness = pow(1.0 - size_norm, 2.5) * edge_region * 0.85;
     let edge_tint = mix(tint.rgb, vec3<f32>(1.0, 1.0, 1.0), whiteness);
+
     let final_alpha = tint.a * final_coverage;
     let rgb = edge_tint * final_coverage;
     return vec4<f32>(rgb, final_alpha);

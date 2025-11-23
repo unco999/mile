@@ -464,6 +464,7 @@ struct HandlerEntry {
     with_data: bool,
 }
 
+#[derive(Clone)]
 struct StateEntry {
     spec: StateSpec,
     handlers: HashMap<UiEventKind, HandlerEntry>,
@@ -687,6 +688,8 @@ fn event_data_to_lua_value(lua: &Lua, data: UiEventData) -> LuaResult<Value> {
             tbl.set(2, vec2.y)?;
             Ok(Value::Table(tbl))
         }
+        UiEventData::U32(_) => Ok(Value::Nil),
+        UiEventData::Bool(_) => Ok(Value::Nil),
     }
 }
 

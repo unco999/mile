@@ -162,8 +162,9 @@ fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
 
 fn encode_depth(z_index: u32, panel_id: u32) -> u32 {
     let depth = min(z_index, 0x3FFu);
+    let inverted = 0x3FFu - depth;
     let id_bits = panel_id & 0x003FFFFFu;
-    return (depth << 22u) | id_bits;
+    return (inverted << 22u) | id_bits;
 }
 
 fn try_lock_drag(panel_id: u32) -> bool {
@@ -341,6 +342,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let prev_drag_id = frame_cache[0].drag_id;
     let was_dragging = prev_drag_id == panel.id;
     let is_dragging = frame_cache[1].drag_id == panel.id;
+    var effective_z = panel.z_index;
+    if (was_dragging || is_dragging) {
+        effective_z = 0u;
+    }
 
     if (!hovered && !was_dragging && !is_dragging) {
         return;
@@ -349,7 +354,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Hover claim
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {
-        if (claim_hover(panel.z_index, panel.id, panel.interaction_passthrough)) {
+        if (claim_hover(effective_z, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].hover_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
         }
@@ -357,7 +362,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Click claim
     if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
-        if (claim_click(panel.z_index, panel.id, panel.interaction_passthrough)) {
+        if (claim_click(effective_z, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].click_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
@@ -367,7 +372,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Drag (press)
     if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed && press_duration >= DRAG_PRESS_THRESHOLD) {
         let can_request_drag = was_dragging || prev_drag_id == INVALID_ID;
-        if (can_request_drag && claim_drag(panel.z_index, panel.id, panel.interaction_passthrough)) {
+        if (can_request_drag && claim_drag(effective_z, panel.id, panel.interaction_passthrough)) {
             if (try_lock_drag(panel.id)) {
                 
                 frame_cache[1].drag_id = panel.id;
