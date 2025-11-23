@@ -406,6 +406,8 @@ struct StateSpec {
     z_index: Option<i32>,
     border: Option<BorderStyle>,
     texts: Vec<LuaTextSpec>,
+    drag_enabled: Option<bool>,
+    hover_enabled: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -562,6 +564,12 @@ impl LuaMuiBuilder {
                 }
                 if let Some(z) = entry.spec.z_index {
                     s = s.z_index(z);
+                }
+                if let Some(enabled) = entry.spec.drag_enabled {
+                    s = s.drag(enabled);
+                }
+                if let Some(enabled) = entry.spec.hover_enabled {
+                    s = s.hover(enabled);
                 }
                 if let Some(container) = entry.spec.container.as_ref() {
                     let spec = container.clone();
@@ -1178,6 +1186,16 @@ impl UserData for LuaMuiBuilder {
 
         methods.add_method_mut("visible", |lua, this, visible: bool| {
             this.current_entry_mut().spec.visible = Some(visible);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("drag", |lua, this, enabled: bool| {
+            this.current_entry_mut().spec.drag_enabled = Some(enabled);
+            lua.create_userdata(this.clone())
+        });
+
+        methods.add_method_mut("hover", |lua, this, enabled: bool| {
+            this.current_entry_mut().spec.hover_enabled = Some(enabled);
             lua.create_userdata(this.clone())
         });
 

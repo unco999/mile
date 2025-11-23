@@ -2,7 +2,8 @@
 -- Add/require your own Lua modules here.
 
 require("mui_core")
-require("script")
+-- require("script")
+require("drag_payload_demo")
 -- require("test_event_bus")
 
 -- 运行时入口函数（可被 Rust 调用）
