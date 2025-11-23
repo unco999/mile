@@ -1716,6 +1716,18 @@ impl MiniFontRuntime {
                         glyph_entries.push((idx, flags));
                     }
                 }
+                // Preserve trailing line breaks so布局结果不会把结尾换行吃掉。
+                if pending_line_breaks > 0 {
+                    if let Some(&space_idx) = char_map.get(&' ') {
+                        let encodeable =
+                            pending_line_breaks.min(GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MAX);
+                        glyph_entries.push((
+                            space_idx,
+                            GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE
+                                | (encodeable << GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT),
+                        ));
+                    }
+                }
                 let needed = glyph_entries.len() as u32;
                 if needed == 0 {
                     continue;
