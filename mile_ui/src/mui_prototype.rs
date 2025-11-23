@@ -1359,9 +1359,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             eprintln!("failed to update drag source state: {err:?}");
             return false;
         }
-        let Ok(mut registry) = arc.try_lock() else {
-            return false;
-        };
+        let mut registry = arc.lock().unwrap();
         if let Some(runtime) = registry.get_mut(&source_key) {
             runtime.current_state = state;
         }
@@ -1776,23 +1774,33 @@ fn trigger_event_internal<TPayload: PanelPayload>(
     event: UiEventKind,
 ) {
     let arc = runtime_map::<TPayload>();
-    let mut registry = arc.lock().unwrap();
-    let Some(runtime) = registry.get_mut(key) else {
-        eprintln!(
-            "attempted to trigger event {:?} on unknown panel {:?}",
-            event, key
-        );
-        return;
+    let (mut current_state, handle, transitions, callbacks, mut active_drag) = {
+        let mut registry = arc.lock().unwrap();
+        let Some(runtime) = registry.get_mut(key) else {
+            eprintln!(
+                "attempted to trigger event {:?} on unknown panel {:?}",
+                event, key
+            );
+            return;
+        };
+
+        let state = if let Some(state_override) = forced_state {
+            runtime.current_state = state_override;
+            state_override
+        } else {
+            runtime.current_state
+        };
+
+        (
+            state,
+            runtime.handle.clone(),
+            runtime.transitions.clone(),
+            runtime.callbacks.get(&state).cloned(),
+            runtime.active_drag.clone(),
+        )
     };
 
-    let state = if let Some(state_override) = forced_state {
-        runtime.current_state = state_override;
-        state_override
-    } else {
-        runtime.current_state
-    };
-
-    let mut snapshot = match runtime.handle.read() {
+    let mut snapshot = match handle.read() {
         Ok(record) => record,
         Err(err) => {
             eprintln!("failed to read panel record: {err:?}");
@@ -1803,28 +1811,25 @@ fn trigger_event_internal<TPayload: PanelPayload>(
         snapshot.snapshot.position = pos;
     }
 
-    let Some(callbacks) = runtime.callbacks.get(&state) else {
+    let Some(callbacks) = callbacks else {
         return;
     };
     let args = PanelEventArgs {
         panel_key: key.clone(),
-        state,
+        state: current_state,
         event,
         record_snapshot: snapshot,
     };
 
+    let mut updated_drag: Option<DragContext> = None;
     let mut applied_override = false;
     if let Some(handler) = callbacks.get(&event) {
-        let handle = &runtime.handle;
-        let transitions = &runtime.transitions;
-        let current_state_ref = &mut runtime.current_state;
-        let mut updated_drag: Option<DragContext> = None;
         if let Err(err) = handle.mutate(|record| {
             let mut flow = EventFlow::new(
                 record,
                 &args,
-                current_state_ref,
-                transitions,
+                &mut current_state,
+                &transitions,
                 current_drag_context(),
             );
             handler(&mut flow);
@@ -1833,20 +1838,26 @@ fn trigger_event_internal<TPayload: PanelPayload>(
         }) {
             eprintln!("event mutation failed: {err:?}");
         }
-        if let Some(ctx) = updated_drag {
-            set_global_drag_context(Some(ctx.clone()));
-            runtime.active_drag = Some(ctx);
-        }
+    }
+
+    if let Some(ctx) = updated_drag {
+        set_global_drag_context(Some(ctx.clone()));
+        active_drag = Some(ctx);
     }
 
     if !applied_override {
-        if let Some(next_state) = runtime
-            .transitions
-            .get(&state)
+        if let Some(next_state) = transitions
+            .get(&current_state)
             .and_then(|map| map.get(&event))
         {
-            runtime.current_state = *next_state;
+            current_state = *next_state;
         }
+    }
+
+    let mut registry = arc.lock().unwrap();
+    if let Some(runtime) = registry.get_mut(key) {
+        runtime.current_state = current_state;
+        runtime.active_drag = active_drag;
     }
 }
 
@@ -1857,23 +1868,33 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
     data: UiEventData,
 ) {
     let arc = runtime_map::<TPayload>();
-    let mut registry = arc.lock().unwrap();
-    let Some(runtime) = registry.get_mut(key) else {
-        eprintln!(
-            "attempted to trigger event {:?} on unknown panel {:?}",
-            event, key
-        );
-        return;
+    let (mut current_state, handle, transitions, callbacks_with, mut active_drag) = {
+        let mut registry = arc.lock().unwrap();
+        let Some(runtime) = registry.get_mut(key) else {
+            eprintln!(
+                "attempted to trigger event {:?} on unknown panel {:?}",
+                event, key
+            );
+            return;
+        };
+
+        let state = if let Some(state_override) = forced_state {
+            runtime.current_state = state_override;
+            state_override
+        } else {
+            runtime.current_state
+        };
+
+        (
+            state,
+            runtime.handle.clone(),
+            runtime.transitions.clone(),
+            runtime.callbacks_with.get(&state).cloned(),
+            runtime.active_drag.clone(),
+        )
     };
 
-    let state = if let Some(state_override) = forced_state {
-        runtime.current_state = state_override;
-        state_override
-    } else {
-        runtime.current_state
-    };
-
-    let mut snapshot = match runtime.handle.read() {
+    let mut snapshot = match handle.read() {
         Ok(record) => record,
         Err(err) => {
             eprintln!("failed to read panel record: {err:?}");
@@ -1886,24 +1907,21 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
 
     let args = PanelEventArgs {
         panel_key: key.clone(),
-        state,
+        state: current_state,
         event,
         record_snapshot: snapshot,
     };
 
-    if let Some(map) = runtime.callbacks_with.get(&state) {
+    if let Some(map) = callbacks_with {
         if let Some(handler) = map.get(&event) {
-            let handle = &runtime.handle;
-            let transitions = &runtime.transitions;
-            let current_state_ref = &mut runtime.current_state;
             let mut updated_drag: Option<DragContext> = None;
             if let Err(err) = handle.mutate(|record| {
                 let mut flow = EventFlow::new(
                     record,
                     &args,
-                    current_state_ref,
-                    transitions,
-                    current_drag_context(),
+                    &mut current_state,
+                    &transitions,
+                    active_drag.clone(),
                 );
                 handler(&mut flow, data);
                 updated_drag = flow.take_drag_context();
@@ -1912,21 +1930,25 @@ fn trigger_event_internal_with<TPayload: PanelPayload>(
             }
             if let Some(ctx) = updated_drag {
                 set_global_drag_context(Some(ctx.clone()));
-                runtime.active_drag = Some(ctx);
+                active_drag = Some(ctx);
             } else if matches!(
                 event,
                 UiEventKind::SourceDragDrop | UiEventKind::SourceDragLeave
             ) {
-                // 清理拖拽上下文
-                runtime.active_drag = None;
+                active_drag = None;
                 set_global_drag_context(None);
+            }
+
+            let mut registry = arc.lock().unwrap();
+            if let Some(runtime) = registry.get_mut(key) {
+                runtime.current_state = current_state;
+                runtime.active_drag = active_drag;
             }
             return;
         }
     }
     // Fallback
-    drop(registry);
-    trigger_event_internal::<TPayload>(key, Some(state), event);
+    trigger_event_internal::<TPayload>(key, Some(current_state), event);
 }
 
 pub fn trigger_event<TPayload: PanelPayload>(key: &PanelKey, event: UiEventKind) {
