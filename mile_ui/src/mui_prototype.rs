@@ -7,7 +7,7 @@ use crate::{
     mui_style::{PanelStylePatch, StyleError, load_panel_style},
     runtime::{
         QuadBatchKind, panel_position, register_payload_refresh,
-        relations::register_panel_relations,
+        relations::{register_panel_relations, set_panel_active_state},
         state::{
             CpuPanelEvent, DataChangeEnvelope, PanelEventRegistry, PanelStyleRewrite,
             StateConfigDes, StateOpenCall, StateTransition, UIEventHub, UiInteractionScope,
@@ -1341,14 +1341,15 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         let Some(ctx) = self.drag_context.clone() else {
             return false;
         };
-
         let arc = runtime_map::<TPayload>();
-        let mut registry = arc.lock().unwrap();
-        let Some(runtime) = registry.get_mut(&ctx.source) else {
-            return false;
+        let source_key = ctx.source.clone();
+        let handle = {
+            let registry = arc.lock().unwrap();
+            let Some(runtime) = registry.get(&source_key) else {
+                return false;
+            };
+            runtime.handle.clone()
         };
-
-        let handle = runtime.handle.clone();
         if let Err(err) = handle.mutate(|record| {
             record.current_state = state;
             record.change_epoch = record.change_epoch.wrapping_add(1);
@@ -1356,15 +1357,19 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             eprintln!("failed to update drag source state: {err:?}");
             return false;
         }
-
-        runtime.current_state = state;
+        {
+            let mut registry = arc.lock().unwrap();
+            if let Some(runtime) = registry.get_mut(&source_key) {
+                runtime.current_state = state;
+            }
+        }
 
         let Ok(record_after) = handle.read() else {
             return false;
         };
 
         let args = PanelEventArgs {
-            panel_key: ctx.source.clone(),
+            panel_key: source_key.clone(),
             state,
             event: UiEventKind::TargetDragDrop,
             record_snapshot: record_after.clone(),
@@ -2943,7 +2948,18 @@ fn build_stateful<TPayload: PanelPayload>(
     let mut callbacks_with = HashMap::new();
 
     let mut data_map: HashMap<UiState, Vec<DataChangeCbEntry<TPayload>>> = HashMap::new();
-    for (state_id, definition) in states {
+    let mut state_entries: Vec<_> = states.into_iter().collect();
+    state_entries.sort_by_key(|(id, _)| if *id == default { 0u8 } else { 1u8 });
+
+    for (state_id, definition) in state_entries.iter() {
+        if let Some(rel_def) = definition.relations.as_ref() {
+            register_panel_relations(panel_key.panel_id, *state_id, rel_def.clone());
+        }
+    }
+
+    set_panel_active_state(panel_key.panel_id, default);
+
+    for (state_id, definition) in state_entries {
         let PanelStateDefinition {
             overrides,
             frag_shader,
@@ -2952,7 +2968,7 @@ fn build_stateful<TPayload: PanelPayload>(
             callbacks_with: state_callbacks_with,
             data_callbacks,
             animations: _animations,
-            relations,
+            relations: _relations,
         } = definition;
 
         if let Some(shader) = frag_shader.as_ref() {
@@ -2968,9 +2984,6 @@ fn build_stateful<TPayload: PanelPayload>(
         // Store data change callbacks into runtime map after runtime is created
         data_map.insert(state_id, data_callbacks);
 
-        if let Some(rel_def) = relations {
-            register_panel_relations(panel_key.panel_id, state_id, rel_def);
-        }
     }
 
     install_runtime_callbacks::<TPayload>(

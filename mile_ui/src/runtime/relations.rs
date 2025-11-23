@@ -273,8 +273,8 @@ impl RelationRegistry {
         }
         layout_flags |= encode_space(spec.space);
 
-        let slot = spec.slot_size.or(spec.size).unwrap_or([0.0f32, 0.0f32]);
-        let size = spec.size.unwrap_or(slot);
+        let slot = spec.slot_size.unwrap_or([0.0f32, 0.0f32]);
+        let size = spec.size.or(spec.slot_size).unwrap_or([0.0f32, 0.0f32]);
 
         let (entry_mode, entry_param) = encode_transition(&link.entry);
         let (exit_mode, exit_param) = encode_transition(&link.exit);

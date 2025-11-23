@@ -3,9 +3,11 @@ use notify::{
     Config, Event, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
     recommended_watcher,
 };
+use std::any::Any;
 use std::env;
 use std::fs;
 use std::io;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -63,7 +65,7 @@ where
                     Ok(res) => Some(res),
                     Err(RecvTimeoutError::Timeout) => {
                         if pending_reload {
-                            on_reload();
+                            invoke_reload(&mut on_reload);
                             pending_reload = false;
                         }
                         deadline = None;
@@ -93,11 +95,28 @@ where
         }
 
         if pending_reload {
-            on_reload();
+            invoke_reload(&mut on_reload);
         }
     });
 
     Ok(watcher)
+}
+
+fn invoke_reload<F: FnMut()>(handler: &mut F) {
+    if let Err(err) = panic::catch_unwind(AssertUnwindSafe(|| handler())) {
+        let message = describe_panic(err.as_ref());
+        eprintln!("[lua_watch] reload handler panicked: {message}");
+    }
+}
+
+fn describe_panic(err: &(dyn Any + Send + 'static)) -> String {
+    if let Some(msg) = err.downcast_ref::<&str>() {
+        (*msg).to_string()
+    } else if let Some(msg) = err.downcast_ref::<String>() {
+        msg.clone()
+    } else {
+        "unknown panic".to_string()
+    }
 }
 
 fn handle_event(event: Event, source_root: &Path, deploy_root: &Path) -> bool {

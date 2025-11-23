@@ -1478,7 +1478,7 @@ fn parse_container_spec(table: &Table) -> LuaResult<RelContainerSpec> {
         spec.scroll_axis = parse_scroll_axis_name(&axis)?;
     }
     if let Some(layout_value) = table.get::<Option<Value>>("layout")? {
-        spec.layout = parse_layout_value(layout_value)?;
+        spec.layout = parse_layout_value(layout_value, Some(table))?;
     }
     Ok(spec)
 }
@@ -1497,10 +1497,10 @@ fn parse_border_style(table: &Table) -> LuaResult<BorderStyle> {
     Ok(style)
 }
 
-fn parse_layout_value(value: Value) -> LuaResult<RelLayoutKind> {
+fn parse_layout_value(value: Value, root: Option<&Table>) -> LuaResult<RelLayoutKind> {
     match value {
         Value::Nil => Ok(RelLayoutKind::free()),
-        Value::String(name) => parse_layout_kind(&name.to_string_lossy(), None),
+        Value::String(name) => parse_layout_kind(&name.to_string_lossy(), root),
         Value::Table(tbl) => {
             let kind: String = tbl
                 .get("kind")

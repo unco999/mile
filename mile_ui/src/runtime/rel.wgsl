@@ -146,7 +146,8 @@ fn clamp_order(order: u32, total: u32) -> u32 {
 fn resolve_container_size(item: RelWorkItem) -> vec2<f32> {
     var size = item.container_size;
     if (all(size == vec2<f32>(0.0)) && is_valid_panel(item.container_id)) {
-        size = panels[item.container_id].size;
+        let idx = max(item.container_id, 1u) - 1u;
+        size = panels[idx].size;
     }
     return size;
 }
