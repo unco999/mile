@@ -573,8 +573,9 @@ fn rounded_rect_coverage(uv: vec2<f32>, size: vec2<f32>, radius: f32) -> f32 {
 
     let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - clamped_radius;
 
-    let aa = max(fwidth(dist), 1e-4);
-    return clamp(0.5 - dist / aa, 0.0, 1.0);
+    // 鍔犵�?单榧犳爣鍒嗗壊锛屼娇杈规皵鎶楅忔槑杈规媺涓嶅仛榛戝乏璧�
+    let aa = max(fwidth(dist) * 0.5, 1e-4);
+    return smoothstep(aa, -aa, dist);
 }
 
 @fragment
@@ -606,8 +607,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     let base_radius = min(input.instance_size.x, input.instance_size.y) * 0.08;
     let coverage = rounded_rect_coverage(input.uv, input.instance_size, base_radius);
-    final_color.a = final_color.a * coverage;
-    return final_color;
+    // 灏嗗渾瑙嗘渶缁堟帓骞冲嵆鐧借壊鍙樿壊锛屼笉璁╁叿榫欏寲閫忔槑鍧愮儹鑿�
+    let masked_alpha = final_color.a * coverage;
+    let masked_rgb = final_color.rgb * coverage;
+    return vec4<f32>(masked_rgb, masked_alpha);
     // 淇濇寔鍘熸湁閫忔槑搴?
 }
 
