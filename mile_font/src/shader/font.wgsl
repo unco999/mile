@@ -3,7 +3,9 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) vis: f32,
     @location(2) color: vec4<f32>,
-    @location(3) font_size:f32
+    @location(3) font_size: f32,
+    @location(4) quad_coord: vec2<f32>,
+    @location(5) glyph_bounds: vec2<f32>,
 };
 
 struct GlobalUniform {
@@ -174,7 +176,6 @@ fn vs_main(
         f32(des.texture_idx_y) * tile_scale.y
     );
     var out: VertexOutput;
-    out.uv = tile_origin + uv * tile_scale;
 
     // Pixel-accurate layout with wrapping by panel.size:
     // - Wrap X when exceeding panel.size.x
@@ -208,7 +209,7 @@ fn vs_main(
     let glyph_height_units = max(f32(des.y_max - des.y_min), 1.0);
     let glyph_width_px = glyph_width_units / units * inst.size_px;
     let glyph_height_px = glyph_height_units / units * inst.size_px;
-    let glyph_top_px = (f32(des.y_max) + inst.line_height_px * 0.0) / units * inst.size_px;
+    let glyph_top_px = f32(des.y_max) / units * inst.size_px;
     let base_line = u32(cursor_x / wrap_width);
     let x_in_line = cursor_x - f32(base_line) * wrap_width;
     let overflow = (x_in_line + layout_width_px) >= wrap_width;
@@ -258,7 +259,7 @@ fn vs_main(
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
     let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
-    let quad_size = vec2<f32>(glyph_width_px, glyph_height_px);
+    let quad_size = vec2<f32>(layout_width_px, glyph_height_px);
     let px = panel.position
         + delta.delta_position
         + vec2<f32>(
@@ -266,6 +267,11 @@ fn vs_main(
             wrapped_y - glyph_top_px + inst.size_px,
         )
         + position * quad_size;
+    out.uv = tile_origin + uv * tile_scale;
+    let safe_layout_width = max(layout_width_px, 1e-3);
+    out.quad_coord = position;
+    out.glyph_bounds =
+        vec2<f32>(glyph_left_px / safe_layout_width, glyph_width_px / safe_layout_width);
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
@@ -319,7 +325,12 @@ fn adaptive_gamma(size_px: f32) -> f32 {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    if (in.vis < 0.5) {
+    let start_ratio = in.glyph_bounds.x;
+    let width_ratio = clamp(in.glyph_bounds.y, 1e-4, 1.5);
+    let x_norm = in.quad_coord.x;
+    let inside =
+        step(start_ratio, x_norm) * (1.0 - step(start_ratio + width_ratio, x_norm));
+    if (in.vis < 0.5 || inside < 0.5) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     let pixel_offset = vec2<f32>(0.5) / ATLAS_SIZE;

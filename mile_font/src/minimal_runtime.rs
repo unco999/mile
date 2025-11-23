@@ -1642,7 +1642,7 @@ impl MiniFontRuntime {
                         glyph_ver_side_bearing: face.glyph_ver_side_bearing(glyph_id).unwrap_or(0)
                             as i32,
                     };
-                    println!("当前字体数据 {:?}",metrics);
+                    println!("{:?} = {:?}",ch,metrics);
                     results.push(FontGlyphResult {
                         character: ch,
                         glyph_id,
