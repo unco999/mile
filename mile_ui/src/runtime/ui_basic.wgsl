@@ -553,19 +553,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var base_color = vec4<f32>(sampled.rgb * input.color.rgb, sampled.a * input.color.a);
     base_color.a = base_color.a * input.transparent;
 
-    let border_width = input.border.x;
-    if (border_width > 0.0) {
-        let half_size = input.instance_size * 0.5;
-        let radius = input.border.y;
-        let centered = (input.local_pos - vec2<f32>(0.5, 0.5)) * input.instance_size;
-        let sdf = rounded_rect_sdf(centered, half_size, radius);
+    let half_size = input.instance_size * 0.5;
+    let radius = input.border.y;
+    let centered = (input.local_pos - vec2<f32>(0.5, 0.5)) * input.instance_size;
+    let sdf = rounded_rect_sdf(centered, half_size, radius);
 
-        if (sdf > 0.0) {
-            base_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        } else if (sdf >= -border_width) {
-            base_color = vec4<f32>(input.border_color.rgb, input.border_color.a * input.transparent);
-        }
-    }
+    let pixel_range = max(0.75, length(fwidth(centered)));
+    let border_width = input.border.x;
+    let fill_sdf = select(sdf, sdf + border_width, border_width > 0.0);
+    let fill_coverage = 1.0 - smoothstep(0.0, pixel_range, fill_sdf);
+    let outer_coverage = 1.0 - smoothstep(0.0, pixel_range, sdf);
+    let border_coverage = max(outer_coverage - fill_coverage, 0.0);
 
     var final_color = base_color;
     if (input.fragment_shader_id != U32_MAX) {
@@ -582,5 +580,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return final_color;
+    let stroke_color = vec4<f32>(input.border_color.rgb, input.border_color.a * input.transparent);
+
+    var composed = final_color * fill_coverage + stroke_color * border_coverage;
+
+    let outline_width = pixel_range * 1.5;
+    let outline_coverage = smoothstep(0.0, pixel_range, sdf)
+        * (1.0 - smoothstep(pixel_range, outline_width, sdf));
+    let base_alpha = max(composed.a, 0.0001);
+    let outline_tint = mix(composed.rgb / base_alpha, vec3<f32>(1.0), 0.25);
+    let outline_alpha = outline_coverage * composed.a * 0.4;
+    composed = vec4<f32>(composed.rgb + outline_tint * outline_alpha, composed.a + outline_alpha);
+
+    return clamp(composed, vec4<f32>(0.0), vec4<f32>(1.0));
 }
