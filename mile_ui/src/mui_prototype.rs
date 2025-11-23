@@ -2247,6 +2247,34 @@ impl<TPayload: PanelPayload> StateStageBuilder<TPayload> {
         self
     }
 
+    pub fn drag(mut self, enabled: bool) -> Self {
+        self.set_interaction_flag(PanelInteraction::DRAGGABLE, enabled);
+        self
+    }
+
+    pub fn hover(mut self, enabled: bool) -> Self {
+        self.set_interaction_flag(PanelInteraction::HOVER, enabled);
+        self
+    }
+
+    fn set_interaction_flag(&mut self, flag: PanelInteraction, enabled: bool) {
+        let mut mask = self
+            .definition
+            .overrides
+            .interaction
+            .unwrap_or(PanelInteraction::DEFUALT.bits());
+        if enabled {
+            mask |= flag.bits();
+        } else {
+            mask &= !flag.bits();
+        }
+        if mask == PanelInteraction::DEFUALT.bits() {
+            self.definition.overrides.interaction = None;
+        } else {
+            self.definition.overrides.interaction = Some(mask);
+        }
+    }
+
     pub fn border(mut self, border: BorderStyle) -> Self {
         self.definition.overrides.border = Some(border);
         self

@@ -83,8 +83,10 @@ struct Instance {
     advance_px: f32,
     line_break_acc: u32,
     color: vec4<f32>,
+    first_line_indent: f32,
+    text_align: u32,
     flags: u32,
-    _pad: array<u32, 3>,
+    _pad: array<u32, 1>,
 };
 
 @group(0) @binding(4)
@@ -192,11 +194,16 @@ fn vs_main(
         line_height_px = line_height_em / units * inst.size_px;
     }
     debug_buffer.floats[pidx] = line_height_px;
-    let wrap_width = max(container.x, 1.0);
-    let base_line = floor(cursor_x / wrap_width);
-    let x_in_line = cursor_x - base_line * wrap_width;
-    let overflow = (x_in_line + inst.advance_px) > wrap_width;
-    var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
+    let padding = 5.0;
+    let wrap_width = max(container.x - padding * 2.0, 1.0);
+    let units = max(f32(des.units_per_em), 1.0);
+    let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
+    let layout_width_px = max(inst.advance_px, glyph_width_px);
+    let base_line = u32(cursor_x / wrap_width);
+    let x_in_line = cursor_x - f32(base_line) * wrap_width;
+    let overflow = (x_in_line + layout_width_px) >= wrap_width;
+    let line_index: u32 =
+        inst.line_break_acc + base_line + select(0u, 1u, overflow);
     var wrapped_x = select(x_in_line, 0.0, overflow);
 
     // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
@@ -214,11 +221,15 @@ fn vs_main(
             break;
         }
         let prev_cursor = prev.origin_cursor.z;
-        let prev_base_line = floor(prev_cursor / wrap_width);
-        let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
-        let prev_overflow = (prev_x_in_line + prev.advance_px) > wrap_width;
-        var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
-        if (prev_line != line) {
+        let prev_des = glyph_descs[prev.char_index];
+        let prev_units = max(f32(prev_des.units_per_em), 1.0);
+        let prev_glyph_width_px = f32(prev_des.x_max - prev_des.x_min) / prev_units * prev.size_px;
+        let prev_layout_width_px = max(prev.advance_px, prev_glyph_width_px);
+        let prev_base_line = u32(prev_cursor / wrap_width);
+        let prev_x_in_line = prev_cursor - f32(prev_base_line) * wrap_width;
+        let prev_overflow = (prev_x_in_line + prev_layout_width_px) >= wrap_width;
+        let prev_line = prev.line_break_acc + prev_base_line + select(0u, 1u, prev_overflow);
+        if (prev_line != line_index) {
             break;
         }
         if (prev_overflow) {
@@ -226,11 +237,13 @@ fn vs_main(
         }
     }
     wrapped_x += carry;
-    let local_y = origin.y + line * line_height_px;
+    // Clamp to the padded wrap width so long lines do not spill beyond the right edge.
+    wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
+    let local_y = origin.y + padding + f32(line_index) * line_height_px;
     let wrapped_y = local_y;
-    let wrapped_x_with_origin = origin.x + wrapped_x;
+    let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
-    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y);
+    let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
     let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin, wrapped_y) + position * inst.size_px;
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
@@ -283,7 +296,7 @@ fn adaptive_edge_width(size_px: f32, px_range: f32) -> vec2<f32> {
 fn adaptive_gamma(size_px: f32) -> f32 {
     // 小字号需要更亮的边缘，大字号保持锐利。
     let size_blend = font_size_normalized(size_px);
-    return mix(0.3, 1.2, size_blend);
+    return mix(0.6, 1.2, size_blend) + 0.24;
 }
 
 @fragment

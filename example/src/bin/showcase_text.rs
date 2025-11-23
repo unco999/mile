@@ -5,6 +5,6 @@ fn main() {
     Mile::new()
         .add_demo(|| {
             register_text_demo().expect("animation demo");
-        })
+        })  
         .run();
 }

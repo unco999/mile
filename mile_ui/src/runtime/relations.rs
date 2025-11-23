@@ -7,8 +7,8 @@ use std::{
 use crate::{
     mui_prototype::{PanelKey, UiState, panel_numeric_id, registered_panel_keys},
     mui_rel::{
-        RelContainerLinkState, RelContainerSpec, RelGraphDefinition, RelLayoutKind, RelNodeState,
-        RelParsedGraph, RelSpace, RelTransition, RelViewKey,
+        RelContainerLinkState, RelContainerSpec, RelFloatAxis, RelGraphDefinition,
+        RelLayoutKind, RelNodeState, RelParsedGraph, RelSpace, RelTransition, RelViewKey,
     },
 };
 
@@ -527,6 +527,20 @@ fn encode_layout(spec: &RelContainerSpec) -> (u32, [f32; 2]) {
             let signed_radius = if *clockwise { *radius } else { -*radius };
             (layout_flags::RING, [signed_radius, *start_angle])
         }
+        RelLayoutKind::Float {
+            axis,
+            spacing,
+            align_center,
+        } => {
+            let mut flags = layout_flags::FLOAT;
+            if matches!(axis, RelFloatAxis::Vertical) {
+                flags |= layout_flags::FLOAT_AXIS_VERTICAL;
+            }
+            if *align_center {
+                flags |= layout_flags::ALIGN_CENTER;
+            }
+            (flags, *spacing)
+        }
         RelLayoutKind::Custom { .. } => (layout_flags::FREE, [0.0, 0.0]),
     }
 }
@@ -617,6 +631,7 @@ pub mod layout_flags {
     pub const VERTICAL: u32 = 2;
     pub const GRID: u32 = 3;
     pub const RING: u32 = 4;
+    pub const FLOAT: u32 = 5;
 
     pub const SPACE_SCREEN: u32 = 1 << 8;
     pub const SPACE_PARENT: u32 = 1 << 9;
@@ -624,4 +639,5 @@ pub mod layout_flags {
 
     pub const ALIGN_CENTER: u32 = 1 << 12;
     pub const HAS_PERCENT: u32 = 1 << 13;
+    pub const FLOAT_AXIS_VERTICAL: u32 = 1 << 14;
 }

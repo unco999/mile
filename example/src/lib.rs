@@ -12,6 +12,8 @@
 mod showcase_animation;
 mod showcase_ast_shader;
 mod showcase_basic_layout;
+mod showcase_float;
+mod showcase_free;
 mod showcase_responsive;
 mod showcase_state;
 mod showcase_test;
@@ -20,6 +22,8 @@ use mile_core::{App, AppEvent};
 pub use showcase_animation::register_animation_demo;
 pub use showcase_ast_shader::register_ast_shader_demo;
 pub use showcase_basic_layout::register_basic_layout;
+pub use showcase_float::register_float_layout;
+pub use showcase_free::register_free_layout;
 pub use showcase_responsive::register_responsive_layout;
 pub use showcase_state::register_state_demo;
 pub use showcase_test::register_test;

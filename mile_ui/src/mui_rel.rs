@@ -270,6 +270,18 @@ impl RelContainerSpec {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelFloatAxis {
+    Horizontal,
+    Vertical,
+}
+
+impl Default for RelFloatAxis {
+    fn default() -> Self {
+        RelFloatAxis::Horizontal
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RelLayoutKind {
     Free,
@@ -290,6 +302,11 @@ pub enum RelLayoutKind {
         radius: f32,
         start_angle: f32,
         clockwise: bool,
+    },
+    Float {
+        axis: RelFloatAxis,
+        spacing: [f32; 2],
+        align_center: bool,
     },
     Custom {
         descriptor: String,
