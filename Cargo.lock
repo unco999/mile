@@ -1391,6 +1391,7 @@ dependencies = [
 name = "mile_core"
 version = "0.1.0"
 dependencies = [
+ "image",
  "mile_api",
  "mile_font",
  "mile_gpu_dsl",

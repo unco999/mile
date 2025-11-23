@@ -597,6 +597,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (clamped.a <= 1e-4) {
         return vec4<f32>(0.0);
     }
-    let alpha = clamped.a;
-    return vec4<f32>(clamped.rgb / alpha, alpha);
+    // Render pipeline uses premultiplied alpha blending (wgpu::ALPHA_BLENDING),
+    // so keep RGB premultiplied instead of converting back to straight alpha.
+    return clamped;
 }

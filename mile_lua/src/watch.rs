@@ -13,6 +13,9 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const COPY_RETRY_ATTEMPTS: usize = 5;
+const COPY_RETRY_DELAY_MS: u64 = 40;
+
 #[derive(Clone, Debug)]
 pub enum LuaDeployStatus {
     Copied,
@@ -217,8 +220,29 @@ fn copy_to_target(source: &Path, target: &Path) -> io::Result<()> {
     if source == target {
         return Ok(());
     }
-    fs::copy(source, target)?;
-    Ok(())
+
+    let mut last_err: Option<io::Error> = None;
+    for attempt in 0..COPY_RETRY_ATTEMPTS {
+        match fs::copy(source, target) {
+            Ok(_) => return Ok(()),
+            Err(err) => {
+                last_err = Some(err);
+                if attempt + 1 < COPY_RETRY_ATTEMPTS {
+                    thread::sleep(Duration::from_millis(COPY_RETRY_DELAY_MS));
+                }
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!(
+                "copy failed after {COPY_RETRY_ATTEMPTS} attempts for {:?}",
+                source
+            ),
+        )
+    }))
 }
 
 fn remove_from_target(target: &Path) -> io::Result<()> {

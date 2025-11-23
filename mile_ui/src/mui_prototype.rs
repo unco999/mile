@@ -2883,6 +2883,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
                 | UiEventKind::SourceDragDrop => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
                 UiEventKind::Out => PanelInteraction::Out.bits(),
+                _=>0
             };
         }
 
@@ -2913,6 +2914,7 @@ impl<TPayload: PanelPayload> InteractionStageBuilder<TPayload> {
                 | UiEventKind::SourceDragDrop => PanelInteraction::DRAGGABLE.bits(),
                 UiEventKind::Hover => PanelInteraction::HOVER.bits(),
                 UiEventKind::Out => PanelInteraction::Out.bits(),
+                _=>0
             };
         }
 

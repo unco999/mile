@@ -341,9 +341,32 @@ impl RelationRegistry {
                 }
             }
         }
-        for children in self.container_members.values_mut() {
-            children.sort_unstable();
-            children.dedup();
+        for (container, children) in self.container_members.iter_mut() {
+            let mut unique: Vec<u32> = Vec::with_capacity(children.len());
+            let mut seen: HashSet<u32> = HashSet::with_capacity(children.len());
+            for &child in children.iter() {
+                if seen.insert(child) {
+                    unique.push(child);
+                }
+            }
+            *children = if let Some(prev) = previous_members.get(container) {
+                let unique_set: HashSet<u32> = unique.iter().copied().collect();
+                let mut ordered: Vec<u32> = Vec::with_capacity(unique.len());
+                let mut ordered_set: HashSet<u32> = HashSet::with_capacity(unique.len());
+                for &child in prev {
+                    if unique_set.contains(&child) && ordered_set.insert(child) {
+                        ordered.push(child);
+                    }
+                }
+                for child in unique {
+                    if ordered_set.insert(child) {
+                        ordered.push(child);
+                    }
+                }
+                ordered
+            } else {
+                unique
+            };
         }
         self.recompute_panel_depths();
         previous_members

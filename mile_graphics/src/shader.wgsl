@@ -1,36 +1,29 @@
-// shader.wgsl - 鼠标交互的辉光分形背景
+// shader.wgsl - 交互式霓虹数据雾背景
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
 };
 
-// 与 mile_api::interface::GlobalUniform 对齐的布局
 struct GlobalUniform {
-    // === block 1 ===
     click_layout_z: u32,
     click_layout_id: u32,
     hover_layout_id: u32,
     hover_layout_z: u32,
-    // === block 2 ===
     drag_layout_id: u32,
     drag_layout_z: u32,
     pad_atomic1: u32,
     pad_atomic2: u32,
-    // === block 3 ===
     dt: f32,
     pad1: f32,
     pad2: f32,
     pad3: f32,
-    // === block 4 ===
     mouse_pos: vec2<f32>,
     mouse_state: u32,
     frame: u32,
-    // === block 5 ===
     screen_size: vec2<u32>,
     press_duration: f32,
     time: f32,
-    // === block 6/7 ===
     event_point: vec2<f32>,
     extra1: vec2<f32>,
     extra2: vec2<f32>,
@@ -40,82 +33,108 @@ struct GlobalUniform {
 @group(0) @binding(0)
 var<storage, read> global_uniform: GlobalUniform;
 
-// HSV -> RGB（用于平滑调色板）
-fn hsv2rgb(c: vec3<f32>) -> vec3<f32> {
-    let K = vec4<f32>(1.0, 2.0/3.0, 1.0/3.0, 3.0);
-    let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+const PI: f32 = 3.14159265;
+
+fn hash21(p: vec2<f32>) -> f32 {
+    let h = sin(dot(p, vec2<f32>(127.1, 311.7)));
+    return fract(h * 43758.5453123);
+}
+
+fn neon_palette(t: f32) -> vec3<f32> {
+    let a = vec3<f32>(0.5, 0.2, 0.7);
+    let b = vec3<f32>(0.4, 0.3, 0.4);
+    let c = vec3<f32>(1.0, 1.0, 1.0);
+    let d = vec3<f32>(0.0, 0.3, 0.7);
+    return a + b * cos(2.0 * PI * (c * t + d));
+}
+
+fn rotate2(v: vec2<f32>, angle: f32) -> vec2<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    return vec2<f32>(v.x * c - v.y * s, v.x * s + v.y * c);
 }
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32) -> VertexOutput {
-    // 全屏三角形（不依赖顶点缓冲）
     var pos = array<vec2<f32>, 3>(
         vec2<f32>(-1.0, -1.0),
         vec2<f32>( 3.0, -1.0),
         vec2<f32>(-1.0,  3.0)
     );
     var out: VertexOutput;
-    out.position = vec4<f32>(pos[vi], 0.999999, 1.0);
-    out.uv = (out.position.xy + vec2<f32>(1.0)) * 0.5;
+    out.position = vec4<f32>(pos[vi], 0.99, 1.0);
+    out.uv = (pos[vi] + vec2<f32>(1.0, 1.0)) * 0.5;
     return out;
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // 屏幕、时间、鼠标
-    let screen = vec2<f32>(f32(global_uniform.screen_size.x), f32(global_uniform.screen_size.y));
-    let sx = max(screen.x, 1.0);
-    let sy = max(screen.y, 1.0);
-    let aspect = sx / sy;
-    let t = global_uniform.time;
-
-    // 归一化坐标（保持比例）
-    var uv = input.uv * 2.0 - vec2<f32>(1.0, 1.0);
-    uv.x *= aspect;
-
-    // 鼠标（转 uv 空间）
-    let mouse_ndc = vec2<f32>(
-        global_uniform.mouse_pos.x / sx * 2.0 - 1.0,
-        1.0 - global_uniform.mouse_pos.y / sy * 2.0
+    let screen = vec2<f32>(
+        max(1.0, f32(global_uniform.screen_size.x)),
+        max(1.0, f32(global_uniform.screen_size.y))
     );
-    let mouse_uv = vec2<f32>(mouse_ndc.x * aspect, mouse_ndc.y);
+    let aspect = screen.x / screen.y;
+    let uv = input.uv;
+    let centered = vec2<f32>((uv.x - 0.5) * aspect, uv.y - 0.5);
+    let time = global_uniform.time * 0.65;
 
-    // 深色基底（海洋）
-    var color = vec3<f32>(0.01, 0.02, 0.035);
+    let mouse_uv = vec2<f32>(
+        global_uniform.mouse_pos.x / screen.x,
+        1.0 - global_uniform.mouse_pos.y / screen.y
+    );
+    let mouse_press = select(0.0, 1.0, global_uniform.mouse_state != 0u);
 
-    // 多重正弦海浪（时间驱动，增加小波浪与增幅）
-    let w1 = sin(uv.x * 6.0 + t * 1.6);
-    let w2 = sin(uv.y * 9.0 - t * 1.3);
-    let w3 = sin((uv.x * 1.3 + uv.y * 1.1) * 7.0 + t * 1.0);
-    let w4 = sin((uv.x * 2.0 - uv.y * 1.7) * 13.0 + t * 1.8);
-    let w5 = sin((uv.x * 3.3 + uv.y * 2.1) * 21.0 - t * 2.4);
-    var wave = (w1 * 0.7 + w2 * 0.7 + w3 * 0.5 + w4 * 0.35 + w5 * 0.25) / 2.5;
-    // 轻微非线性，增强层次
-    wave += 0.15 * sin(wave * 6.28318 + t * 0.8);
+    var color = vec3<f32>(0.03, 0.02, 0.05);
+    let vertical_grad = mix(vec3<f32>(0.02, 0.02, 0.05), vec3<f32>(0.12, 0.05, 0.18), uv.y);
+    color = mix(color, vertical_grad, 0.7);
 
-    // 鼠标涟漪
-    let d = length(uv - mouse_uv);
-    let ripple = sin(16.0 * d - t * 5.0) * exp(-d * 4.0);
-    wave += ripple * 0.8;
+    let radial = exp(-length(centered * vec2<f32>(1.0, 0.7)) * 1.8);
+    color += radial * vec3<f32>(0.05, 0.01, 0.08);
 
-    // 波峰（泡沫/霓虹高光）
-    let crest = smoothstep(0.50, 0.82, (wave * 1.3 + 1.0) * 0.5);
-    let neon = hsv2rgb(vec3<f32>(fract(t * 0.06 + crest * 0.18), 0.95, 1.0));
-    color += neon * crest * 1.05;
+    let parallax = (mouse_uv - vec2<f32>(0.5, 0.5)) * 0.12;
+    let grid_uv = (uv + parallax) * vec2<f32>(4.5, 3.0);
+    let grid = exp(-42.0 * min(abs(fract(grid_uv) - 0.5).x, abs(fract(grid_uv) - 0.5).y));
+    color += grid * vec3<f32>(0.02, 0.18, 0.36);
 
-    // 鼠标高亮（霓虹）
-    let mouse_glow = pow(max(0.0, 0.5 - d), 2.0);
-    let mouse_neon = hsv2rgb(vec3<f32>(fract(0.6 + t * 0.1), 0.95, 1.0));
-    color += mouse_neon * mouse_glow * 0.9;
+    let rotated = rotate2(centered, 0.2);
+    let layer_uv = rotated * 3.0 + vec2<f32>(time * 0.2, -time * 0.15);
+    let tile = floor(layer_uv);
+    let spark = hash21(tile);
+    let spark_trail = smoothstep(0.97, 1.0, spark) * exp(-30.0 * abs(fract(layer_uv.y) - 0.5));
+    color += spark_trail * vec3<f32>(0.08, 0.35, 0.75);
 
-    // 微弱的波谷冷色
-    let trough = smoothstep(0.0, 0.3, (wave + 1.0) * 0.5);
-    color += vec3<f32>(0.05, 0.08, 0.12) * (1.0 - trough) * 0.15;
+    let scan = smoothstep(0.80, 1.0, 1.0 - abs(fract(uv.y * 1.6 - time * 0.25) - 0.5));
+    color += scan * vec3<f32>(0.3, 0.1, 0.5) * 0.12;
 
-    // 暗角
-    let vignette = smoothstep(1.4, 0.2, length(uv));
+    let diag = abs(fract((uv.x + uv.y) * 2.3 - time * 0.35) - 0.5);
+    let glitch = smoothstep(0.48, 0.5, diag);
+    color += glitch * vec3<f32>(0.08, 0.05, 0.15);
+
+    let mouse_dir = uv - mouse_uv;
+    let ripple_dist = length(mouse_dir);
+    let ripple = exp(-ripple_dist * 20.0) *
+        (0.6 + 0.4 * sin((ripple_dist - time * 0.6) * 45.0));
+    let ripple_color = mix(vec3<f32>(0.05, 0.4, 0.8), vec3<f32>(0.9, 0.2, 0.8), mouse_press);
+    color += ripple * ripple_color * (0.7 + mouse_press * 0.5);
+
+    let pointer = clamp(
+        1.0 - length(vec2<f32>(mouse_dir.x * aspect, mouse_dir.y) * 4.0),
+        0.0,
+        1.0
+    );
+    color += pointer * vec3<f32>(0.2, 0.5, 0.9) * 0.3;
+
+    let node_scale = vec2<f32>(12.0, 6.0);
+    let node_uv = floor((uv + parallax * 2.0) * node_scale);
+    let flicker = pow(hash21(node_uv + floor(time * 2.0)), 12.0);
+    color += flicker * neon_palette(hash21(node_uv * 1.7)) * 0.25;
+
+    let grain = hash21(uv * screen);
+    color += (grain - 0.5) * 0.008;
+
+    let vignette = smoothstep(0.95, 0.35, length(centered * vec2<f32>(1.0, 1.4)));
     color *= vignette;
 
+    color = clamp(color, vec3<f32>(0.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 1.0));
     return vec4<f32>(color, 1.0);
 }

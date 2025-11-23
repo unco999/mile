@@ -843,17 +843,17 @@ fn commit_db_table(lua: &Lua, table: &Table) -> LuaResult<Option<(u32, bool)>> {
         if key_str == "db_index" {
             continue;
         }
-        if !stored.contains_key(&key_str) {
-            continue;
-        }
         if matches!(value, Value::Nil) {
             if stored.remove(&key_str).is_some() {
                 mutated = true;
             }
         } else {
             let json_value = lua_value_to_json(lua, value)?;
-            if stored.get(&key_str) != Some(&json_value) {
-                stored.insert(key_str, json_value);
+            let needs_update = stored
+                .get(&key_str)
+                .map_or(true, |existing| existing != &json_value);
+            if needs_update {
+                stored.insert(key_str.clone(), json_value);
                 mutated = true;
             }
         }

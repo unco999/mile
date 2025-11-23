@@ -38,7 +38,7 @@ use winit::{
     event::{ElementState, KeyEvent, WindowEvent},
     event_loop::{EventLoop, EventLoopProxy},
     keyboard::{KeyCode, PhysicalKey},
-    window::{self, Window, WindowAttributes},
+    window::{self, Icon, Window, WindowAttributes},
 };
 use winit::{
     event::MouseButton,
@@ -257,6 +257,8 @@ pub fn trigger_runtime_reset(lua: Arc<Lua>) -> mlua::Result<()> {
 }
 
 impl App {
+
+
     pub fn reset(&mut self) {
         println!("触发了更新");
         if let Err(err) = run_lua_entry(get_lua_runtime()) {
@@ -468,10 +470,21 @@ pub enum AppEvent {
     Reset,
 }
 
+fn load_window_icon(path: &str) -> Option<Icon> {
+    let image = image::open(path).ok()?.into_rgba8();
+    let (width, height) = image.dimensions();
+    Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+     let window_icon = load_window_icon("texture/icon.png");
+     let window_attrs = WindowAttributes::default()
+     .with_title("Mile Engine Demo")
+     .with_window_icon(window_icon);
+
         let window = event_loop
-            .create_window(WindowAttributes::default())
+            .create_window(window_attrs)
             .expect("failed to create window");
 
         let window = Arc::new(window);
