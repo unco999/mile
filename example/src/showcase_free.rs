@@ -22,6 +22,7 @@ fn build_free_container() -> Result<(), DbError> {
                 .z_index(1)
                 .position(vec2(120.0, 120.0))
                 .size(vec2(720.0, 480.0))
+                .drag(true)
                 .color(vec4(0.06, 0.08, 0.12, 0.95))
                 .border(BorderStyle {
                     color: [0.35, 0.65, 0.90, 1.0],
@@ -80,6 +81,8 @@ fn build_free_children() -> Result<(), DbError> {
                             width: 1.0,
                             radius: 12.0,
                         })
+                        .drag(true)
+                        .hover(true)
                         .events()
                         .on_event(UiEventKind::Init, move |flow| {
                             flow.text(
