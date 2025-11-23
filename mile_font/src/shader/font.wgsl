@@ -198,7 +198,18 @@ fn vs_main(
     let wrap_width = max(container.x - padding * 2.0, 1.0);
     let units = max(f32(des.units_per_em), 1.0);
     let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
-    let layout_width_px = max(inst.advance_px, glyph_width_px);
+    let glyph_advance_px = f32(des.glyph_advance_width) / units * inst.size_px;
+    let layout_width_px = select(
+        max(glyph_advance_px, glyph_width_px),
+        inst.advance_px,
+        inst.advance_px > 0.0,
+    );
+    let glyph_left_units = select(
+        des.left_side_bearing,
+        des.glyph_left_side_bearing,
+        des.glyph_left_side_bearing != 0,
+    );
+    let glyph_left_px = f32(glyph_left_units) / units * inst.size_px;
     let base_line = u32(cursor_x / wrap_width);
     let x_in_line = cursor_x - f32(base_line) * wrap_width;
     let overflow = (x_in_line + layout_width_px) >= wrap_width;
@@ -224,7 +235,12 @@ fn vs_main(
         let prev_des = glyph_descs[prev.char_index];
         let prev_units = max(f32(prev_des.units_per_em), 1.0);
         let prev_glyph_width_px = f32(prev_des.x_max - prev_des.x_min) / prev_units * prev.size_px;
-        let prev_layout_width_px = max(prev.advance_px, prev_glyph_width_px);
+        let prev_glyph_advance_px = f32(prev_des.glyph_advance_width) / prev_units * prev.size_px;
+        let prev_layout_width_px = select(
+            max(prev_glyph_advance_px, prev_glyph_width_px),
+            prev.advance_px,
+            prev.advance_px > 0.0,
+        );
         let prev_base_line = u32(prev_cursor / wrap_width);
         let prev_x_in_line = prev_cursor - f32(prev_base_line) * wrap_width;
         let prev_overflow = (prev_x_in_line + prev_layout_width_px) >= wrap_width;
@@ -244,7 +260,7 @@ fn vs_main(
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
     let visible = select(0.0, 1.0, wrapped_y + inst.size_px <= container.y - padding);
-    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin, wrapped_y) + position * inst.size_px;
+    let px = panel.position + delta.delta_position + vec2<f32>(wrapped_x_with_origin + glyph_left_px, wrapped_y) + position * inst.size_px;
     debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
     
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
