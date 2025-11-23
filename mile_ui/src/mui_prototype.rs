@@ -1344,7 +1344,9 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         let arc = runtime_map::<TPayload>();
         let source_key = ctx.source.clone();
         let handle = {
-            let registry = arc.lock().unwrap();
+            let Ok(registry) = arc.try_lock() else {
+                return false;
+            };
             let Some(runtime) = registry.get(&source_key) else {
                 return false;
             };
