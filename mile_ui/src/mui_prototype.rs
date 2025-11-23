@@ -1344,7 +1344,9 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         let arc = runtime_map::<TPayload>();
         let source_key = ctx.source.clone();
         let handle = {
-            let registry = arc.lock().unwrap();
+            let Ok(registry) = arc.try_lock() else {
+                return false;
+            };
             let Some(runtime) = registry.get(&source_key) else {
                 return false;
             };
@@ -1357,11 +1359,11 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
             eprintln!("failed to update drag source state: {err:?}");
             return false;
         }
-        {
-            let mut registry = arc.lock().unwrap();
-            if let Some(runtime) = registry.get_mut(&source_key) {
-                runtime.current_state = state;
-            }
+        let Ok(mut registry) = arc.try_lock() else {
+            return false;
+        };
+        if let Some(runtime) = registry.get_mut(&source_key) {
+            runtime.current_state = state;
         }
 
         let Ok(record_after) = handle.read() else {
@@ -2983,7 +2985,6 @@ fn build_stateful<TPayload: PanelPayload>(
         callbacks_with.insert(state_id, state_callbacks_with);
         // Store data change callbacks into runtime map after runtime is created
         data_map.insert(state_id, data_callbacks);
-
     }
 
     install_runtime_callbacks::<TPayload>(
