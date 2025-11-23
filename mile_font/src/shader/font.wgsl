@@ -199,10 +199,11 @@ fn vs_main(
     let units = max(f32(des.units_per_em), 1.0);
     let glyph_width_px = f32(des.x_max - des.x_min) / units * inst.size_px;
     let layout_width_px = max(inst.advance_px, glyph_width_px);
-    let base_line = floor(cursor_x / wrap_width);
-    let x_in_line = cursor_x - base_line * wrap_width;
-    let overflow = (x_in_line + layout_width_px) > wrap_width;
-    var line = f32(inst.line_break_acc) + base_line + select(0.0, 1.0, overflow);
+    let base_line = u32(cursor_x / wrap_width);
+    let x_in_line = cursor_x - f32(base_line) * wrap_width;
+    let overflow = (x_in_line + layout_width_px) >= wrap_width;
+    let line_index: u32 =
+        inst.line_break_acc + base_line + select(0u, 1u, overflow);
     var wrapped_x = select(x_in_line, 0.0, overflow);
 
     // Accumulate leftover width when previous glyphs overflowed but still belong to this line.
@@ -224,11 +225,11 @@ fn vs_main(
         let prev_units = max(f32(prev_des.units_per_em), 1.0);
         let prev_glyph_width_px = f32(prev_des.x_max - prev_des.x_min) / prev_units * prev.size_px;
         let prev_layout_width_px = max(prev.advance_px, prev_glyph_width_px);
-        let prev_base_line = floor(prev_cursor / wrap_width);
-        let prev_x_in_line = prev_cursor - prev_base_line * wrap_width;
-        let prev_overflow = (prev_x_in_line + prev_layout_width_px) > wrap_width;
-        var prev_line = f32(prev.line_break_acc) + prev_base_line + select(0.0, 1.0, prev_overflow);
-        if (prev_line != line) {
+        let prev_base_line = u32(prev_cursor / wrap_width);
+        let prev_x_in_line = prev_cursor - f32(prev_base_line) * wrap_width;
+        let prev_overflow = (prev_x_in_line + prev_layout_width_px) >= wrap_width;
+        let prev_line = prev.line_break_acc + prev_base_line + select(0u, 1u, prev_overflow);
+        if (prev_line != line_index) {
             break;
         }
         if (prev_overflow) {
@@ -238,7 +239,7 @@ fn vs_main(
     wrapped_x += carry;
     // Clamp to the padded wrap width so long lines do not spill beyond the right edge.
     wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
-    let local_y = origin.y + padding + line * line_height_px;
+    let local_y = origin.y + padding + f32(line_index) * line_height_px;
     let wrapped_y = local_y;
     let wrapped_x_with_origin = origin.x + padding + wrapped_x;
     // Visibility in container Y
