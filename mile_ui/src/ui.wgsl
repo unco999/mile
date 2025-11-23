@@ -1,24 +1,24 @@
 struct VertexInput {
     // --- 椤剁偣鍩虹 ---
-    @location(0) pos: vec2<f32>,        // 椤剁偣灞€閮ㄤ綅�?
-    @location(1) uv: vec2<f32>,         // 椤剁�?UV
+    @location(0) pos: vec2<f32>,        // 椤剁偣灞€閮ㄤ綅�?
+    @location(1) uv: vec2<f32>,         // 椤剁�?UV
 
     // --- Panel 瀹炰緥鏁版嵁 ---
-    @location(2) instance_pos: vec2<f32>,   // panel 浣嶇�?
-    @location(3) instance_size: vec2<f32>,  // panel 灏哄�?
+    @location(2) instance_pos: vec2<f32>,   // panel 浣嶇�?
+    @location(3) instance_size: vec2<f32>,  // panel 灏哄�?
     @location(4) uv_offset: vec2<f32>,      // panel UV offset
     @location(5) uv_scale: vec2<f32>,       // panel UV scale
 
     // === Block 3 ===
     @location(6) z_index: u32,              // panel z_index
-    @location(7) pass_through: u32,         // panel pass_through
+    @location(7) interaction_passthrough: u32,         // panel interaction_passthrough
     @location(8) instance_id: u32,          // panel id
     @location(9) interaction: u32,          // panel interaction mask
 
     // === Block 4 ===
     @location(10) event_mask: u32,          // panel event response mask
     @location(11) state_mask: u32,          // panel state mask
-    @location(12) transparent: f32,         // panel transparent (瀵归�?
+    @location(12) transparent: f32,         // panel transparent (瀵归�?
     @location(13) texture_id: u32,          // panel texture_id
 
     // === Block 5 ===
@@ -79,12 +79,12 @@ struct SharedState {
 
     // Mouse button state mask
     mouse_state: u32,            // 4 bytes
-    _pad0: u32,                  // 4 bytes padding 瀵归�?
+    _pad0: u32,                  // 4 bytes padding 瀵归�?
 
     // Hover panel ID
     hover_id: atomic<u32>,       // 4 bytes
     hover_blocked: atomic<u32>,  // 4 bytes
-    _pad1: vec2<u32>,            // 8 bytes padding 瀵归�?hover_pos
+    _pad1: vec2<u32>,            // 8 bytes padding 瀵归�?hover_pos
 
     // Hover position
     hover_pos: vec2<f32>,        // 8 bytes
@@ -93,7 +93,7 @@ struct SharedState {
     current_depth: u32,          // 4 bytes
     _pad2: u32,                  // 4 bytes padding
 
-    // Clicked panel ID (鏈€鍚庝竴娆＄偣�?
+    // Clicked panel ID (鏈€鍚庝竴娆＄偣�?
     click_id: u32,               // 4 bytes
     click_blocked: u32,          // 4 bytes
 
@@ -120,16 +120,16 @@ struct GpuUiTextureInfo {
 
 struct RenderOperation {
     op_type: u32,           // 鎿嶄綔绫诲�?
-    source_type: u32,       // 鏁版嵁婧愮被�?
+    source_type: u32,       // 鏁版嵁婧愮被�?
     buffer_offset: u32,     // 鍦╒_buffer涓殑瀛楄妭鍋忕Щ閲?
     component_count: u32,   // 鍒嗛噺鏁伴噺
     component_stride: u32,  // 鍒嗛噺姝ラ暱  
     data_format: u32,       // 鏁版嵁鏍煎紡
     blend_factor: f32,      // 娣峰悎鍥犲瓙
-    custom_param: f32,      // 鑷畾涔夊弬�?
+    custom_param: f32,      // 鑷畾涔夊弬�?
     condition_source: u32,  // 鏉′欢鏁版嵁婧?
-    then_source: u32,       // then鍒嗘敮鏁版嵁�?
-    else_source: u32,       // else鍒嗘敮鏁版嵁�?
+    then_source: u32,       // then鍒嗘敮鏁版嵁�?
+    else_source: u32,       // else鍒嗘敮鏁版嵁�?
 };
 
 
@@ -198,11 +198,11 @@ var<storage, read> render_expr_nodes: array<RenderExprNode>;
 
 // 鎿嶄綔绫诲瀷甯搁噺
 const OP_DIRECT: u32 = 0u;      // 鐩存帴浣跨敤
-const OP_ADD: u32 = 1u;         // 鍔犳�?
-const OP_MULTIPLY: u32 = 2u;    // 涔樻�? 
-const OP_SUBTRACT: u32 = 4u;    // 鍑忔�?
-const OP_DIVIDE: u32 = 5u;      // 闄ゆ�?
-const OP_CONDITIONAL: u32 = 20u; // 鏉′欢娣峰�?
+const OP_ADD: u32 = 1u;         // 鍔犳�?
+const OP_MULTIPLY: u32 = 2u;    // 涔樻�? 
+const OP_SUBTRACT: u32 = 4u;    // 鍑忔�?
+const OP_DIVIDE: u32 = 5u;      // 闄ゆ�?
+const OP_CONDITIONAL: u32 = 20u; // 鏉′欢娣峰�?
 
 const CHANNEL_CONSTANT: u32 = 0u;
 const CHANNEL_COMPUTE: u32 = 1u;
@@ -243,22 +243,22 @@ const RENDER_IMPORT_UV: u32 = 0x1u;
 const RENDER_IMPORT_COLOR: u32 = 0x2u;
 
 // 鏁版嵁婧愮被鍨嬪父閲?
-const SOURCE_COMPUTE_BUFFER: u32 = 0u;  // 璁＄畻缂撳啿�?
+const SOURCE_COMPUTE_BUFFER: u32 = 0u;  // 璁＄畻缂撳啿�?
 const SOURCE_RENDER_CALC: u32 = 1u;     // 娓叉煋璁＄畻
-const SOURCE_RENDER_INPUT: u32 = 2u;    // 娓叉煋杈撳叆(UV�?
+const SOURCE_RENDER_INPUT: u32 = 2u;    // 娓叉煋杈撳叆(UV�?
 
-// 鏁版嵁鏍煎紡甯搁�?
-const FORMAT_SCALAR: u32 = 0u;  // 鏍囬�?
+// 鏁版嵁鏍煎紡甯搁�?
+const FORMAT_SCALAR: u32 = 0u;  // 鏍囬�?
 const FORMAT_VEC2: u32 = 1u;    // vec2
 const FORMAT_VEC3: u32 = 2u;    // vec3  
 const FORMAT_VEC4: u32 = 3u;    // vec4
 
 
 struct RenderPlanHeader {
-    plan_count: u32,      // 瀹為檯璁″垝鏁伴�?
+    plan_count: u32,      // 瀹為檯璁″垝鏁伴�?
     dirty_flags: u32,     // 鑴忔爣璁?
-    frame_index: u32,     // 甯х储�?
-    _padding: u32,        // 濉�?
+    frame_index: u32,     // 甯х储�?
+    _padding: u32,        // 濉�?
 }
 
 // 缁戝畾缁?
@@ -307,9 +307,9 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) instance_pos: vec2<f32>,
     @location(1) instance_size: vec2<f32>,
-    @location(2) pass_through: u32,
+    @location(2) interaction_passthrough: u32,
     @location(3) z_index: u32,
-    @location(4) instance_id: u32, // 浼犵�?fragment
+    @location(4) instance_id: u32, // 浼犵�?fragment
     @location(5) transparent:f32,
     @location(6) texture_id:u32,
     @location(7) uv: vec2<f32>,
@@ -351,7 +351,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     out.instance_pos = input.instance_pos;
     out.instance_size = input.instance_size;
-    out.pass_through = input.pass_through;
+    out.interaction_passthrough = input.interaction_passthrough;
     out.z_index = input.z_index;
     out.instance_id = input.instance_id;
     out.transparent = input.transparent;
@@ -371,13 +371,13 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 //     // 妫€鏌ユ槸鍚﹁ hover
 //     if (input.instance_id == sharedState.click_id) {
-//         color = vec4<f32>(0.0, 1.0,1.0,input.transparent); // hover �?绾㈣�?+ alpha
+//         color = vec4<f32>(0.0, 1.0,1.0,input.transparent); // hover �?绾㈣�?+ alpha
 //     }
 
 //     return color;
 // }
-const WGSL_TIME: f32 = 9999999.0; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
-const WGSL_SIN_TIME: f32 = 9999999.1; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
+const WGSL_TIME: f32 = 9999999.0; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
+const WGSL_SIN_TIME: f32 = 9999999.1; // �?Rust �?MAX_TIME_SEC 瀵瑰�?
 const U32_MAX: u32 = 4294967295u;
 
 fn read_render_import(mask: u32, component_index: u32, uv: vec2<f32>, base_color: vec4<f32>) -> f32 {
@@ -573,14 +573,14 @@ fn rounded_rect_coverage(uv: vec2<f32>, size: vec2<f32>, radius: f32) -> f32 {
 
     let dist = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - clamped_radius;
 
-    // 鍔犵�?单榧犳爣鍒嗗壊锛屼娇杈规皵鎶楅忔槑杈规媺涓嶅仛榛戝乏璧�
+    // 鍔犵�?单榧犳爣鍒嗗壊锛屼娇杈规皵鎶楅忔槑杈规媺涓嶅仛榛戝乏璧�
     let aa = max(fwidth(dist) * 0.5, 1e-4);
     return smoothstep(aa, -aa, dist);
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    // 浣跨�?texture_id 绱㈠紩鏁扮粍杩涜閲囨牱
+    // 浣跨�?texture_id 绱㈠紩鏁扮粍杩涜閲囨牱
 
 
     let sub_image_struct = sub_image_struct_array[input.texture_id];
@@ -616,9 +616,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
 // @fragment
 // fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-//     // 绠€鍗曟�?UV 鏄犲皠鍒伴�?
+//     // 绠€鍗曟�?UV 鏄犲皠鍒伴�?
 //     let color = vec3<f32>(input.uv.x, input.uv.y, 0.0);
 
-//     // 杈撳嚭棰滆壊锛屼繚鐣欓€忔槑�?
+//     // 杈撳嚭棰滆壊锛屼繚鐣欓€忔槑�?
 //     return vec4<f32>(color, input.transparent);
 // }

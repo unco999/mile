@@ -424,7 +424,7 @@ pub struct PanelStateOverrides {
     #[serde(default)]
     pub z_index: Option<i32>,
     #[serde(default)]
-    pub pass_through: Option<u32>,
+    pub interaction_passthrough: Option<u32>,
     #[serde(default)]
     pub interaction: Option<u32>,
     #[serde(default)]

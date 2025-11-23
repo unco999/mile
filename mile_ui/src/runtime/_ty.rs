@@ -514,7 +514,7 @@ pub struct Panel {
 
     // === 16-byte �� 3 ===
     pub z_index: u32,      // 4
-    pub pass_through: u32, // 4
+    pub interaction_passthrough: u32, // 4
     pub id: u32,           // 4
     pub interaction: u32,  // 4
 
@@ -566,7 +566,7 @@ pub struct GpuInteractionFrame {
     pub drag_delta: [f32; 2],
     pub pre_event_mouse_pos: [f32; 2],
     pub pinch_delta: f32,
-    pub pass_through_depth: u32,
+    pub interaction_passthrough_depth: u32,
     pub event_point: [f32; 2],
     pub _pad5: [u32; 4],
 }
@@ -586,7 +586,7 @@ impl GpuInteractionFrame {
             drag_delta: [0.0, 0.0],
             pre_event_mouse_pos: [0.0, 0.0],
             pinch_delta: 0.0,
-            pass_through_depth: 0,
+            interaction_passthrough_depth: 0,
             event_point: [0.0, 0.0],
             _pad5: [0; 4],
         }
@@ -656,7 +656,7 @@ pub struct PanelAnimDelta {
 
     // --- Panel attributes ---
     pub delta_z_index: i32,
-    pub delta_pass_through: i32,
+    pub delta_interaction_passthrough: i32,
     pub panel_id: u32,
     pub _pad0: u32, // �������
 

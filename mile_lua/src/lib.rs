@@ -10,14 +10,14 @@ use mile_api::prelude::{
     _ty::PanelId, KeyedEventStream, global_db, global_event_bus, global_key_event_bus,
 };
 use mile_font::{
+    DEFAULT_FONT_PATH,
     event::{RemoveRenderFont, ResetFontRuntime},
     prelude::FontStyle,
-    DEFAULT_FONT_PATH,
 };
 use mile_gpu_dsl::gpu_ast_core::event::ResetKennel;
 use mile_ui::{
     mui_prototype::{
-        BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventKind, UiState,
+        BorderStyle, EventFlow, Mui, PanelBinding, PanelKey, UiEventData, UiEventKind, UiState,
         reset_panel_id_pool,
     },
     mui_rel::{
@@ -459,9 +459,15 @@ impl LuaTextSpec {
 }
 
 #[derive(Clone)]
+struct HandlerEntry {
+    key: Arc<RegistryKey>,
+    with_data: bool,
+}
+
+#[derive(Clone)]
 struct StateEntry {
     spec: StateSpec,
-    handlers: HashMap<UiEventKind, Arc<RegistryKey>>,
+    handlers: HashMap<UiEventKind, HandlerEntry>,
     data_handlers: HashMap<u32, Arc<RegistryKey>>,
     container_links: Vec<String>,
     container_aliases: Vec<(String, String)>,
@@ -605,16 +611,26 @@ impl LuaMuiBuilder {
                     });
                 }
 
-                for (kind, key) in entry.handlers.iter() {
+                for (kind, handler) in entry.handlers.iter() {
                     let lua = lua.clone();
-                    let key = key.clone();
-                    events = events.on_event(*kind, move |flow| {
-                        if let Err(err) =
-                            with_lua(&lua, |lua_ctx| dispatch_lua_event(lua_ctx, &key, flow))
-                        {
-                            eprintln!("lua on_event error: {err}");
-                        }
-                    });
+                    let key = handler.key.clone();
+                    if handler.with_data {
+                        events = events.on_event_with(*kind, move |flow, data| {
+                            if let Err(err) = with_lua(&lua, |lua_ctx| {
+                                dispatch_lua_event(lua_ctx, &key, flow, data)
+                            }) {
+                                eprintln!("lua on_event error: {err}");
+                            }
+                        });
+                    } else {
+                        events = events.on_event(*kind, move |flow| {
+                            if let Err(err) = with_lua(&lua, |lua_ctx| {
+                                dispatch_lua_event(lua_ctx, &key, flow, UiEventData::None)
+                            }) {
+                                eprintln!("lua on_event error: {err}");
+                            }
+                        });
+                    }
                 }
 
                 for (&source_db, key) in entry.data_handlers.iter() {
@@ -663,10 +679,25 @@ where
     f(&*guard)
 }
 
+fn event_data_to_lua_value(lua: &Lua, data: UiEventData) -> LuaResult<Value> {
+    match data {
+        UiEventData::None => Ok(Value::Nil),
+        UiEventData::Vec2(vec2) => {
+            let tbl = lua.create_table()?;
+            tbl.set(1, vec2.x)?;
+            tbl.set(2, vec2.y)?;
+            Ok(Value::Table(tbl))
+        }
+        UiEventData::U32(_) => Ok(Value::Nil),
+        UiEventData::Bool(_) => Ok(Value::Nil),
+    }
+}
+
 fn dispatch_lua_event(
     lua: &Lua,
     key: &RegistryKey,
     flow: &mut EventFlow<'_, LuaPayload>,
+    data: UiEventData,
 ) -> LuaResult<()> {
     let panel_id = flow.args().panel_key.panel_uuid.clone();
     let state_id = flow.state().0;
@@ -675,6 +706,7 @@ fn dispatch_lua_event(
     let drag_source_panel = flow
         .drag_source_panel()
         .map(|panel| panel.panel_uuid.clone());
+    let event_data = event_data_to_lua_value(lua, data)?;
 
     let func: Function = lua.registry_value(key)?;
     let tbl = lua.create_table()?;
@@ -682,11 +714,18 @@ fn dispatch_lua_event(
     tbl.set("state", state_id)?;
     tbl.set("event", event_name)?;
     tbl.set("payload", materialize_payload_value(lua, &payload)?)?;
+    if !event_data.is_nil() {
+        tbl.set("event_data", event_data.clone())?;
+        tbl.set("drag_delta", event_data)?;
+    }
     if let Some(drag_payload) = flow.drag_payload::<LuaPayload>() {
         tbl.set(
             "drag_payload",
             materialize_payload_value(lua, drag_payload)?,
         )?;
+    }
+    if let Some(source_panel) = drag_source_panel {
+        tbl.set("drag_source_panel", source_panel)?;
     }
 
     let ret: Option<Value> = func.call(tbl.clone())?;
@@ -993,6 +1032,13 @@ fn parse_event_kind(name: &str) -> Option<UiEventKind> {
     }
 }
 
+fn event_requires_data(kind: UiEventKind) -> bool {
+    matches!(
+        kind,
+        UiEventKind::Drag | UiEventKind::SourceDragOver | UiEventKind::TargetDragOver
+    )
+}
+
 fn extract_db_index_from_value(lua: &Lua, value: Value) -> LuaResult<Option<u32>> {
     match value {
         Value::Nil => Ok(None),
@@ -1245,7 +1291,9 @@ impl UserData for LuaMuiBuilder {
                 ))
             })?;
             let key = Arc::new(lua.create_registry_value(func)?);
-            this.current_entry_mut().handlers.insert(kind, key);
+            this.current_entry_mut()
+                .handlers
+                .insert(kind, HandlerEntry { key, with_data: event_requires_data(kind) });
             lua.create_userdata(this.clone())
         });
 

@@ -3,45 +3,35 @@
 // size is the width/height. Hover/click/drag results are written back into
 // the frame cache buffer (two frames ring buffer) so the CPU can poll them.
 struct Panel {
-    // === 16-byte 区 1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte 区 2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte 区 3 ===
     z_index: u32,           // 4 bytes
-    pass_through: u32,      // 4 bytes
+    interaction_passthrough: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte 区 4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte 区 5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte 区 6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte 区 7 ===
     scale: vec4<f32>,
 
-    // === 16-byte 区 8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte 区 9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte 区 10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -55,7 +45,7 @@ struct PanelAnimDelta {
     delta_uv_scale: vec2<f32>,
 
     delta_z_index: i32,
-    delta_pass_through: i32,
+    delta_interaction_passthrough: i32,
     panel_id: u32,
     _pad0: u32,
 
@@ -118,7 +108,7 @@ struct GpuInteractionFrame {
     drag_delta: vec2<f32>,
     pre_event_mouse_pos: vec2<f32>,
     pinch_delta: f32,
-    pass_through_depth: u32,
+    interaction_passthrough_depth: u32,
     event_point: vec2<f32>,
     _pad4: array<u32, 4>,
 };
@@ -172,8 +162,9 @@ fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
 
 fn encode_depth(z_index: u32, panel_id: u32) -> u32 {
     let depth = min(z_index, 0x3FFu);
+    let inverted = 0x3FFu - depth;
     let id_bits = panel_id & 0x003FFFFFu;
-    return (depth << 22u) | id_bits;
+    return (inverted << 22u) | id_bits;
 }
 
 fn try_lock_drag(panel_id: u32) -> bool {
@@ -205,8 +196,8 @@ fn release_drag_lock(panel_id: u32) {
     atomicCompareExchangeWeak(&global_uniform.pad_atomic1, panel_id, DRAG_LOCK_INVALID);
 }
 
-fn claim_hover(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
-    if (pass_through != 0u) {
+fn claim_hover(candidate_z: u32, candidate_id: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough != 0u) {
         return false;
     }
     let depth = encode_depth(candidate_z, candidate_id);
@@ -238,8 +229,8 @@ fn claim_hover(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
     return false;
 }
 
-fn claim_click(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
-    if (pass_through != 0u) {
+fn claim_click(candidate_z: u32, candidate_id: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough != 0u) {
         return false;
     }
     let depth = encode_depth(candidate_z, candidate_id);
@@ -271,8 +262,8 @@ fn claim_click(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
     return false;
 }
 
-fn claim_drag(candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
-    if (pass_through != 0u) {
+fn claim_drag(candidate_z: u32, candidate_id: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough != 0u) {
         return false;
     }
     let depth = encode_depth(candidate_z, candidate_id);
@@ -351,6 +342,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let prev_drag_id = frame_cache[0].drag_id;
     let was_dragging = prev_drag_id == panel.id;
     let is_dragging = frame_cache[1].drag_id == panel.id;
+    var effective_z = panel.z_index;
+    if (was_dragging || is_dragging) {
+        effective_z = 0u;
+    }
 
     if (!hovered && !was_dragging && !is_dragging) {
         return;
@@ -359,7 +354,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Hover claim
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {
-        if (claim_hover(panel.z_index, panel.id, panel.pass_through)) {
+        if (claim_hover(effective_z, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].hover_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
         }
@@ -367,7 +362,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Click claim
     if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
-        if (claim_click(panel.z_index, panel.id, panel.pass_through)) {
+        if (claim_click(effective_z, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].click_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
@@ -377,7 +372,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Drag (press)
     if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed && press_duration >= DRAG_PRESS_THRESHOLD) {
         let can_request_drag = was_dragging || prev_drag_id == INVALID_ID;
-        if (can_request_drag && claim_drag(panel.z_index, panel.id, panel.pass_through)) {
+        if (can_request_drag && claim_drag(effective_z, panel.id, panel.interaction_passthrough)) {
             if (try_lock_drag(panel.id)) {
                 
                 frame_cache[1].drag_id = panel.id;

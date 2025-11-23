@@ -4,45 +4,45 @@
 // the frame cache buffer (two frames ring buffer) so the CPU can poll them.
 
 struct Panel {
-    // === 16-byte åŒº 1 ===
+    // === 16-byte åŒ?1 ===
     position: vec2<f32>,    // 8 bytes
     size: vec2<f32>,        // 8 bytes
 
-    // === 16-byte åŒº 2 ===
+    // === 16-byte åŒ?2 ===
     uv_offset: vec2<f32>,   // 8 bytes
     uv_scale: vec2<f32>,    // 8 bytes
 
-    // === 16-byte åŒº 3 ===
+    // === 16-byte åŒ?3 ===
     z_index: u32,           // 4 bytes
-    pass_through: u32,      // 4 bytes
+    interaction_passthrough: u32,      // 4 bytes
     id: u32,                // 4 bytes
     interaction: u32,       // 4 bytes
 
-    // === 16-byte åŒº 4 ===
+    // === 16-byte åŒ?4 ===
     event_mask: u32,        // 4 bytes
     state_mask: u32,        // 4 bytes
     transparent: f32,       // 4 bytes
     texture_id: u32,        // 4 bytes
 
-    // === 16-byte åŒº 5 ===
+    // === 16-byte åŒ?5 ===
     state: u32,             // 4 bytes
     collection_state: u32,  // 4 bytes
     fragment_shader_id: u32,// 4 bytes
     vertex_shader_id: u32,  // 4 bytes
 
-    // === 16-byte åŒº 6 ===
+    // === 16-byte åŒ?6 ===
     rotation: vec4<f32>,
 
-    // === 16-byte åŒº 7 ===
+    // === 16-byte åŒ?7 ===
     scale: vec4<f32>,
 
-    // === 16-byte åŒº 8 ===
+    // === 16-byte åŒ?8 ===
     color: vec4<f32>,       // 16 bytes
 
-    // === 16-byte åŒº 9 ===
+    // === 16-byte åŒ?9 ===
     border_color: vec4<f32>,// 16 bytes
 
-    // === 16-byte åŒº 10 ===
+    // === 16-byte åŒ?10 ===
     border_width: f32,      // 4 bytes
     border_radius: f32,     // 4 bytes
     visible: u32,           // 4 bytes
@@ -56,7 +56,7 @@ struct PanelAnimDelta {
     delta_uv_scale: vec2<f32>,
 
     delta_z_index: i32,
-    delta_pass_through: i32,
+    delta_interaction_passthrough: i32,
     panel_id: u32,
     _pad0: u32,
 
@@ -117,7 +117,7 @@ struct GpuInteractionFrame {
     drag_delta: vec2<f32>,
     _pad3: vec2<f32>,
     pinch_delta: f32,
-    pass_through_depth: u32,
+    interaction_passthrough_depth: u32,
     event_point: vec2<f32>,
     _pad4: vec4<u32>,
 };
@@ -148,8 +148,8 @@ fn mouse_inside(panel: Panel, mouse: vec2<f32>) -> bool {
     return mouse.x >= min.x && mouse.x <= max.x && mouse.y >= min.y && mouse.y <= max.y;
 }
 
-fn try_claim(layout_z: &atomic<u32>, layout_id: &atomic<u32>, candidate_z: u32, candidate_id: u32, pass_through: u32) -> bool {
-    if (pass_through != 0u) {
+fn try_claim(layout_z: &atomic<u32>, layout_id: &atomic<u32>, candidate_z: u32, candidate_id: u32, interaction_passthrough: u32) -> bool {
+    if (interaction_passthrough != 0u) {
         return false;
     }
     let prev_z = atomicMax(layout_z, candidate_z);
@@ -185,7 +185,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Hover claim
     if ((panel.interaction & INTERACTION_HOVER) != 0u) {
-        if (try_claim(&global_uniform.hover_layout_z, &global_uniform.hover_layout_id, panel.z_index, panel.id, panel.pass_through)) {
+        if (try_claim(&global_uniform.hover_layout_z, &global_uniform.hover_layout_id, panel.z_index, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].hover_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
         }
@@ -193,7 +193,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Click claim
     if ((panel.interaction & INTERACTION_CLICK) != 0u && mouse_released) {
-        if (try_claim(&global_uniform.click_layout_z, &global_uniform.click_layout_id, panel.z_index, panel.id, panel.pass_through)) {
+        if (try_claim(&global_uniform.click_layout_z, &global_uniform.click_layout_id, panel.z_index, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].click_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;
@@ -202,7 +202,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Drag (press)
     if ((panel.interaction & INTERACTION_DRAG) != 0u && mouse_pressed) {
-        if (try_claim(&global_uniform.drag_layout_z, &global_uniform.drag_layout_id, panel.z_index, panel.id, panel.pass_through)) {
+        if (try_claim(&global_uniform.drag_layout_z, &global_uniform.drag_layout_id, panel.z_index, panel.id, panel.interaction_passthrough)) {
             frame_cache[1].drag_id = panel.id;
             frame_cache[1].trigger_panel_state = panel.state;
             frame_cache[1].event_point = mouse - panel.position;

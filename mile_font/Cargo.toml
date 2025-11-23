@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ttf-parser = "0.25.1"
+ttf-parser = {version = "0.25.1" }
 wgpu = "26"
 bytemuck = "1.24.0"
 rayon = "1.11.0"

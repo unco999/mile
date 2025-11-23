@@ -1009,7 +1009,7 @@ impl MuiRuntime {
         let off_uv_off = offset_of!(Panel, uv_offset) as wgpu::BufferAddress;
         let off_uv_scale = offset_of!(Panel, uv_scale) as wgpu::BufferAddress;
         let off_z = offset_of!(Panel, z_index) as wgpu::BufferAddress;
-        let off_pass = offset_of!(Panel, pass_through) as wgpu::BufferAddress;
+        let off_interaction_passthrough = offset_of!(Panel, interaction_passthrough) as wgpu::BufferAddress;
         let off_interact = offset_of!(Panel, interaction) as wgpu::BufferAddress;
         let off_event_mask = offset_of!(Panel, event_mask) as wgpu::BufferAddress;
         let off_state_mask = offset_of!(Panel, state_mask) as wgpu::BufferAddress;
@@ -1120,7 +1120,7 @@ impl MuiRuntime {
         if bits & PanelField::PREPOSITION_X.bits() != 0
             || bits & PanelField::PREPOSITION_Y.bits() != 0
         {
-            // map to z_index/pass_through as example; adjust as needed
+            // map to z_index/interaction_passthrough as example; adjust as needed
             if bits & PanelField::PREPOSITION_X.bits() != 0 {
                 let value = if add {
                     (inst.z_index as i32 + v[0] as i32).max(0) as u32
@@ -1134,13 +1134,13 @@ impl MuiRuntime {
             }
             if bits & PanelField::PREPOSITION_Y.bits() != 0 {
                 let value = if add {
-                    (inst.pass_through as i32 + v[1] as i32).max(0) as u32
+                    (inst.interaction_passthrough as i32 + v[1] as i32).max(0) as u32
                 } else {
                     v[1] as u32
                 };
-                write_field(self, off_pass, bytes_of(&value));
+                write_field(self, off_interaction_passthrough, bytes_of(&value));
                 if !add {
-                    write_snapshot(self, off_pass, bytes_of(&value));
+                    write_snapshot(self, off_interaction_passthrough, bytes_of(&value));
                 }
             }
         }
@@ -2051,7 +2051,7 @@ impl MuiRuntime {
         // let z_bias = (desc.key.panel_id & 0x3F) as u32;
         // let z_value = base_z.saturating_add(z_bias).min(0x3FF);
         let z_value = overrides.and_then(|o| o.z_index).unwrap_or(5) as u32;
-        let pass_through = overrides.and_then(|o| o.pass_through).unwrap_or(0);
+        let interaction_passthrough = overrides.and_then(|o| o.interaction_passthrough).unwrap_or(0);
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
         let event_mask = overrides.and_then(|o| o.event_mask).unwrap_or(0);
         let state_mask = overrides.and_then(|o| o.state_mask).unwrap_or(0);
@@ -2099,7 +2099,7 @@ impl MuiRuntime {
         panel.uv_offset = uv_offset;
         panel.uv_scale = uv_scale;
         panel.z_index = z_value;
-        panel.pass_through = pass_through;
+        panel.interaction_passthrough = interaction_passthrough;
         panel.interaction = interaction;
         panel.event_mask = event_mask;
         panel.state = desc.current_state.0;
@@ -2170,8 +2170,8 @@ impl MuiRuntime {
         if let Some(z) = overrides.and_then(|o| o.z_index) {
             panel.z_index = z.max(0) as u32;
         }
-        if let Some(pass) = overrides.and_then(|o| o.pass_through) {
-            panel.pass_through = pass;
+        if let Some(pass) = overrides.and_then(|o| o.interaction_passthrough) {
+            panel.interaction_passthrough = pass;
         }
         if let Some(interaction) = overrides.and_then(|o| o.interaction) {
             panel.interaction = interaction;

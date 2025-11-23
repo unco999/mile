@@ -18,10 +18,10 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .events()
                 .on_event(mile_ui::mui_prototype::UiEventKind::Init, |flow| {
                     flow.text(
-                        "ABCDEFGHIJKLMN",
+                        "我,",
                         FontStyle {
-                            font_size: 50,
-                            font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
+                            font_size: 12,
+                            font_file_path:Arc::from("tf/wqy-microhei_mono.ttf"),
                             font_line_height: 50,
                             text_align:TextAlign::Center,
                             ..Default::default()
@@ -31,9 +31,9 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
                     flow.clear_texts();
                     flow.text(
-                        "我们来试试网格布局，这里有一个容器的例子，容器里有一些子项。默认情况下，这些子项以普通的顺序排列，一个接一个地显示出来。",
+                        "那只鸟生来一翼破损",
                         FontStyle{
-                            font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
+                            font_file_path:Arc::from("tf/wqy-microhei_mono.ttf"),
                             font_size:50,
                             font_line_height:0,
                             first_weight:150.0,

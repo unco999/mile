@@ -8,7 +8,7 @@ struct VertexInput {
     @location(5) uv_scale: vec2<f32>,
 
     @location(6) z_index: u32,
-    @location(7) pass_through: u32,
+    @location(7) interaction_passthrough: u32,
     @location(8) instance_id: u32,
     @location(9) interaction: u32,
 
@@ -432,7 +432,6 @@ fn random(seed: f32) -> f32 {
 }
 
 fn smoothstep_official(edge0: f32, edge1: f32, value: f32) -> f32 {
-    // WGSL 内置 smoothstep：对 value 进行 clamp，并使用 3x^2-2x^3 的 Hermite 插值
     return smoothstep(edge0, edge1, value);
 }
 
@@ -516,8 +515,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
     out.clip_position = to_clip_space(quad_pos);
 
-    let normalized_z = f32(input.z_index) / 100.0;
-    out.clip_position.z = 1.0 - clamp(normalized_z, 0.0, 1.0);
+    let normalized_z = clamp(f32(input.z_index) / 100.0, 0.0, 1.0);
+    out.clip_position.z = normalized_z;
 
     out.uv = uv;
     out.texture_id = input.texture_id;
@@ -548,6 +547,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         let atlas_uv = input.uv;
         sampled = textureSample(tex, samp, atlas_uv);
+        sampled = vec4<f32>(sampled.rgb * sampled.a, sampled.a);
     }
 
     var base_color = vec4<f32>(sampled.rgb * input.color.rgb, sampled.a * input.color.a);
