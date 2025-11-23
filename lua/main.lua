@@ -3,7 +3,7 @@
 
 require("mui_core")
 -- require("script")
-require("drag_payload_demo")
+require("drag_mul_test")
 -- require("test_event_bus")
 
 -- 运行时入口函数（可被 Rust 调用）
