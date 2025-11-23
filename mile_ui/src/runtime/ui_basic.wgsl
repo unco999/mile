@@ -580,7 +580,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let stroke_color = vec4<f32>(input.border_color.rgb, input.border_color.a * input.transparent);
+    var stroke_color = vec4<f32>(input.border_color.rgb, input.border_color.a * input.transparent);
+    stroke_color = vec4<f32>(stroke_color.rgb * stroke_color.a, stroke_color.a);
 
     var composed = final_color * fill_coverage + stroke_color * border_coverage;
 
@@ -592,5 +593,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let outline_alpha = outline_coverage * composed.a * 0.4;
     composed = vec4<f32>(composed.rgb + outline_tint * outline_alpha, composed.a + outline_alpha);
 
-    return clamp(composed, vec4<f32>(0.0), vec4<f32>(1.0));
+    let clamped = clamp(composed, vec4<f32>(0.0), vec4<f32>(1.0));
+    if (clamped.a <= 1e-4) {
+        return vec4<f32>(0.0);
+    }
+    let alpha = clamped.a;
+    return vec4<f32>(clamped.rgb / alpha, alpha);
 }

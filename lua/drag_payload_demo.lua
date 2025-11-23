@@ -19,10 +19,10 @@ Mui.new(source_bind)
         :color(0.15, 0.35, 0.65, 0.92)
         :border({
             color = { 0.95, 0.95, 0.95, 0.4 },
-            width = 2.0,
+            width = 5.0,
             radius = 12.0,
         })
-        :on_event("hover", function(flow)end)
+        :drag(true)                        
         :text({ text = "拖拽这里", font_size = 32 })
         :on_event("source_drag_start", function(flow)
             payload_counter = payload_counter + 1
@@ -43,10 +43,11 @@ Mui.new(target_bind)
         :z_index(4)
         :position(420, 160)
         :size(260, 220)
+        :hover(true)
         :color(0.09, 0.12, 0.18, 0.95)
         :border({
             color = { 0.35, 0.75, 0.55, 0.8 },
-            width = 2.0,
+            width = 5.0,
             radius = 14.0,
         })
         :text({ text = "目标区域", font_size = 30 })
@@ -81,8 +82,11 @@ Mui.new(target_bind)
             end)
             :on_event("target_drag_drop", function(flow)
                 local data = flow.drag_payload
-                if data then
-                    print(string.format("[lua] 在目标处落下 -> count=%d", data.count or -1))
-                end
+                 if data then
+                     -- 切换到某个状态
+                    --  flow.set_state(mui.UiState(1))
+                     -- 或直接更新样式 / 文本
+                     data.text = { text = "我好像进来了", font_size = 26 }
+                 end
             end)
     :build()
