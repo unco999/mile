@@ -368,15 +368,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             debug_buffer.uints[9] = 99999;
         }
 
+        let layout_kind = item.relation_flags & REL_LAYOUT_TYPE_MASK;
         let current_pos = panels[panel_id - 1].position;
-        
-
-
         let container_pos = panels[item.container_id - 1].position;
         let container_origin = container_pos + work_items[item.container_id - 1].origin;
         let layout_offset = compute_layout_offset(panel_id - 1, item);
-        let desired_pos = container_origin + layout_offset;
-        work_items[idx].origin = layout_offset;
+        var applied_offset = layout_offset;
+        if (layout_kind == REL_LAYOUT_FREE) {
+            applied_offset = current_pos - container_origin;
+        }
+        let desired_pos = container_origin + applied_offset;
+        work_items[idx].origin = applied_offset;
         
         panel_deltas[panel_id - 1].start_position = current_pos;
         //panel_deltas[panel_id].delta_position += delta;

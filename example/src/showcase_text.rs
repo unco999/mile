@@ -1,6 +1,6 @@
 use glam::{vec2, vec4};
 use mile_db::DbError;
-use mile_font::prelude::FontStyle;
+use mile_font::prelude::{FontStyle, TextAlign};
 use mile_ui::mui_prototype::{Mui, UiPanelData, UiState};
 
 // Simple text rendering demo using the font event bridge in EventFlow::text.
@@ -20,6 +20,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         FontStyle {
                             font_size: 50,
                             font_line_height: 50,
+                            text_align:TextAlign::Center,
                             ..Default::default()
                         },
                     );
@@ -30,7 +31,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         "长篇小说是小说形式之一，以篇幅长（通常超过十万字）、容量大、情节复杂为特征，通过分章节或分卷形式构建叙事结构。其核心要素包括人物塑造、故事情节和环境描写，涵盖社会生活的广泛性及人物性格多样性，常运用叙述时间处置、空间观照和视角选择等手法，部分作品涉及传统文",
                         FontStyle{
                             font_size:50,
-                            font_line_height:100,
+                            font_line_height:0,
                             first_weight:150.0,
                             ..Default::default()
                         }
