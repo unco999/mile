@@ -1371,7 +1371,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
         let args = PanelEventArgs {
             panel_key: source_key.clone(),
             state,
-            event: UiEventKind::TargetDragDrop,
+            event: UiEventKind::SourceDragDrop,
             record_snapshot: record_after.clone(),
         };
         let transition = build_state_transition_event(&record_after, &args, state);
