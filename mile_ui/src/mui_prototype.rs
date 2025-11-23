@@ -1338,7 +1338,7 @@ impl<'a, TPayload: PanelPayload> EventFlow<'a, TPayload> {
     /// Set the drag source panel's state if a drag context is active.
     /// Returns `true` when the transition event is enqueued successfully.
     pub fn set_drag_source_state(&mut self, state: UiState) -> bool {
-        let Some(ctx) = self.drag_context.clone() else {
+        let Some(ctx) = current_drag_context().clone() else {
             return false;
         };
         let arc = runtime_map::<TPayload>();
