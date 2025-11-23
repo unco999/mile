@@ -362,12 +362,14 @@ fn eval_render_expression(start: u32, len: u32, lane: u32, inputs: RenderImportI
 }
 
 fn evaluate_render_layer(layer_index: u32, inputs: RenderImportInputs) -> vec4<f32> {
-    if (layer_index == U32_MAX || layer_index >= arrayLength(&kennel_render_layers)) {
+    let layer_count = arrayLength(&kennel_render_layers);
+    if (layer_index == U32_MAX || layer_index >= layer_count) {
         return vec4<f32>(0.0);
     }
 
     let layer = kennel_render_layers[layer_index];
     var composed = vec4<f32>(0.0);
+    let kennel_result_len = arrayLength(&kennel_results_buffer);
 
     for (var lane: u32 = 0u; lane < 4u; lane = lane + 1u) {
         let comp = layer.components[lane];
@@ -376,7 +378,7 @@ fn evaluate_render_layer(layer_index: u32, inputs: RenderImportInputs) -> vec4<f
                 composed[lane] = comp.payload.x;
             }
             case CHANNEL_COMPUTE: {
-                if (comp.source_index < arrayLength(&kennel_results_buffer)) {
+                if (comp.source_index < kennel_result_len) {
                     composed[lane] = kennel_results_buffer[comp.source_index][lane];
                 }
             }
@@ -393,14 +395,14 @@ fn evaluate_render_layer(layer_index: u32, inputs: RenderImportInputs) -> vec4<f
                     inner = inner + factor_base * comp.payload.x;
                 }
                 if (comp.factor_inner_compute != U32_MAX
-                    && comp.factor_inner_compute < arrayLength(&kennel_results_buffer)) {
+                    && comp.factor_inner_compute < kennel_result_len) {
                     let compute_val = kennel_results_buffer[comp.factor_inner_compute][lane];
                     inner = inner + compute_val;
                 }
                 inner = apply_factor_unary(comp.factor_unary, inner);
                 var factor = inner * comp.payload.z;
                 if (comp.factor_outer_compute != U32_MAX
-                    && comp.factor_outer_compute < arrayLength(&kennel_results_buffer)) {
+                    && comp.factor_outer_compute < kennel_result_len) {
                     let compute_val = kennel_results_buffer[comp.factor_outer_compute][lane];
                     factor = factor * compute_val;
                 }
@@ -533,6 +535,10 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    if (input.transparent <= 0.0) {
+        return vec4<f32>(0.0);
+    }
+
     var sampled = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     if (input.texture_id != U32_MAX) {
         let info = sub_image_struct_array[input.texture_id];
@@ -561,18 +567,19 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    let render_inputs = RenderImportInputs(
-        input.uv,
-        base_color,
-        input.local_pos,
-        input.instance_pos,
-        input.instance_size,
-    );
-    let kennel_color = evaluate_render_layer(input.fragment_shader_id, render_inputs);
-    
     var final_color = base_color;
-    if any(kennel_color != vec4<f32>(0.0)) {
-        final_color = kennel_color;
+    if (input.fragment_shader_id != U32_MAX) {
+        let render_inputs = RenderImportInputs(
+            input.uv,
+            base_color,
+            input.local_pos,
+            input.instance_pos,
+            input.instance_size,
+        );
+        let kennel_color = evaluate_render_layer(input.fragment_shader_id, render_inputs);
+        if any(kennel_color != vec4<f32>(0.0)) {
+            final_color = kennel_color;
+        }
     }
 
     return final_color;
