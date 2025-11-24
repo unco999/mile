@@ -20,6 +20,9 @@ Mui.new(panel_parent)
             })
             :on_event("click",function(ctx)
                 ctx.payload.counter = ctx.payload.counter + 1;
+                ctx.text = {
+                    text = tostring(ctx.payload.counter)
+                }
                 print("当前点击" .. ctx.payload.counter)
             end)
         :build()

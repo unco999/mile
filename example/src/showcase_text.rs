@@ -18,10 +18,10 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .events()
                 .on_event(mile_ui::mui_prototype::UiEventKind::Init, |flow| {
                     flow.text(
-                        "我,",
+                        "点一下变换",
                         FontStyle {
                             font_size: 12,
-                            font_file_path:Arc::from("tf/wqy-microhei_mono.ttf"),
+                            font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
                             font_line_height: 50,
                             text_align:TextAlign::Center,
                             ..Default::default()
@@ -31,9 +31,9 @@ pub fn register_text_demo() -> Result<(), DbError> {
                 .on_event(mile_ui::mui_prototype::UiEventKind::Click, |flow| {
                     flow.clear_texts();
                     flow.text(
-                        "那只鸟生来一翼破损",
+                        "测试文本测试文本测试文本测试文本测试文本测试文本测试文本测试文本测试文本测试文本测试文本",
                         FontStyle{
-                            font_file_path:Arc::from("tf/wqy-microhei_mono.ttf"),
+                            font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
                             font_size:50,
                             font_line_height:0,
                             first_weight:150.0,
