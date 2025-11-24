@@ -33,7 +33,7 @@ pub fn register_basic_layout() -> Result<(), DbError> {
             //我们要把这个panel当作一个容器 然后我们去写他的容器配置
             //好吧  因为新的更改 排列似乎出问题了  我需要回头检查一下
             let state = state
-                .z_index(1)
+                .z_index(4)
                 .container_style()
                 //小问题 没有设置容器大小 再来看看
                 .slot_size(vec2(108.0, 52.0))
@@ -41,7 +41,7 @@ pub fn register_basic_layout() -> Result<(), DbError> {
                 .layout(RelLayoutKind::grid([0.0, 0.0]))
                 .finish() //这里要退出容器设置的上下文;
                 .position(vec2(100.0, 100.0))
-                .color(vec4(0.5, 0.7, 0.6, 0.3))
+                .color(vec4(0.5, 0.7, 0.6, 1.0))
                 .border(BorderStyle {
                     color: [0.1, 0.3, 0.2, 1.0],
                     width: 8.0,
@@ -76,9 +76,9 @@ pub fn register_basic_layout() -> Result<(), DbError> {
                     //通过子类 确定自己要进入的容器  这里指定DataTest 和test_container 就可以绑定了
 
                     state
-                        .z_index(4 + idx)
+                        .z_index(3 - idx)
                         .position(vec2(0.0, 0.0))
-                        .color(vec4(0.1, 0.1, 0.1, 0.5))
+                        .color(vec4(0.1, 0.1, 0.1, 1.0))
                         .size(vec2(108.0, 52.0))
                         .border(BorderStyle {
                             color: [0.15, 0.8, 0.45, 1.0],
