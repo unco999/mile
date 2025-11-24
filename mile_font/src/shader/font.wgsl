@@ -220,7 +220,10 @@ fn vs_main(
     let glyph_width_units = max(f32(des.x_max - des.x_min), 1.0);
     let glyph_height_units = max(f32(des.y_max - des.y_min), 1.0);
     let glyph_width_px = glyph_width_units / units * inst.size_px;
-    let glyph_height_px = glyph_height_units / units * inst.size_px;
+    let glyph_height_px_raw = glyph_height_units / units * inst.size_px;
+    let glyph_min_height_px = max(inst.size_px * 0.12, 1.5);
+    let glyph_height_px = max(glyph_height_px_raw, glyph_min_height_px);
+    let glyph_height_pad = (glyph_height_px - glyph_height_px_raw) * 0.5;
     let glyph_top_px = f32(des.y_max) / units * inst.size_px;
 
     let base_line = u32(cursor_x / wrap_width);
@@ -297,7 +300,7 @@ fn vs_main(
         + delta.delta_position
         + vec2<f32>(
             wrapped_x_with_origin + glyph_left_px,
-            wrapped_y - glyph_top_px + inst.size_px,
+            wrapped_y - glyph_top_px + inst.size_px - glyph_height_pad,
         )
         + position * quad_size;
 
@@ -373,9 +376,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sdf_value = textureSample(font_distance_texture, font_sampler, glyph_uv).r;
     let dp = vec2<f32>(dpdx(sdf_value), dpdy(sdf_value));
     let grad = length(dp);
-    let px_range = max(fwidth(sdf_value) / max(grad, 1e-3), 1e-4);
+    let px_range_raw = fwidth(sdf_value) / max(grad, 1e-3);
+    let px_range_min = mix(0.0025, 0.0045, font_size_normalized(in.font_size));
+    let px_range = max(px_range_raw, px_range_min);
 
-    let edge_width = adaptive_edge_width(in.font_size, px_range);
     let widths = adaptive_edge_width(in.font_size, px_range);
     let thin = widths.x;
     let wide = widths.y;
