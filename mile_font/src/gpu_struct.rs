@@ -187,4 +187,6 @@ pub struct GpuText {
     pub first_line_indent: f32,
     /// Horizontal alignment hint from layout
     pub text_align: TextAlign,
+    /// Bounding box (width, height) in pixels computed on CPU for alignment.
+    pub text_bounds: [f32; 2],
 }

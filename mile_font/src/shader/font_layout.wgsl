@@ -46,6 +46,7 @@ struct FontTextSpan {
     text_align: u32,
     color: vec4<f32>,
     origin: vec2<f32>,
+    text_bounds: vec2<f32>,
 };
 
 struct Panel {
@@ -176,6 +177,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var line_index: u32 = 0u;
     var pen_x = line_start_indent(line_index, span.first_line_indent);
 
+    let text_bounds = span.text_bounds;
+    var align_offset: f32 = 0.0;
+    if (span.text_align == 1u) {
+        align_offset = max((wrap_width - text_bounds.x) * 0.5, 0.0);
+    } else if (span.text_align == 2u) {
+        align_offset = max(wrap_width - text_bounds.x, 0.0);
+    }
+
     var idx = span.glyph_start;
     loop {
         if (idx >= target_start) {
@@ -235,7 +244,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     let local_y =
         span.origin.y + wrap_padding + f32(line_index) * line_height_px;
-    let wrapped_x = span.origin.x + wrap_padding + current_pen;
+    let wrapped_x = span.origin.x + wrap_padding + align_offset + current_pen;
     let panel_origin = vec2<f32>(
         wrapped_x + glyph_left_px,
         local_y - glyph_top_px + span.font_size - glyph_height_pad,

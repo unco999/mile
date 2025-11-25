@@ -120,6 +120,85 @@ impl MiniFontRuntime {
         }
     }
 
+    #[inline]
+    fn decode_line_breaks(flags: u32) -> u32 {
+        if (flags & GPU_CHAR_LAYOUT_FLAG_LINE_BREAK_BEFORE) == 0 {
+            0
+        } else {
+            (flags & GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_MASK)
+                >> GPU_CHAR_LAYOUT_LINE_BREAK_COUNT_SHIFT
+        }
+    }
+
+    fn glyph_advance_px(&self, char_index: u32, font_size: f32) -> f32 {
+        if let Some(metrics) = self.cpu_glyph_metrics.get(char_index as usize) {
+            let units = metrics.units_per_em.max(1) as f32;
+            metrics.glyph_advance_width as f32 * font_size / units
+        } else {
+            font_size
+        }
+    }
+
+    fn glyph_line_height_px(&self, char_index: u32, font_size: f32, override_height: f32) -> f32 {
+        if override_height > 0.0 {
+            return override_height;
+        }
+        if let Some(metrics) = self.cpu_glyph_metrics.get(char_index as usize) {
+            let units = metrics.units_per_em.max(1) as f32;
+            let em = (metrics.ascent - metrics.descent + metrics.line_gap) as f32;
+            let px = em / units * font_size;
+            if px.is_finite() && px > 0.0 {
+                return px;
+            }
+        }
+        font_size
+    }
+
+    #[inline]
+    fn line_indent_for(index: u32, first_line_indent: f32) -> f32 {
+        if index == 0 { first_line_indent } else { 0.0 }
+    }
+
+    fn compute_text_bounds(
+        &self,
+        chars: &[GpuChar],
+        font_size: f32,
+        line_height_override: f32,
+        first_line_indent: f32,
+    ) -> [f32; 2] {
+        if chars.is_empty() {
+            let height = if line_height_override > 0.0 {
+                line_height_override
+            } else {
+                font_size
+            };
+            return [0.0, height];
+        }
+        let mut line_index: u32 = 0;
+        let mut line_count: u32 = 1;
+        let mut current_width = Self::line_indent_for(line_index, first_line_indent).max(0.0);
+        let mut max_width = current_width;
+        let mut line_height_px =
+            self.glyph_line_height_px(chars[0].char_index, font_size, line_height_override);
+
+        for ch in chars {
+            let break_count = Self::decode_line_breaks(ch.layout_flags);
+            if break_count > 0 {
+                max_width = max_width.max(current_width);
+                line_index = line_index.saturating_add(break_count);
+                line_count = line_count.saturating_add(break_count);
+                current_width = Self::line_indent_for(line_index, first_line_indent).max(0.0);
+            }
+
+            current_width += self.glyph_advance_px(ch.char_index, font_size);
+            max_width = max_width.max(current_width);
+        }
+
+        let total_lines = line_count.max(1);
+        let total_height = (total_lines as f32 * line_height_px).max(line_height_px);
+        [max_width, total_height]
+    }
+
     fn round_pow2(n: u32) -> u32 {
         if n <= 1 {
             1
@@ -590,6 +669,7 @@ impl MiniFontRuntime {
                 text_align: text.text_align as u32,
                 color: text.color,
                 origin: text.position,
+                text_bounds: text.text_bounds,
             };
             spans.push(span);
         }
@@ -1309,6 +1389,7 @@ struct FontTextSpan {
     text_align: u32,
     color: [f32; 4],
     origin: [f32; 2],
+    text_bounds: [f32; 2],
 }
 
 #[repr(C)]
@@ -2237,22 +2318,32 @@ impl MiniFontRuntime {
                     }
                 }
 
+                let font_size = e.font_style.font_size as f32;
+                let line_height_px = if e.font_style.font_line_height > 0 {
+                    e.font_style.font_line_height as f32
+                } else {
+                    0.0
+                };
+                let text_bounds = self.compute_text_bounds(
+                    &chars,
+                    font_size,
+                    line_height_px,
+                    e.font_style.first_weight,
+                );
+
                 // default small container size; position kept at origin for now
                 let gpu_text = GpuText {
                     sdf_char_index_start_offset: alloc.start,
                     sdf_char_index_end_offset: alloc.start + needed,
-                    font_size: e.font_style.font_size as f32,
+                    font_size,
                     size: 256,
                     color: e.font_style.font_color,
                     panel: panel_id,
                     position: [0.0, 0.0],
-                    line_height: if e.font_style.font_line_height > 0 {
-                        e.font_style.font_line_height as f32
-                    } else {
-                        0.0
-                    },
+                    line_height: line_height_px,
                     first_line_indent: e.font_style.first_weight,
                     text_align: e.font_style.text_align,
+                    text_bounds,
                 };
                 // Debug print
                 // println!(
