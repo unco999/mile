@@ -1009,7 +1009,8 @@ impl MuiRuntime {
         let off_uv_off = offset_of!(Panel, uv_offset) as wgpu::BufferAddress;
         let off_uv_scale = offset_of!(Panel, uv_scale) as wgpu::BufferAddress;
         let off_z = offset_of!(Panel, z_index) as wgpu::BufferAddress;
-        let off_interaction_passthrough = offset_of!(Panel, interaction_passthrough) as wgpu::BufferAddress;
+        let off_interaction_passthrough =
+            offset_of!(Panel, interaction_passthrough) as wgpu::BufferAddress;
         let off_interact = offset_of!(Panel, interaction) as wgpu::BufferAddress;
         let off_event_mask = offset_of!(Panel, event_mask) as wgpu::BufferAddress;
         let off_state_mask = offset_of!(Panel, state_mask) as wgpu::BufferAddress;
@@ -2051,7 +2052,9 @@ impl MuiRuntime {
         // let z_bias = (desc.key.panel_id & 0x3F) as u32;
         // let z_value = base_z.saturating_add(z_bias).min(0x3FF);
         let z_value = overrides.and_then(|o| o.z_index).unwrap_or(5) as u32;
-        let interaction_passthrough = overrides.and_then(|o| o.interaction_passthrough).unwrap_or(0);
+        let interaction_passthrough = overrides
+            .and_then(|o| o.interaction_passthrough)
+            .unwrap_or(0);
         let interaction = overrides.and_then(|o| o.interaction).unwrap_or(0);
         let event_mask = overrides.and_then(|o| o.event_mask).unwrap_or(0);
         let state_mask = overrides.and_then(|o| o.state_mask).unwrap_or(0);

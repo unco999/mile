@@ -76,19 +76,15 @@ struct FontGlyphDes {
 
 struct Instance {
     char_index: u32,
+    panel_index: u32,
     text_index: u32,
     self_index: u32,
-    panel_index: u32,
-    origin_cursor: vec4<f32>,
-    size_px: f32,
-    line_height_px: f32,
-    advance_px: f32,
-    line_break_acc: u32,
+    panel_origin: vec2<f32>,
+    quad_size: vec2<f32>,
     color: vec4<f32>,
-    first_line_indent: f32,
-    text_align: u32,
-    flags: u32,
-    _pad: array<u32, 1>,
+    font_size: f32,
+    visibility: f32,
+    _pad: vec2<f32>,
 };
 
 @group(0) @binding(4)
@@ -181,128 +177,13 @@ fn vs_main(
 
     var out: VertexOutput;
 
-    // Pixel-accurate layout with wrapping by panel.size:
-    // - Wrap X when exceeding panel.size.x
-    // - Drop rendering when exceeding panel.size.y
-    // instances.panel_index 是 PanelId，buffers 用 (panel_id - 1) 做索引
     let pidx = inst.panel_index - 1u;
     let panel = panels[pidx];
     let delta = panel_deltas[pidx];
-    let container = panel.size;
-
-    // CPU 提供的 baseline origin + cursor_x
-    let origin = inst.origin_cursor.xy;
-    let cursor_x = inst.origin_cursor.z;
-
-    // 行高：优先使用实例给的 line_height_px，否则按 font metrics 算
-    var line_height_px = inst.line_height_px;
-    if (line_height_px <= 0.0) {
-        let units = max(f32(des.units_per_em), 1.0);
-        let line_height_em = f32(des.ascent - des.descent + des.line_gap);
-        line_height_px = line_height_em / units * inst.size_px;
-    }
-    debug_buffer.floats[pidx] = line_height_px;
-
-    let padding = 5.0;
-    let wrap_width = max(container.x - padding * 2.0, 1.0);
-    let units = max(f32(des.units_per_em), 1.0);
-
-    let glyph_advance_px =
-        f32(des.glyph_advance_width) / units * inst.size_px;
-    let layout_width_px = select(
-        glyph_advance_px,
-        inst.advance_px,
-        inst.advance_px > 0.0,
-    );
-
-    let glyph_left_px =
-        f32(des.glyph_left_side_bearing) / units * inst.size_px;
-    let glyph_width_units = max(f32(des.x_max - des.x_min), 1.0);
-    let glyph_height_units = max(f32(des.y_max - des.y_min), 1.0);
-    let glyph_width_px = glyph_width_units / units * inst.size_px;
-    let glyph_height_px_raw = glyph_height_units / units * inst.size_px;
-    let glyph_min_height_px = max(inst.size_px * 0.12, 1.5);
-    let glyph_height_px = max(glyph_height_px_raw, glyph_min_height_px);
-    let glyph_height_pad = (glyph_height_px - glyph_height_px_raw) * 0.5;
-    let glyph_top_px = f32(des.y_max) / units * inst.size_px;
-
-    let base_line = u32(cursor_x / wrap_width);
-    let x_in_line = cursor_x - f32(base_line) * wrap_width;
-    let overflow = (x_in_line + layout_width_px) >= wrap_width;
-
-    let line_index: u32 =
-        inst.line_break_acc + base_line + select(0u, 1u, overflow);
-
-    var wrapped_x = select(x_in_line, 0.0, overflow);
-
-    // 累加之前 overflow 到这一行的剩余宽度（让换行对齐）
-    var carry = 0.0;
-    var scan_idx = inst_id;
-    var scans: u32 = 0u;
-    loop {
-        if (scan_idx == 0u || scans >= 64u) {
-            break;
-        }
-        scan_idx -= 1u;
-        scans += 1u;
-
-        let prev = instances[scan_idx];
-        if (prev.text_index != inst.text_index) {
-            break;
-        }
-
-        let prev_cursor = prev.origin_cursor.z;
-        let prev_des = glyph_descs[prev.char_index];
-        let prev_units = max(f32(prev_des.units_per_em), 1.0);
-
-        let prev_glyph_advance_px =
-            f32(prev_des.glyph_advance_width) / prev_units * prev.size_px;
-        let prev_layout_width_px = select(
-            prev_glyph_advance_px,
-            prev.advance_px,
-            prev.advance_px > 0.0,
-        );
-
-        let prev_base_line = u32(prev_cursor / wrap_width);
-        let prev_x_in_line = prev_cursor - f32(prev_base_line) * wrap_width;
-        let prev_overflow =
-            (prev_x_in_line + prev_layout_width_px) >= wrap_width;
-        let prev_line =
-            prev.line_break_acc + prev_base_line + select(0u, 1u, prev_overflow);
-
-        if (prev_line != line_index) {
-            break;
-        }
-        if (prev_overflow) {
-            carry += wrap_width - prev_x_in_line;
-        }
-    }
-
-    wrapped_x += carry;
-
-    // 控制在容器范围内，避免溢出到右侧
-    wrapped_x = min(wrapped_x, max(wrap_width - layout_width_px, 0.0));
-
-    let local_y = origin.y + padding + f32(line_index) * line_height_px;
-    let wrapped_y = local_y;
-    let wrapped_x_with_origin = origin.x + padding + wrapped_x;
-
-    // 容器 Y 方向可见性
-    let visible = select(
-        0.0,
-        1.0,
-        wrapped_y + inst.size_px <= container.y - padding,
-    );
-
-    let quad_size = vec2<f32>(layout_width_px, glyph_height_px);
-
-    let px = panel.position
-        + delta.delta_position
-        + vec2<f32>(
-            wrapped_x_with_origin + glyph_left_px,
-            wrapped_y - glyph_top_px + inst.size_px - glyph_height_pad,
-        )
-        + position * quad_size;
+    let panel_origin = panel.position + delta.delta_position;
+    let quad_offset = inst.panel_origin;
+    let px = panel_origin + vec2<f32>(quad_offset.x, quad_offset.y)
+        + position * inst.quad_size;
 
     out.uv = tile_origin + uv * tile_scale;
 
@@ -310,7 +191,7 @@ fn vs_main(
     out.quad_coord = position;
     out.glyph_bounds = vec2<f32>(0.0, 1.0);
 
-    debug_buffer.floats[min(inst_id, 31u)] = cursor_x;
+    debug_buffer.floats[min(inst_id, 31u)] = inst.panel_origin.x;
 
     let ndc_x = px.x / screen_width * 2.0 - 1.0;
     let ndc_y = 1.0 - (px.y / screen_height) * 2.0;
@@ -319,9 +200,9 @@ fn vs_main(
     let z = clamp(base_z - glyph_offset, 0.0, 0.9999);
 
     out.position = vec4<f32>(ndc_x, ndc_y, z, 1.0);
-    out.vis = visible;
+    out.vis = inst.visibility;
     out.color = inst.color;
-    out.font_size = inst.size_px;
+    out.font_size = inst.font_size;
     return out;
 }
 

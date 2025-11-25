@@ -132,7 +132,7 @@ fn build_primary_children() -> Result<(), DbError> {
                         .finish()
                 },
             )
-        .build()?;
+            .build()?;
     }
     Ok(())
 }
@@ -145,19 +145,12 @@ fn build_vertical_children() -> Result<(), DbError> {
             .state(
                 UiState(0),
                 move |mut stage: StateStageBuilder<UiPanelData>| {
-                    stage
-                        .rel()
-                        .container_with::<UiPanelData>(STACK_CONTAINER);
+                    stage.rel().container_with::<UiPanelData>(STACK_CONTAINER);
                     let t = idx as f32 / 12.0;
                     stage
                         .z_index(3 + idx)
                         .size(vec2(140.0, 64.0 + (t * 24.0)))
-                        .color(vec4(
-                            0.35 + t * 0.3,
-                            0.2 + t * 0.4,
-                            0.55 + t * 0.2,
-                            0.92,
-                        ))
+                        .color(vec4(0.35 + t * 0.3, 0.2 + t * 0.4, 0.55 + t * 0.2, 0.92))
                         .border(BorderStyle {
                             color: [0.95, 0.95, 0.95, 0.35],
                             width: 1.0,

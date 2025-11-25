@@ -82,7 +82,7 @@ pub fn register_basic_layout() -> Result<(), DbError> {
                         .size(vec2(108.0, 52.0))
                         .border(BorderStyle {
                             color: [0.15, 0.8, 0.45, 1.0],
-                            width: 1.0, 
+                            width: 1.0,
                             radius: 9.0,
                         })
                         .events()
