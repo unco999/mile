@@ -4,9 +4,13 @@ use std::{
     thread,
 };
 
-use mile_api::{global::{get_lua_runtime, update_lua_runtime}, prelude::global_event_bus};
+use mile_api::{
+    global::{get_lua_runtime, update_lua_runtime},
+    prelude::global_event_bus,
+};
 use mile_core::{
-    LUA_DEPLOY_DIR, LUA_SOURCE_DIR, Mile, bootstrap_lua_assets, log_deploy_event, run_lua_entry, trigger_runtime_reset,
+    LUA_DEPLOY_DIR, LUA_SOURCE_DIR, Mile, bootstrap_lua_assets, log_deploy_event, run_lua_entry,
+    trigger_runtime_reset,
 };
 use mile_lua::{
     register_lua_api,
@@ -19,7 +23,7 @@ fn main() {
     spawn_lua_deploy_logger();
 
     let mut binding = Mile::new();
-    
+
     let mile = binding.add_demo(move || {
         println!("运行了一次demo");
         if let Err(err) = run_lua_entry(get_lua_runtime()) {

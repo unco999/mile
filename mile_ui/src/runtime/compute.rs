@@ -567,7 +567,6 @@ impl InteractionComputeStage {
                     )));
 
                     if old_frame.hover_id != u32::MAX {
-
                         hub.push(CpuPanelEvent::TargetDragDrop((
                             new_frame.frame,
                             UiInteractionScope {

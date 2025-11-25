@@ -22,7 +22,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                         FontStyle {
                             font_size: 12,
                             font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
-                            font_line_height: 50,
+                            font_line_height: 0,
                             text_align:TextAlign::Center,
                             ..Default::default()
                         },
@@ -36,7 +36,7 @@ pub fn register_text_demo() -> Result<(), DbError> {
                             font_file_path:Arc::from("tf/LXGWWenKaiMono-Light.ttf"),
                             font_size:50,
                             font_line_height:0,
-                            first_weight:150.0,
+                            first_weight:0.0,
                             ..Default::default()
                         }
                     );

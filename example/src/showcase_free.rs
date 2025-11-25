@@ -53,8 +53,18 @@ fn build_free_container() -> Result<(), DbError> {
 
 fn build_free_children() -> Result<(), DbError> {
     let demos = [
-        (vec2(40.0, 80.0), vec2(200.0, 96.0), [0.85, 0.35, 0.35, 0.95], "左上角固定"),
-        (vec2(420.0, 90.0), vec2(220.0, 120.0), [0.32, 0.55, 0.90, 0.95], "右侧标签"),
+        (
+            vec2(40.0, 80.0),
+            vec2(200.0, 96.0),
+            [0.85, 0.35, 0.35, 0.95],
+            "左上角固定",
+        ),
+        (
+            vec2(420.0, 90.0),
+            vec2(220.0, 120.0),
+            [0.32, 0.55, 0.90, 0.95],
+            "右侧标签",
+        ),
         (
             vec2(180.0, 250.0),
             vec2(320.0, 140.0),
@@ -70,7 +80,9 @@ fn build_free_children() -> Result<(), DbError> {
             .state(
                 UiState(0),
                 move |mut builder: StateStageBuilder<UiPanelData>| {
-                    builder.rel().container_with::<UiPanelData>(FREE_CONTAINER_ID);
+                    builder
+                        .rel()
+                        .container_with::<UiPanelData>(FREE_CONTAINER_ID);
                     builder
                         .z_index(5 + idx as i32)
                         .position(pos)

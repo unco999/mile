@@ -40,7 +40,6 @@ pub fn update_lua_runtime() -> Arc<Lua> {
     new_runtime
 }
 
-
 static GLOBAL_WGSL_REGISTER: OnceLock<ImportRegistry> = OnceLock::new();
 
 pub fn global_wgsl_register() -> &'static ImportRegistry {

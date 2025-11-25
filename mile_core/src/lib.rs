@@ -1,6 +1,9 @@
-use mile_api::{global::get_lua_runtime, prelude::{
-    _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
-}};
+use mile_api::{
+    global::get_lua_runtime,
+    prelude::{
+        _ty::PanelId, Computeable, CpuGlobalUniform, GlobalUniform, Renderable, global_event_bus,
+    },
+};
 use mile_font::{
     event::{BatchFontEntry, BatchRenderFont},
     minimal_runtime::MiniFontRuntime,
@@ -49,7 +52,7 @@ pub struct Mile {
     App: App,
     runtime: Option<EventLoop<AppEvent>>,
     pub user_event: EventLoopProxy<AppEvent>,
-    pub lua_runtime:Arc<Lua>
+    pub lua_runtime: Arc<Lua>,
 }
 
 impl Mile {
@@ -68,13 +71,13 @@ impl Mile {
 
         let event_loop_main: EventLoop<AppEvent> = event_loop.build().unwrap();
         let _proxy = event_loop_main.create_proxy();
-        
+
         // GlobalState keeps GPU/device handles shared across threads.
 
         // App bundles hubs, fonts, rendering context, and timing info.
         let mut app = App::new();
         Mile {
-            lua_runtime:Arc::from(Lua::new()),
+            lua_runtime: Arc::from(Lua::new()),
             App: app,
             runtime: Some(event_loop_main),
             user_event: _proxy,
@@ -159,8 +162,6 @@ fn configure_package_path(lua: &Lua, deploy_root: &Path) -> mlua::Result<()> {
     package.set("path", search_roots)?;
     Ok(())
 }
-
-
 
 pub fn spawn_lua_deploy_logger() {
     let bus = global_event_bus().clone();
@@ -257,16 +258,12 @@ pub fn trigger_runtime_reset(lua: Arc<Lua>) -> mlua::Result<()> {
 }
 
 impl App {
-
-
     pub fn reset(&mut self) {
         println!("触发了更新");
         if let Err(err) = run_lua_entry(get_lua_runtime()) {
             eprintln!("[lua_watch] reload failed: {err}");
         }
         if let Some(runtime_cell) = &self.mui_runtime {
-
-
             let ctx = self.wgpu_context.as_ref().unwrap();
             let mut runtime = runtime_cell.borrow_mut();
 
@@ -278,7 +275,6 @@ impl App {
                 let deltas = &runtime.buffers.panel_anim_delta;
                 font.set_panel_buffers_external(&ctx.device, panels, Some(deltas));
             }
-
         }
     }
 
@@ -314,7 +310,7 @@ impl App {
 
         let mut runtime = runtime_cell.borrow_mut();
         runtime.begin_frame(self.frame_index, self.delta_time.as_secs_f32());
-        
+
         runtime.flush_relation_work_if_needed(&ctx.queue);
         // 始终刷新已注册的 payload；upload 会根据 dirty 标志决定是否重建实例
         runtime.refresh_registered_payloads(&ctx.device, &ctx.queue);
@@ -478,10 +474,10 @@ fn load_window_icon(path: &str) -> Option<Icon> {
 
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-     let window_icon = load_window_icon("texture/icon.png");
-     let window_attrs = WindowAttributes::default()
-     .with_title("Mile Engine Demo")
-     .with_window_icon(window_icon);
+        let window_icon = load_window_icon("texture/icon.png");
+        let window_attrs = WindowAttributes::default()
+            .with_title("Mile Engine Demo")
+            .with_window_icon(window_icon);
 
         let window = event_loop
             .create_window(window_attrs)

@@ -7,8 +7,8 @@ use std::{
 use crate::{
     mui_prototype::{PanelKey, UiState, panel_numeric_id, registered_panel_keys},
     mui_rel::{
-        RelContainerLinkState, RelContainerSpec, RelFloatAxis, RelGraphDefinition,
-        RelLayoutKind, RelNodeState, RelParsedGraph, RelSpace, RelTransition, RelViewKey,
+        RelContainerLinkState, RelContainerSpec, RelFloatAxis, RelGraphDefinition, RelLayoutKind,
+        RelNodeState, RelParsedGraph, RelSpace, RelTransition, RelViewKey,
     },
 };
 

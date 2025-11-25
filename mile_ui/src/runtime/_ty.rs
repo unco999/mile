@@ -513,10 +513,10 @@ pub struct Panel {
     pub uv_scale: [f32; 2],  // 8
 
     // === 16-byte �� 3 ===
-    pub z_index: u32,      // 4
+    pub z_index: u32,                 // 4
     pub interaction_passthrough: u32, // 4
-    pub id: u32,           // 4
-    pub interaction: u32,  // 4
+    pub id: u32,                      // 4
+    pub interaction: u32,             // 4
 
     // === 16-byte �� 4 ===
     pub event_mask: u32,  // 4
